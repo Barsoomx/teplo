@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
+cd "$(dirname "$0")/.."
 HOST=${TEPLO_HOST:-192.168.1.1}
 PORT=${TEPLO_SSH_PORT:-222}
 ROOT=/opt/share/teplo
 SHA=$(git rev-parse --short HEAD)
 RELEASE=$ROOT/releases/$SHA
 
-cd "$(dirname "$0")/.."
 docker compose run --rm --no-deps -T app sh -c \
     'cd /code && poetry export --without dev --without-hashes --format requirements.txt' \
     | grep -v -E '^(cryptography|cffi|pycparser)==' > requirements.txt
