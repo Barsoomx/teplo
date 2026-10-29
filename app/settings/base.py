@@ -74,7 +74,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
-STATIC_ROOT = os.getenv('TEPLO_STATIC_ROOT', str(LOCAL_DIR / 'static'))
+STATIC_ROOT: str | None = os.getenv('TEPLO_STATIC_ROOT', str(LOCAL_DIR / 'static'))
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},

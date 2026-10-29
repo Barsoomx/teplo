@@ -4,6 +4,7 @@ SECRET_KEY = 'teplo-tests'
 INSTALLED_APPS = [app for app in INSTALLED_APPS if not app.startswith('sites.')]
 DATABASES = {'default': {'ENGINE': 'django.db.backends.sqlite3', 'NAME': ':memory:'}}
 PASSWORD_HASHERS = ['django.contrib.auth.hashers.MD5PasswordHasher']
+STATIC_ROOT = None
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage'},
