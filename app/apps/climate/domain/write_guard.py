@@ -8,4 +8,4 @@ def write_allowed(
     now: datetime,
     min_interval: timedelta = MIN_WRITE_INTERVAL,
 ) -> bool:
-    return last_command_at is None or now - last_command_at >= min_interval
+    return last_command_at is None or last_command_at > now or now - last_command_at >= min_interval

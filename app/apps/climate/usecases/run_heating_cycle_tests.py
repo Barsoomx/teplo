@@ -120,6 +120,16 @@ def f_untrusted_cycle(
 
 
 @pytest.fixture
+def f_clock_behind_cycle(
+    f_zone: Zone,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(pk=f_zone.pk).update(last_command_at=NIGHT + timedelta(hours=2))
+    return _cycle(f_zone, _state('22.0', read_at=NIGHT), f_thermostat, dispatcher, clock_trusted=False)
+
+
+@pytest.fixture
 def f_program_mode_cycle(
     f_zone: Zone,
     f_thermostat: FloorThermostatStub,
@@ -198,6 +208,18 @@ def test_cycle_holds_comfort_when_clock_untrusted(
     f_untrusted_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
 
     assert f_thermostat.commands == [('setpoint', Decimal('28.0'))]
+
+
+def test_cycle_holds_comfort_when_clock_fell_behind_last_command(
+    f_clock_behind_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_clock_behind_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+
+    assert (output.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+    )
 
 
 def test_dry_run_journals_without_writing(

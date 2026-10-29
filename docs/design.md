@@ -256,7 +256,7 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 
 ## 9. Reliability
 
-- **Clock.** The clock is trusted when NTP has synchronised since boot. Otherwise schedules pause (section 6) and the panel offers "take time from this device", which stores an offset inside teplo without touching the system clock.
+- **Clock.** The clock is trusted when NTP has synchronised since boot. Otherwise schedules pause (section 6) and the panel offers "take time from this device", which stores an offset inside teplo without touching the system clock. A last command stamped later than the clock (the clock moved back, e.g. after a reboot) does not hold back the next write.
 - **Supervision.** An Entware init script starts teplo at boot; a cron job restarts it if the process is gone. More than 3 restarts an hour sends an alert.
 - **Device loss.** Any device unavailable for 10 minutes appears in the panel and sends an alert.
 - **Power loss.** On start teplo reads every device, reconciles the desired state, and journals the outage interval from the last heartbeat.
