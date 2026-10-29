@@ -17,3 +17,23 @@ services:
       TEPLO_ALLOWED_HOSTS: localhost,127.0.0.1
     ports:
       - '8088:8088'
+
+  demo:
+    image: teplo-dev
+    build: .
+    volumes:
+      - .:/code
+    environment:
+      DJANGO_SETTINGS_MODULE: settings.settings
+      DJANGO_SECRET_KEY: teplo-demo-only
+      DJANGO_DEBUG: '1'
+      TEPLO_SITE: barsoom
+      TEPLO_DB_PATH: /tmp/demo.sqlite3
+      TEPLO_DRY_RUN: 'false'
+      TEPLO_CLOCK_SOURCE: system
+      TEPLO_ALLOWED_HOSTS: localhost,127.0.0.1
+      DEMO_LANGUAGE: ${DEMO_LANGUAGE:-en}
+      PYTHONPATH: /code/scripts/demo
+    command: python manage.py shell -c 'import demo_house; demo_house.main()'
+    ports:
+      - '8088:8088'

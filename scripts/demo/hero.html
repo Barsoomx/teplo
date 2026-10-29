@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>teplo hero</title>
+  <style>
+    @font-face {
+      font-family: 'Unbounded';
+      font-weight: 200 900;
+      src: url('../../app/apps/panel/static/panel/fonts/unbounded-latin-wght-normal.woff2') format('woff2');
+    }
+
+    @font-face {
+      font-family: 'Golos Text';
+      font-weight: 400 900;
+      src: url('../../app/apps/panel/static/panel/fonts/golos-text-latin-wght-normal.woff2') format('woff2');
+    }
+
+    :root {
+      --ironbow: linear-gradient(90deg, #2a1b6e 0%, #6a27a0 22%, #b02b86 39%, #e5454e 56%, #f7862b 72%, #ffc23a 86%, #fff2c2 100%);
+      --ink: #f4f0ff;
+      --ink-muted: #b9b0d9;
+      --line: rgb(244 240 255 / 0.14);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html,
+    body {
+      width: 1440px;
+      height: 800px;
+    }
+
+    body {
+      position: relative;
+      overflow: hidden;
+      color: var(--ink);
+      font-family: 'Golos Text', sans-serif;
+      background:
+        radial-gradient(820px 520px at 14% 112%, rgb(247 134 43 / 0.42), transparent 70%),
+        radial-gradient(620px 420px at 2% 86%, rgb(229 69 78 / 0.32), transparent 72%),
+        radial-gradient(980px 720px at 104% -6%, rgb(106 39 160 / 0.5), transparent 70%),
+        #120d26;
+    }
+
+    .copy {
+      position: absolute;
+      top: 150px;
+      left: 92px;
+      width: 440px;
+    }
+
+    .eyebrow {
+      color: #ffc23a;
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+    }
+
+    .wordmark {
+      display: inline-grid;
+      gap: 16px;
+      margin-top: 26px;
+      font: 800 118px/0.86 'Unbounded', sans-serif;
+      letter-spacing: -0.035em;
+    }
+
+    .wordmark::after {
+      content: '';
+      height: 9px;
+      border-radius: 5px;
+      background: var(--ironbow);
+    }
+
+    .tagline {
+      margin-top: 40px;
+      font-size: 34px;
+      font-weight: 700;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+    }
+
+    .lede {
+      margin-top: 16px;
+      color: var(--ink-muted);
+      font-size: 20px;
+      line-height: 1.5;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 34px;
+      list-style: none;
+    }
+
+    .chips li {
+      padding: 8px 15px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgb(255 255 255 / 0.04);
+      color: #e6e0ff;
+      font-size: 15px;
+      font-weight: 500;
+    }
+
+    .window {
+      position: absolute;
+      top: 96px;
+      left: 588px;
+      width: 900px;
+      overflow: hidden;
+      border: 1px solid rgb(244 240 255 / 0.1);
+      border-radius: 18px;
+      background: #1a1433;
+      box-shadow: 0 50px 120px rgb(0 0 0 / 0.55);
+    }
+
+    .window-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      height: 42px;
+      padding: 0 18px;
+      background: #211939;
+    }
+
+    .window-bar i {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: rgb(244 240 255 / 0.2);
+    }
+
+    .address {
+      margin-left: 22px;
+      padding: 5px 16px;
+      border-radius: 8px;
+      background: rgb(0 0 0 / 0.28);
+      color: var(--ink-muted);
+      font-size: 13px;
+    }
+
+    .window img {
+      display: block;
+      width: 100%;
+    }
+
+    .phone {
+      position: absolute;
+      top: 214px;
+      left: 1136px;
+      width: 268px;
+      padding: 9px;
+      border-radius: 44px;
+      background: #0b0816;
+      box-shadow: 0 40px 90px rgb(0 0 0 / 0.6), inset 0 0 0 1px rgb(255 255 255 / 0.1);
+    }
+
+    .phone img {
+      display: block;
+      width: 100%;
+      border-radius: 35px;
+    }
+  </style>
+</head>
+<body>
+  <div class="copy">
+    <p class="eyebrow">Local-first floor heating</p>
+    <h1 class="wordmark">teplo</h1>
+    <p class="tagline">Warm floors by morning.</p>
+    <p class="lede">A heating controller that lives on the home router. No cloud, no vendor app, and no internet needed.</p>
+    <ul class="chips">
+      <li>Tuya thermostats over LAN</li>
+      <li>Keenetic + Entware</li>
+      <li>Django · HTMX · SQLite</li>
+    </ul>
+  </div>
+  <div class="window">
+    <div class="window-bar"><i></i><i></i><i></i><span class="address">192.168.1.1:8088</span></div>
+    <img src="file:///tmp/teplo-shots/hero-desktop.png" alt="">
+  </div>
+  <div class="phone"><img src="file:///tmp/teplo-shots/hero-phone.png" alt=""></div>
+</body>
+</html>
