@@ -265,7 +265,7 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 
 ## 10. Panel
 
-Server-rendered Django templates with HTMX; the dashboard refreshes every 3 seconds; all assets are served locally.
+Server-rendered Django templates with HTMX; zone cards refresh every 10 seconds (thermostats are polled every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
 
 - **Dashboard:** zone cards (air, floor, target, state: heating, waiting, shed), `+/-` and boost, phase bars to 25 A with the EV marker, outdoor temperature, clock and device warnings.
 - **Schedules:** weekly periods per zone and mode targets.
