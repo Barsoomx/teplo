@@ -28,3 +28,11 @@ jobs:
         run: poetry run python app/manage.py makemigrations --check --dry-run
       - name: Tests
         run: poetry run pytest
+      - name: Site migrations apply
+        env:
+          DJANGO_SETTINGS_MODULE: settings.settings
+        run: |
+          for site in example barsoom; do
+            TEPLO_SITE=$site TEPLO_DB_PATH=/tmp/teplo-$site.sqlite3 poetry run python app/manage.py migrate --noinput
+          done
+          TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.models import ComfortPeriod, Zone; from apps.devices.models import Device; assert (Device.objects.count(), Zone.objects.count(), Zone.objects.filter(kind='air').count(), ComfortPeriod.objects.count()) == (5, 5, 3, 35)"
