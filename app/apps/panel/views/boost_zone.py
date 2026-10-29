@@ -6,7 +6,7 @@ from django.views import View
 
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneUseCase
-from apps.panel.services.zone_overview import ZoneOverviewService
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewInputDTO, GetPanelOverviewUseCase
 
 
 class BoostZoneView(LoginRequiredMixin, View):
@@ -16,5 +16,5 @@ class BoostZoneView(LoginRequiredMixin, View):
         except ZoneNotFoundError as error:
             raise Http404(error.detail) from error
 
-        overview = ZoneOverviewService.init().overview(timezone.now())
+        overview = GetPanelOverviewUseCase.init().execute(GetPanelOverviewInputDTO(now=timezone.now()))
         return render(request, 'panel/_zones.html', {'overview': overview})

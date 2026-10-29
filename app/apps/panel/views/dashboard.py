@@ -2,7 +2,7 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.utils import timezone
 from django.views.generic import TemplateView
 
-from apps.panel.services.zone_overview import ZoneOverviewService
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewInputDTO, GetPanelOverviewUseCase
 
 
 class DashboardView(LoginRequiredMixin, TemplateView):
@@ -10,5 +10,5 @@ class DashboardView(LoginRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs: object) -> dict[str, object]:
         context = super().get_context_data(**kwargs)
-        context['overview'] = ZoneOverviewService.init().overview(timezone.now())
+        context['overview'] = GetPanelOverviewUseCase.init().execute(GetPanelOverviewInputDTO(now=timezone.now()))
         return context

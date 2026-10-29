@@ -3,13 +3,13 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.domain.modes import ScheduleMode, ZoneKind
-from apps.panel.services.zone_overview import PanelOverview, ZoneOverview
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, ZoneOverview
 from apps.system.domain.clock import ClockStatus
 
 
 @pytest.fixture
-def panel_overview() -> PanelOverview:
-    return PanelOverview(
+def panel_overview() -> GetPanelOverviewOutputDTO:
+    return GetPanelOverviewOutputDTO(
         zones=(
             ZoneOverview(
                 slug='kitchen',

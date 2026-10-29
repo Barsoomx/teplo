@@ -1,7 +1,7 @@
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.generic import TemplateView
 
-from apps.telemetry.repositories.journal import JournalRepository
+from apps.telemetry.usecases.list_journal_entries import ListJournalEntriesInputDTO, ListJournalEntriesUseCase
 
 JOURNAL_LIMIT = 100
 
@@ -11,5 +11,6 @@ class JournalView(LoginRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs: object) -> dict[str, object]:
         context = super().get_context_data(**kwargs)
-        context['entries'] = JournalRepository.latest(limit=JOURNAL_LIMIT)
+        output = ListJournalEntriesUseCase.init().execute(ListJournalEntriesInputDTO(limit=JOURNAL_LIMIT))
+        context['entries'] = output.entries
         return context

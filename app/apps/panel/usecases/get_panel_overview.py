@@ -10,9 +10,15 @@ from apps.climate.domain.modes import ScheduleMode, ZoneKind
 from apps.climate.domain.schedule import resolve_mode
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.repositories.zone import ZoneRepository
+from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.services.state_store import ThermostatStateStore, thermostat_state_store
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
+
+
+@dataclass(frozen=True, kw_only=True)
+class GetPanelOverviewInputDTO:
+    now: datetime
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -32,13 +38,13 @@ class ZoneOverview:
 
 
 @dataclass(frozen=True, kw_only=True)
-class PanelOverview:
+class GetPanelOverviewOutputDTO:
     zones: tuple[ZoneOverview, ...]
     clock: ClockStatus
     dry_run: bool
 
 
-class ZoneOverviewService:
+class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOverviewOutputDTO]):
     def __init__(
         self,
         zones: ZoneRepository,
@@ -46,13 +52,14 @@ class ZoneOverviewService:
         clock: ClockTrustSource,
         dry_run: bool,
     ) -> None:
+        super().__init__()
         self._zones = zones
         self._store = store
         self._clock = clock
         self._dry_run = dry_run
 
     @classmethod
-    def init(cls) -> 'ZoneOverviewService':
+    def init(cls) -> 'GetPanelOverviewUseCase':
         return cls(
             zones=ZoneRepository(),
             store=thermostat_state_store,
@@ -60,11 +67,11 @@ class ZoneOverviewService:
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
-    def overview(self, now: datetime) -> PanelOverview:
-        local_now = timezone.localtime(now)
+    def _execute(self, input_dto: GetPanelOverviewInputDTO) -> GetPanelOverviewOutputDTO:
+        now = timezone.localtime(input_dto.now)
         clock = self._clock.status()
-        return PanelOverview(
-            zones=tuple(self._zone(zone, local_now, clock.trusted) for zone in self._zones.all_settings()),
+        return GetPanelOverviewOutputDTO(
+            zones=tuple(self._zone(zone, now, clock.trusted) for zone in self._zones.all_settings()),
             clock=clock,
             dry_run=self._dry_run,
         )
