@@ -1,3 +1,5 @@
+import threading
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -35,6 +37,33 @@ class TuyaClientStub:
         return None
 
 
+class SerialClientStub:
+    def __init__(self) -> None:
+        self._active = 0
+        self._max_active = 0
+        self._guard = threading.Lock()
+
+    @property
+    def max_active(self) -> int:
+        return self._max_active
+
+    def status(self) -> TuyaPayload | None:
+        self._occupy()
+        return {'dps': KITCHEN_DPS}
+
+    def set_value(self, index: int, value: bool | int | str) -> TuyaPayload | None:  # noqa: ARG002
+        self._occupy()
+        return None
+
+    def _occupy(self) -> None:
+        with self._guard:
+            self._active += 1
+            self._max_active = max(self._max_active, self._active)
+        time.sleep(0.05)
+        with self._guard:
+            self._active -= 1
+
+
 def _now() -> datetime:
     return NOW
 
@@ -64,6 +93,16 @@ def f_error_payload_driver() -> TuyaThermostatDriver:
 def f_offline_driver() -> TuyaThermostatDriver:
     client = TuyaClientStub(status_payload=None, error=ConnectionRefusedError('connection refused'))
     return TuyaThermostatDriver(client=client, clock=_now)
+
+
+@pytest.fixture
+def f_serial_client() -> SerialClientStub:
+    return SerialClientStub()
+
+
+@pytest.fixture
+def f_serial_driver(f_serial_client: SerialClientStub) -> TuyaThermostatDriver:
+    return TuyaThermostatDriver(client=f_serial_client, clock=_now)
 
 
 def test_read_state_maps_data_points(f_driver: TuyaThermostatDriver) -> None:
@@ -97,3 +136,20 @@ def test_read_state_reports_tuya_error(f_error_payload_driver: TuyaThermostatDri
 def test_commands_report_socket_errors(f_offline_driver: TuyaThermostatDriver) -> None:
     with pytest.raises(DeviceUnavailableError, match='connection refused'):
         f_offline_driver.set_power(False)
+
+
+def test_client_calls_are_serialized_across_threads(
+    f_serial_driver: TuyaThermostatDriver,
+    f_serial_client: SerialClientStub,
+) -> None:
+    threads = [
+        threading.Thread(target=f_serial_driver.read_state),
+        threading.Thread(target=f_serial_driver.set_power, args=(True,)),
+        threading.Thread(target=f_serial_driver.set_setpoint, args=(Decimal('28.0'),)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert f_serial_client.max_active == 1

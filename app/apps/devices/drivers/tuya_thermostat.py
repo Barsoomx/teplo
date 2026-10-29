@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -29,6 +30,7 @@ class TuyaThermostatDriver:
     def __init__(self, client: TuyaClient, clock: Callable[[], datetime]) -> None:
         self._client = client
         self._clock = clock
+        self._lock = threading.Lock()
 
     @classmethod
     def init(cls, secret: DeviceSecret) -> 'TuyaThermostatDriver':
@@ -45,7 +47,8 @@ class TuyaThermostatDriver:
 
     def read_state(self) -> ThermostatState:
         try:
-            payload = self._client.status()
+            with self._lock:
+                payload = self._client.status()
         except OSError as error:
             raise DeviceUnavailableError(str(error)) from error
 
@@ -81,7 +84,8 @@ class TuyaThermostatDriver:
 
     def _write(self, dp: int, value: bool | int | str) -> None:
         try:
-            payload = self._client.set_value(dp, value)
+            with self._lock:
+                payload = self._client.set_value(dp, value)
         except OSError as error:
             raise DeviceUnavailableError(str(error)) from error
 
