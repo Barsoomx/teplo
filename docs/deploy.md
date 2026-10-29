@@ -24,7 +24,7 @@ The script installs pinned requirements into `/opt/share/teplo/venv` (Entware pr
 
 ## Operate
 
-- Service: `/opt/etc/init.d/S90teplo {start|stop|restart|status}`.
+- Service: `/opt/etc/init.d/S90teplo {start|stop|restart|status}`. `stop` gives teplo 10 s to finish its cleanup and then kills it, so `restart` never runs two instances.
 - Logs: `/opt/var/log/teplo/teplo.log`; restarts: `/opt/var/log/teplo/restarts.log`.
 - The cron watchdog restarts teplo when its process dies or exceeds 300 MB RSS and trims the log above 5 MB. After `S90teplo stop` it leaves teplo stopped until the next `start`.
 - Secrets and settings are read at start: restart after editing them.

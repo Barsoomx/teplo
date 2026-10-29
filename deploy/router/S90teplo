@@ -5,6 +5,7 @@ PIDFILE=/opt/var/run/teplo.pid
 LOGFILE=/opt/var/log/teplo/teplo.log
 PYTHON=/opt/share/teplo/venv/bin/python
 MANAGE=/opt/share/teplo/current/app/manage.py
+STOP_TIMEOUT=10
 
 load_env() {
     set -a
@@ -24,13 +25,19 @@ start() {
 
 stop() {
     running && kill "$(cat "$PIDFILE")"
+    waited=0
+    while running && [ "$waited" -lt "$STOP_TIMEOUT" ]; do
+        sleep 1
+        waited=$((waited + 1))
+    done
+    running && kill -9 "$(cat "$PIDFILE")"
     rm -f "$PIDFILE"
 }
 
 case "$1" in
     start) start ;;
     stop) stop ;;
-    restart) stop; sleep 2; start ;;
+    restart) stop; start ;;
     status) if running; then echo running; else echo stopped; fi ;;
     *) echo "usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
 esac
