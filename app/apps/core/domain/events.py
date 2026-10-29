@@ -49,7 +49,7 @@ class EventDispatcher:
         except Exception:
             logger.exception(
                 'domain_event_handler_failed',
-                event=type(event).__name__,
+                event_type=type(event).__name__,
                 handler=getattr(handler, '__qualname__', repr(handler)),
             )
 
