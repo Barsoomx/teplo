@@ -17,6 +17,6 @@ if [ ! -f /opt/etc/teplo/teplo.env ]; then
     chmod 600 /opt/etc/teplo/teplo.env
 fi
 if ! grep -q teplo-watchdog /opt/etc/crontabs/root; then
-    printf '\n# teplo watchdog: restart when stopped or above 300 MB RSS\n* * * * * %s/teplo-watchdog.sh >/dev/null 2>&1\n' "$ROOT" >> /opt/etc/crontabs/root
+    printf '\n# teplo watchdog: restart when the process dies or exceeds 300 MB RSS\n* * * * * %s/teplo-watchdog.sh >/dev/null 2>&1\n' "$ROOT" >> /opt/etc/crontabs/root
 fi
 echo 'teplo prerequisites installed'

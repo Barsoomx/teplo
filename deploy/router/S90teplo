@@ -12,13 +12,18 @@ load_env() {
     set +a
 }
 
+running() {
+    [ -f "$PIDFILE" ] && tr '\0' ' ' 2>/dev/null < "/proc/$(cat "$PIDFILE")/cmdline" | grep -q run_teplo
+}
+
 start() {
+    running && return 0
     load_env
     start-stop-daemon -S -b -m -p "$PIDFILE" -O "$LOGFILE" -x /opt/bin/nice -- -n 10 "$PYTHON" "$MANAGE" run_teplo
 }
 
 stop() {
-    start-stop-daemon -K -p "$PIDFILE" -s TERM
+    running && kill "$(cat "$PIDFILE")"
     rm -f "$PIDFILE"
 }
 
@@ -26,6 +31,6 @@ case "$1" in
     start) start ;;
     stop) stop ;;
     restart) stop; sleep 2; start ;;
-    status) if start-stop-daemon -K -t -p "$PIDFILE" >/dev/null 2>&1; then echo running; else echo stopped; fi ;;
+    status) if running; then echo running; else echo stopped; fi ;;
     *) echo "usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
 esac
