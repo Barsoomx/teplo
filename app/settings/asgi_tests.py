@@ -1,15 +1,18 @@
 import warnings
 
-from settings import asgi
-
-STATIC_STREAMING_WARNING = (
-    'StreamingHttpResponse must consume synchronous iterators in order to serve them asynchronously. '
-    'Use an asynchronous iterator instead.'
-)
+from settings.asgi import silence_static_streaming_warning
 
 
-def test_asgi_application_silences_the_static_streaming_warning() -> None:
+def test_silence_static_streaming_warning_ignores_only_that_warning() -> None:
     with warnings.catch_warnings(record=True) as caught:
-        warnings.warn(STATIC_STREAMING_WARNING, Warning, stacklevel=1)
+        warnings.simplefilter('always')
+        silence_static_streaming_warning()
+        warnings.warn(
+            'StreamingHttpResponse must consume synchronous iterators in order to serve them asynchronously. '
+            'Use an asynchronous iterator instead.',
+            Warning,
+            stacklevel=1,
+        )
+        warnings.warn('Another warning', Warning, stacklevel=1)
 
-    assert (asgi.application is not None, caught) == (True, [])
+    assert [str(warning.message) for warning in caught] == ['Another warning']
