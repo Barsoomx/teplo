@@ -1,0 +1,31 @@
+#!/bin/sh
+
+ENV_FILE=/opt/etc/teplo/teplo.env
+PIDFILE=/opt/var/run/teplo.pid
+LOGFILE=/opt/var/log/teplo/teplo.log
+PYTHON=/opt/share/teplo/venv/bin/python
+MANAGE=/opt/share/teplo/current/app/manage.py
+
+load_env() {
+    set -a
+    . "$ENV_FILE"
+    set +a
+}
+
+start() {
+    load_env
+    start-stop-daemon -S -b -m -p "$PIDFILE" -O "$LOGFILE" -x /opt/bin/nice -- -n 10 "$PYTHON" "$MANAGE" run_teplo
+}
+
+stop() {
+    start-stop-daemon -K -p "$PIDFILE" -s TERM
+    rm -f "$PIDFILE"
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; sleep 2; start ;;
+    status) if start-stop-daemon -K -t -p "$PIDFILE" >/dev/null 2>&1; then echo running; else echo stopped; fi ;;
+    *) echo "usage: $0 {start|stop|restart|status}" >&2; exit 1 ;;
+esac

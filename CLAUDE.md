@@ -115,3 +115,4 @@ class ZoneFactory(factory.django.DjangoModelFactory):
 
 - Talk to the owner in Russian; code, docs and commit messages are in English.
 - Commit and push only when the owner asks.
+- Deploying to the router or touching `deploy/`: read [`docs/deploy.md`](docs/deploy.md) first.
