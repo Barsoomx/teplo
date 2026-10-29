@@ -10,7 +10,7 @@ from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
 from apps.devices.factories import DeviceFactory
 from apps.devices.repositories.device import DeviceRepository
-from apps.devices.services.state_store import ThermostatStateStore
+from apps.devices.services.state_store import ThermostatSnapshot, ThermostatStateStore
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
 from apps.devices.usecases.poll_thermostats import (
     PollThermostatsInputDTO,
@@ -96,11 +96,24 @@ def f_stale_use_case(
     )
 
 
+@pytest.fixture
+def f_driverless_use_case(f_store: ThermostatStateStore, dispatcher: EventDispatcher) -> PollThermostatsUseCase:
+    DeviceFactory(slug='thermostat-attic')
+    return PollThermostatsUseCase(
+        devices=DeviceRepository(),
+        provider=ThermostatProviderStub(thermostats={}),
+        store=f_store,
+        dispatcher=dispatcher,
+    )
+
+
 def test_poll_records_states_and_failures(f_use_case: PollThermostatsUseCase, f_store: ThermostatStateStore) -> None:
     output = f_use_case.execute(PollThermostatsInputDTO(now=NOW))
 
-    assert (output, f_store.snapshot('thermostat-hallway', NOW).error) == (
+    snapshot = f_store.snapshot('thermostat-hallway', NOW)
+    assert (output, snapshot.error_code, snapshot.error) == (
         PollThermostatsOutputDTO(polled=('thermostat-kitchen',), failed=('thermostat-hallway',)),
+        'device_unavailable',
         'timeout',
     )
 
@@ -113,11 +126,18 @@ def test_first_poll_reports_availability_once(
     f_use_case.execute(PollThermostatsInputDTO(now=NOW))
 
     assert f_received == [
-        DeviceAvailabilityChanged(slug='thermostat-hallway', available=False, reason='timeout', occurred_at=NOW),
+        DeviceAvailabilityChanged(
+            slug='thermostat-hallway',
+            available=False,
+            reason='timeout',
+            error_code='device_unavailable',
+            occurred_at=NOW,
+        ),
         DeviceAvailabilityChanged(
             slug='thermostat-kitchen',
             available=True,
             reason='reading received',
+            error_code=None,
             occurred_at=NOW,
         ),
     ]
@@ -130,5 +150,38 @@ def test_stale_failing_device_is_reported_unavailable(
     f_stale_use_case.execute(PollThermostatsInputDTO(now=NOW))
 
     assert f_received == [
-        DeviceAvailabilityChanged(slug='thermostat-hallway', available=False, reason='timeout', occurred_at=NOW),
+        DeviceAvailabilityChanged(
+            slug='thermostat-hallway',
+            available=False,
+            reason='timeout',
+            error_code='device_unavailable',
+            occurred_at=NOW,
+        ),
     ]
+
+
+def test_poll_keeps_the_code_of_any_device_error(
+    f_driverless_use_case: PollThermostatsUseCase,
+    f_store: ThermostatStateStore,
+    f_received: list[DomainEvent],
+) -> None:
+    f_driverless_use_case.execute(PollThermostatsInputDTO(now=NOW))
+
+    assert (f_store.snapshot('thermostat-attic', NOW), f_received) == (
+        ThermostatSnapshot(
+            slug='thermostat-attic',
+            state=None,
+            available=False,
+            error_code='driver_not_implemented',
+            error='driver not implemented: thermostat-attic',
+        ),
+        [
+            DeviceAvailabilityChanged(
+                slug='thermostat-attic',
+                available=False,
+                reason='driver not implemented: thermostat-attic',
+                error_code='driver_not_implemented',
+                occurred_at=NOW,
+            ),
+        ],
+    )

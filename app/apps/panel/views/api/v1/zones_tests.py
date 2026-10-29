@@ -29,6 +29,7 @@ def test_zones_api_returns_overview(f_client: Client, m_overview_use_case: Magic
                 'kind': 'air',
                 'mode': 'comfort',
                 'available': True,
+                'error_code': None,
                 'error': None,
                 'floor_temperature': '24.5',
                 'power': True,

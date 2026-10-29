@@ -12,6 +12,7 @@ class ThermostatSnapshot:
     slug: str
     state: ThermostatState | None
     available: bool
+    error_code: str | None
     error: str | None
 
 
@@ -19,25 +20,25 @@ class ThermostatStateStore:
     def __init__(self, unavailable_after: timedelta) -> None:
         self._unavailable_after = unavailable_after
         self._states: dict[str, ThermostatState] = {}
-        self._errors: dict[str, str] = {}
+        self._failures: dict[str, tuple[str, str]] = {}
         self._reported: dict[str, bool] = {}
         self._lock = threading.Lock()
 
     def record_state(self, slug: str, state: ThermostatState) -> None:
         with self._lock:
             self._states[slug] = state
-            self._errors.pop(slug, None)
+            self._failures.pop(slug, None)
 
-    def record_failure(self, slug: str, error: str) -> None:
+    def record_failure(self, slug: str, error_code: str, error: str) -> None:
         with self._lock:
-            self._errors[slug] = error
+            self._failures[slug] = (error_code, error)
 
     def snapshot(self, slug: str, now: datetime) -> ThermostatSnapshot:
         with self._lock:
             state = self._states.get(slug)
-            error = self._errors.get(slug)
+            error_code, error = self._failures.get(slug, (None, None))
         available = state is not None and now - state.read_at <= self._unavailable_after
-        return ThermostatSnapshot(slug=slug, state=state, available=available, error=error)
+        return ThermostatSnapshot(slug=slug, state=state, available=available, error_code=error_code, error=error)
 
     def last_reported(self, slug: str) -> bool | None:
         with self._lock:

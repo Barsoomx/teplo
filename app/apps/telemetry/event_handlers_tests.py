@@ -45,26 +45,43 @@ def test_zone_command_is_journaled_with_change() -> None:
 
 def test_zone_command_failure_is_journaled() -> None:
     journal_zone_command_failure(
-        ZoneCommandFailed(zone='kitchen', change=ThermostatChange(power=False), error='timeout', occurred_at=NOW),
+        ZoneCommandFailed(
+            zone='kitchen',
+            change=ThermostatChange(power=False),
+            error='timeout',
+            error_code='device_unavailable',
+            occurred_at=NOW,
+        ),
     )
 
     assert _entry() == (
         'zone_command_failed',
         'kitchen',
-        {'zone': 'kitchen', 'change': {'power': False, 'mode': None, 'setpoint': None}, 'error': 'timeout'},
+        {
+            'zone': 'kitchen',
+            'change': {'power': False, 'mode': None, 'setpoint': None},
+            'error': 'timeout',
+            'error_code': 'device_unavailable',
+        },
         NOW,
     )
 
 
 def test_device_availability_is_journaled() -> None:
     journal_device_availability(
-        DeviceAvailabilityChanged(slug='thermostat-kitchen', available=False, reason='timeout', occurred_at=NOW),
+        DeviceAvailabilityChanged(
+            slug='thermostat-kitchen',
+            available=False,
+            reason='timeout',
+            error_code='device_unavailable',
+            occurred_at=NOW,
+        ),
     )
 
     assert _entry() == (
         'device_availability_changed',
         'thermostat-kitchen',
-        {'slug': 'thermostat-kitchen', 'available': False, 'reason': 'timeout'},
+        {'slug': 'thermostat-kitchen', 'available': False, 'reason': 'timeout', 'error_code': 'device_unavailable'},
         NOW,
     )
 

@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 
+import structlog
 from django.conf import settings
 from django.utils import timezone
 
@@ -20,6 +21,8 @@ from apps.devices.services.driver_registry import driver_registry
 from apps.devices.services.state_store import ThermostatStateStore, thermostat_state_store
 from apps.system.domain.clock import ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
+
+logger = structlog.get_logger(__name__)
 
 
 class ZoneCycleOutcome(StrEnum):
@@ -105,8 +108,21 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         try:
             self._apply(zone.thermostat_slug, change)
         except DomainError as error:
+            logger.warning(
+                'zone_command_failed',
+                zone=zone.slug,
+                device=zone.thermostat_slug,
+                error_code=error.error_code,
+                detail=error.detail,
+            )
             self._event_store.add_event(
-                ZoneCommandFailed(zone=zone.slug, change=change, error=error.detail, occurred_at=now),
+                ZoneCommandFailed(
+                    zone=zone.slug,
+                    change=change,
+                    error=error.detail,
+                    error_code=error.error_code,
+                    occurred_at=now,
+                ),
             )
             return ZoneCycleOutcome.FAILED
 

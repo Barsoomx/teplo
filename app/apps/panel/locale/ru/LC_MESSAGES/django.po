@@ -37,6 +37,10 @@ msgstr "%(house_time)s, время сверено"
 msgid "%(house_time)s, clock not synced (%(reason)s): holding comfort"
 msgstr "%(house_time)s, время не сверено (%(reason)s): держу комфорт"
 
+#, python-format
+msgid "%(house_time)s, clock not synced: holding comfort"
+msgstr "%(house_time)s, время не сверено: держу комфорт"
+
 msgid "Watching"
 msgstr "Наблюдение"
 
@@ -119,6 +123,13 @@ msgstr "%(name)s: команда не прошла (%(summary)s)"
 msgid "%(name)s: boost until %(until)s"
 msgstr "%(name)s: буст до %(until)s"
 
+#, python-format
+msgid "%(name)s: unknown event"
+msgstr "%(name)s: неизвестное событие"
+
+msgid "Unknown event"
+msgstr "Неизвестное событие"
+
 msgid "Nothing here yet. Events appear once teplo has polled the thermostats."
 msgstr "Пока пусто. События появятся, когда teplo опросит термостаты."
 
@@ -130,6 +141,30 @@ msgstr "Пароль"
 
 msgid "Log in"
 msgstr "Войти"
+
+msgid "No connection to the thermostat"
+msgstr "Нет связи с термостатом"
+
+msgid "The thermostat sent an unexpected reply"
+msgstr "Термостат прислал неожиданный ответ"
+
+msgid "teplo cannot control this device yet"
+msgstr "teplo пока не умеет управлять этим устройством"
+
+msgid "The device is missing from the settings"
+msgstr "Устройства нет в настройках"
+
+msgid "The secrets file has no address and key for this thermostat"
+msgstr "В файле секретов нет адреса и ключа этого термостата"
+
+msgid "Unknown error"
+msgstr "Неизвестная ошибка"
+
+msgid "the router reports no NTP status"
+msgstr "роутер не сообщает статус NTP"
+
+msgid "could not read the NTP status from the router"
+msgstr "не удалось узнать статус NTP у роутера"
 
 msgid "turn on"
 msgstr "включить"

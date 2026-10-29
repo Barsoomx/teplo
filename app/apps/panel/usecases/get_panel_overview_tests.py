@@ -17,7 +17,7 @@ from apps.panel.usecases.get_panel_overview import (
     ZoneOverview,
     ZoneRegime,
 )
-from apps.system.domain.clock import ClockStatus
+from apps.system.domain.clock import ClockStatus, ClockStatusCode
 from apps.system.stubs import ClockStub
 
 pytestmark = pytest.mark.django_db
@@ -49,7 +49,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
     zone = ZoneFactory.create(slug='hallway', name='Прихожая', thermostat__slug='thermostat-hallway')
     ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
     store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
-    store.record_failure('thermostat-hallway', 'timeout')
+    store.record_failure('thermostat-hallway', error_code='device_unavailable', error='timeout')
     return GetPanelOverviewUseCase(zones=ZoneRepository(), store=store, clock=ClockStub(trusted=False), dry_run=False)
 
 
@@ -110,6 +110,7 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
                 kind=ZoneKind.AIR,
                 mode=ScheduleMode.COMFORT,
                 available=True,
+                error_code=None,
                 error=None,
                 floor_temperature=Decimal('21.5'),
                 power=True,
@@ -125,7 +126,7 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
                 ),
             ),
         ),
-        clock=ClockStatus(trusted=True, reason='stub'),
+        clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='stub'),
         dry_run=True,
     )
 
@@ -141,6 +142,7 @@ def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: Get
                 kind=ZoneKind.AIR,
                 mode=ScheduleMode.COMFORT,
                 available=False,
+                error_code='device_unavailable',
                 error='timeout',
                 floor_temperature=None,
                 power=None,
@@ -153,7 +155,7 @@ def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: Get
                 next_change=None,
             ),
         ),
-        clock=ClockStatus(trusted=False, reason='stub'),
+        clock=ClockStatus(trusted=False, code=ClockStatusCode.NTP_NOT_SYNCHRONIZED, reason='stub'),
         dry_run=False,
     )
 

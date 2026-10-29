@@ -55,7 +55,7 @@ class PollThermostatsUseCase(BaseUseCase[PollThermostatsInputDTO, PollThermostat
         try:
             state = self._provider.thermostat(slug).read_state()
         except DomainError as error:
-            self._store.record_failure(slug, error.detail)
+            self._store.record_failure(slug, error_code=error.error_code, error=error.detail)
             logger.warning(
                 'thermostat_poll_failed',
                 device=slug,
@@ -78,6 +78,7 @@ class PollThermostatsUseCase(BaseUseCase[PollThermostatsInputDTO, PollThermostat
                 slug=slug,
                 available=snapshot.available,
                 reason='reading received' if snapshot.available else snapshot.error or 'no reading',
+                error_code=None if snapshot.available else snapshot.error_code,
                 occurred_at=now,
             ),
         )

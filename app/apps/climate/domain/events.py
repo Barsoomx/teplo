@@ -17,6 +17,7 @@ class ZoneCommandFailed(DomainEvent):
     zone: str
     change: ThermostatChange
     error: str
+    error_code: str
 
 
 @dataclass(frozen=True, kw_only=True)

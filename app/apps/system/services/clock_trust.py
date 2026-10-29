@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from django.conf import settings
 
-from apps.system.domain.clock import ClockStatus, ClockTrustSource
+from apps.system.domain.clock import ClockStatus, ClockStatusCode, ClockTrustSource
 
 NDMC_COMMAND = ('/bin/ndmc', '-c', 'show ntp status')
 SYNCHRONIZED_PATTERN = re.compile(r'synchronized:\s*(yes|no)')
@@ -22,21 +22,25 @@ class NdmsNtpSource:
         try:
             output = self._run(NDMC_COMMAND)
         except (OSError, subprocess.SubprocessError) as error:
-            return ClockStatus(trusted=False, reason=f'ndmc failed: {error}')
+            return ClockStatus(trusted=False, code=ClockStatusCode.NTP_STATUS_FAILED, reason=f'ndmc failed: {error}')
 
         match = SYNCHRONIZED_PATTERN.search(output)
         if match is None:
-            return ClockStatus(trusted=False, reason='ntp status missing')
+            return ClockStatus(trusted=False, code=ClockStatusCode.NTP_STATUS_MISSING, reason='ntp status missing')
 
         if match.group(1) != 'yes':
-            return ClockStatus(trusted=False, reason='ntp not synchronized')
+            return ClockStatus(trusted=False, code=ClockStatusCode.NTP_NOT_SYNCHRONIZED, reason='ntp not synchronized')
 
-        return ClockStatus(trusted=True, reason='ntp synchronized')
+        return ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized')
 
 
 class SystemClockSource:
     def status(self) -> ClockStatus:
-        return ClockStatus(trusted=True, reason='system clock trusted by configuration')
+        return ClockStatus(
+            trusted=True,
+            code=ClockStatusCode.TRUSTED_BY_CONFIGURATION,
+            reason='system clock trusted by configuration',
+        )
 
 
 def clock_trust_source() -> ClockTrustSource:

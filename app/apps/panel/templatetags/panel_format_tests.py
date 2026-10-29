@@ -1,12 +1,28 @@
+from collections.abc import Iterator
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from django.utils import translation
 from freezegun import freeze_time
 
-from apps.panel.templatetags.panel_format import command_summary, day_word, icon, local_time
+from apps.core.domain.errors import DomainError, SecretMissingError
+from apps.devices.domain.errors import (
+    DeviceNotFoundError,
+    DeviceProtocolError,
+    DeviceUnavailableError,
+    DriverNotImplementedError,
+)
+from apps.panel.templatetags.panel_format import clock_note, command_summary, day_word, failure_note, icon, local_time
+from apps.system.domain.clock import ClockStatusCode
 
 MOSCOW = ZoneInfo('Europe/Moscow')
+
+
+@pytest.fixture
+def russian() -> Iterator[None]:
+    with translation.override('ru'):
+        yield
 
 
 def test_icon_references_the_sprite() -> None:
@@ -25,6 +41,47 @@ def test_icon_references_the_sprite() -> None:
 )
 def test_command_summary_lists_the_changed_settings(change: dict[str, object], expected: str) -> None:
     assert command_summary(change) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (DeviceUnavailableError('timed out'), 'Нет связи с термостатом'),
+        (DeviceProtocolError('payload without dps'), 'Термостат прислал неожиданный ответ'),
+        (DriverNotImplementedError('unsupported'), 'teplo пока не умеет управлять этим устройством'),
+        (DeviceNotFoundError('thermostat-attic'), 'Устройства нет в настройках'),
+        (SecretMissingError('thermostat-attic'), 'В файле секретов нет адреса и ключа этого термостата'),
+        (DomainError('boom'), 'Неизвестная ошибка'),
+    ],
+)
+def test_failure_note_names_the_cause_by_error_code(error: DomainError, expected: str) -> None:
+    assert failure_note(error.error_code, error.detail) == expected
+
+
+def test_failure_note_leaves_out_what_the_headline_says() -> None:
+    assert failure_note('device_unavailable', 'timed out', omit='device_unavailable') == ''
+
+
+def test_failure_note_without_code_is_generic() -> None:
+    assert failure_note('', 'timed out', omit='device_unavailable') == 'Unknown error'
+
+
+def test_failure_note_is_empty_without_failure() -> None:
+    assert failure_note(None, None, omit='device_unavailable') == ''
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('code', 'expected'),
+    [
+        (ClockStatusCode.NTP_NOT_SYNCHRONIZED, ''),
+        (ClockStatusCode.NTP_STATUS_MISSING, 'роутер не сообщает статус NTP'),
+        (ClockStatusCode.NTP_STATUS_FAILED, 'не удалось узнать статус NTP у роутера'),
+    ],
+)
+def test_clock_note_adds_what_the_headline_does_not_say(code: ClockStatusCode, expected: str) -> None:
+    assert clock_note(code) == expected
 
 
 def test_local_time_shows_journal_timestamps_in_house_time() -> None:

@@ -368,6 +368,7 @@ def test_cycle_reports_failed_write(f_failing_cycle: RunHeatingCycleUseCase, f_e
                 zone='kitchen',
                 change=ThermostatChange(setpoint=Decimal('28.0')),
                 error='timeout',
+                error_code='device_unavailable',
                 occurred_at=MORNING,
             ),
         ],

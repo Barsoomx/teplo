@@ -1,4 +1,4 @@
-from apps.system.domain.clock import ClockStatus
+from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 
 class ClockStub:
@@ -6,4 +6,8 @@ class ClockStub:
         self._trusted = trusted
 
     def status(self) -> ClockStatus:
-        return ClockStatus(trusted=self._trusted, reason='stub')
+        return ClockStatus(
+            trusted=self._trusted,
+            code=ClockStatusCode.NTP_SYNCHRONIZED if self._trusted else ClockStatusCode.NTP_NOT_SYNCHRONIZED,
+            reason='stub',
+        )

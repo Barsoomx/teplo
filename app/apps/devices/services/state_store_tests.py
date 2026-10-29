@@ -25,7 +25,7 @@ def f_state() -> ThermostatState:
 def f_store(f_state: ThermostatState) -> ThermostatStateStore:
     store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
     store.record_state('thermostat-kitchen', f_state)
-    store.record_failure('thermostat-kitchen', 'timeout')
+    store.record_failure('thermostat-kitchen', error_code='device_unavailable', error='timeout')
     return store
 
 
@@ -40,6 +40,7 @@ def test_failure_keeps_last_state_and_error(f_store: ThermostatStateStore, f_sta
         slug='thermostat-kitchen',
         state=f_state,
         available=True,
+        error_code='device_unavailable',
         error='timeout',
     )
 
@@ -49,7 +50,9 @@ def test_state_older_than_window_is_unavailable(f_store: ThermostatStateStore) -
 
 
 def test_success_clears_error(f_recovered_store: ThermostatStateStore) -> None:
-    assert f_recovered_store.snapshot('thermostat-kitchen', NOW).error is None
+    snapshot = f_recovered_store.snapshot('thermostat-kitchen', NOW)
+
+    assert (snapshot.error_code, snapshot.error) == (None, None)
 
 
 def test_unknown_device_is_unavailable(f_store: ThermostatStateStore) -> None:
@@ -57,5 +60,6 @@ def test_unknown_device_is_unavailable(f_store: ThermostatStateStore) -> None:
         slug='thermostat-attic',
         state=None,
         available=False,
+        error_code=None,
         error=None,
     )

@@ -7,9 +7,24 @@ from django.utils import timezone
 from django.utils.formats import date_format
 from django.utils.html import format_html
 from django.utils.safestring import SafeString
-from django.utils.translation import gettext
+from django.utils.translation import gettext, gettext_lazy
+
+from apps.system.domain.clock import ClockStatusCode
 
 register = template.Library()
+
+FAILURE_NOTES = {
+    'device_unavailable': gettext_lazy('No connection to the thermostat'),
+    'device_protocol_error': gettext_lazy('The thermostat sent an unexpected reply'),
+    'driver_not_implemented': gettext_lazy('teplo cannot control this device yet'),
+    'device_not_found': gettext_lazy('The device is missing from the settings'),
+    'secret_missing': gettext_lazy('The secrets file has no address and key for this thermostat'),
+}
+UNKNOWN_FAILURE = gettext_lazy('Unknown error')
+CLOCK_NOTES = {
+    ClockStatusCode.NTP_STATUS_MISSING: gettext_lazy('the router reports no NTP status'),
+    ClockStatusCode.NTP_STATUS_FAILED: gettext_lazy('could not read the NTP status from the router'),
+}
 
 
 @register.simple_tag
@@ -34,6 +49,22 @@ def command_summary(change: dict[str, object]) -> str:
     if setpoint is not None:
         parts.append(gettext('set to %(temperature)s°') % {'temperature': floatformat(setpoint, -1)})
     return ', '.join(parts)
+
+
+@register.simple_tag
+def failure_note(error_code: str | None, error: str | None, omit: str = '') -> str:
+    if not error_code:
+        return str(UNKNOWN_FAILURE) if error else ''
+
+    if error_code == omit:
+        return ''
+
+    return str(FAILURE_NOTES.get(error_code, UNKNOWN_FAILURE))
+
+
+@register.simple_tag
+def clock_note(code: ClockStatusCode) -> str:
+    return str(CLOCK_NOTES.get(code, ''))
 
 
 @register.filter

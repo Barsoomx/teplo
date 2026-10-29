@@ -19,9 +19,10 @@
         <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name %}{{ name }}: thermostat is online{% endblocktranslate %}</p></div>
         {% elif entry.kind == 'device_availability_changed' %}
         <span class="event-mark event-mark-warn">{% icon 'wifi-off' %}</span>
-        <div class="event-body">
+        {% failure_note entry.payload.error_code entry.payload.reason omit='device_unavailable' as note %}
+        <div class="event-body"{% if entry.payload.reason %} title="{{ entry.payload.reason }}"{% endif %}>
           <p class="event-text">{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the thermostat{% endblocktranslate %}</p>
-          {% if entry.payload.reason %}<p class="event-note">{{ entry.payload.reason }}</p>{% endif %}
+          {% if note %}<p class="event-note">{{ note }}</p>{% endif %}
         </div>
         {% elif entry.kind == 'zone_command_issued' %}
         <span class="event-mark event-mark-command">{% icon 'thermometer' %}</span>
@@ -31,16 +32,17 @@
         </div>
         {% elif entry.kind == 'zone_command_failed' %}
         <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
-        <div class="event-body">
+        {% failure_note entry.payload.error_code entry.payload.error as note %}
+        <div class="event-body"{% if entry.payload.error %} title="{{ entry.payload.error }}"{% endif %}>
           <p class="event-text">{% blocktranslate with name=entry.subject_name summary=entry.payload.change|command_summary %}{{ name }}: command failed ({{ summary }}){% endblocktranslate %}</p>
-          <p class="event-note">{{ entry.payload.error }}</p>
+          {% if note %}<p class="event-note">{{ note }}</p>{% endif %}
         </div>
         {% elif entry.kind == 'zone_boosted' %}
         <span class="event-mark event-mark-boost">{% icon 'flame' %}</span>
         <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name until=entry.payload.until|local_time %}{{ name }}: boost until {{ until }}{% endblocktranslate %}</p></div>
         {% else %}
         <span class="event-mark">{% icon 'scroll-text' %}</span>
-        <div class="event-body"><p class="event-text">{% if entry.subject_name %}{{ entry.subject_name }}: {% endif %}{{ entry.kind }}</p></div>
+        <div class="event-body" title="{{ entry.kind }}"><p class="event-text">{% if entry.subject_name %}{% blocktranslate with name=entry.subject_name %}{{ name }}: unknown event{% endblocktranslate %}{% else %}{% translate 'Unknown event' %}{% endif %}</p></div>
         {% endif %}
         <p class="event-ago">{{ entry.created_at|naturaltime }}</p>
       </li>

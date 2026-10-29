@@ -37,6 +37,7 @@ class ZoneOverview:
     kind: ZoneKind
     mode: ScheduleMode
     available: bool
+    error_code: str | None
     error: str | None
     floor_temperature: Decimal | None
     power: bool | None
@@ -103,6 +104,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             kind=zone.kind,
             mode=mode,
             available=snapshot.available,
+            error_code=snapshot.error_code,
             error=snapshot.error,
             floor_temperature=state.floor_temperature if state else None,
             power=state.power if state else None,

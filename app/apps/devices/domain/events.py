@@ -8,3 +8,4 @@ class DeviceAvailabilityChanged(DomainEvent):
     slug: str
     available: bool
     reason: str
+    error_code: str | None

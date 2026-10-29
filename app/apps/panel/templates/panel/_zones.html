@@ -9,7 +9,8 @@
   {% if overview.clock.trusted %}
   <li class="fact">{% icon 'clock' %}{% blocktranslate %}{{ house_time }}, clock synced{% endblocktranslate %}</li>
   {% else %}
-  <li class="fact fact-warn">{% icon 'triangle-alert' %}{% blocktranslate with reason=overview.clock.reason %}{{ house_time }}, clock not synced ({{ reason }}): holding comfort{% endblocktranslate %}</li>
+  {% clock_note overview.clock.code as reason %}
+  <li class="fact fact-warn" title="{{ overview.clock.reason }}">{% icon 'triangle-alert' %}{% if reason %}{% blocktranslate %}{{ house_time }}, clock not synced ({{ reason }}): holding comfort{% endblocktranslate %}{% else %}{% blocktranslate %}{{ house_time }}, clock not synced: holding comfort{% endblocktranslate %}{% endif %}</li>
   {% endif %}
 </ul>
 <div class="tiles">
@@ -40,7 +41,8 @@
     {% else %}
     <div class="readout">
       <p class="readout-value readout-missing">—</p>
-      <p class="offline-note">{% icon 'wifi-off' %}<span>{% translate 'No connection. Check that the thermostat has power and Wi-Fi.' %}{% if zone.error %} <span class="offline-error">{{ zone.error }}</span>{% endif %}</span></p>
+      {% failure_note zone.error_code zone.error omit='device_unavailable' as note %}
+      <p class="offline-note"{% if zone.error %} title="{{ zone.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% translate 'No connection. Check that the thermostat has power and Wi-Fi.' %}{% if note %} <span class="offline-error">{{ note }}</span>{% endif %}</span></p>
     </div>
     {% endif %}
     <div class="tile-floor" aria-hidden="true">
