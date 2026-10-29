@@ -22,3 +22,4 @@ esphome/secrets.yaml
 
 .idea/
 .vscode/
+.claude/worktrees/

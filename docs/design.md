@@ -147,9 +147,25 @@ Weekly schedule per zone; each period selects a mode with a target.
 | comfort | 22.0 °C | 06:30–23:30 every day |
 | night | 19.5 °C | the rest |
 
-Overrides from the panel: `+/-` changes the target until the next period; **boost** forces comfort for 2 hours.
-Defaults for floor zones: Bathroom 2F follows the comfort schedule with a 30 °C floor and 22 °C at night; Bathroom 1F idles at 18 °C until boosted.
+Overrides from the panel: `+/-` changes the target until the next period; **boost** holds the zone at its boost floor setpoint for 2 hours.
 Second-floor guard: if the second-floor air falls below 19 °C, Bathroom 2F heats at its comfort floor setpoint.
+
+### Floor mode
+
+Every zone carries three floor setpoints. A floor zone always runs in floor mode; an air zone runs in floor mode while its air sensor is unavailable, which in stage 1 is always.
+
+- comfort period and pre-heat: comfort floor setpoint;
+- night: night floor setpoint;
+- boost: boost floor setpoint;
+- clock untrusted: comfort floor setpoint.
+
+| Zone | Comfort | Night | Boost |
+|---|---|---|---|
+| Living room, Kitchen, Hallway | 28 °C | 22 °C | 30 °C |
+| Bathroom 2F | 30 °C | 22 °C | 30 °C |
+| Bathroom 1F | 18 °C | 18 °C | 30 °C |
+
+Pre-heat in floor mode starts a fixed lead before the comfort period, 3 hours by default and configurable per zone.
 
 ### Optimal start
 
@@ -178,8 +194,9 @@ Idle is a raised floor minimum rather than off, so a dead controller leaves the 
 
 ### Fallbacks
 
-- Air sensor unavailable: the zone becomes a floor zone with a 26 °C floor setpoint until the sensor returns.
+- Air sensor unavailable: the zone runs in floor mode until the sensor returns.
 - Clock untrusted: schedules pause and every zone holds its comfort target.
+- Manual changes made on a thermostat or in a vendor app are reverted at the zone's next allowed write.
 
 ## 7. Load management
 
@@ -244,7 +261,7 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 - **Device loss.** Any device unavailable for 10 minutes appears in the panel and sends an alert.
 - **Power loss.** On start teplo reads every device, reconciles the desired state, and journals the outage interval from the last heartbeat.
 - **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately; retention is one year of minute samples.
-- **Coexistence.** teplo runs with lowered CPU priority and a memory limit, on its own ports: panel 8088, MQTT 1883.
+- **Coexistence.** teplo runs at nice 10 on its own ports (panel 8088, MQTT 1883); the watchdog restarts it when its resident memory exceeds 300 MB.
 
 ## 10. Panel
 
@@ -255,7 +272,7 @@ Server-rendered Django templates with HTMX; the dashboard refreshes every 3 seco
 - **Settings:** tariffs, phase thresholds, shedding priority (drag to reorder), floor limits, water heater cheap-only switch, calibration.
 - **History:** temperatures, phase currents, zone states; the event journal.
 
-A JSON API under `api/v1` exposes the same state. Access requires the panel password; the session is remembered per device.
+A JSON API under `api/v1` exposes the same state. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
 
 ## 11. Configuration and reuse
 
@@ -298,7 +315,7 @@ password = '...'
 
 ## 14. Roadmap
 
-1. Thermostats, schedules, night setback, timed pre-heat.
+1. Thermostats in floor mode: schedules, night setback, timed pre-heat, boost, dry-run, dashboard and journal.
 2. Phase meter and load management.
 3. Air sensors, air regulation, learned optimal start.
 4. Smart plugs: water heaters as sheddable loads, washing machine monitoring.

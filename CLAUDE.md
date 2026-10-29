@@ -93,7 +93,7 @@ logger.info(
 
 - pytest functions named `test_<what>_<scenario>` in `<module>_tests.py` next to the tested module, laid out Arrange / Act / Assert.
 - All preparation lives in typed fixtures. A fixture passed into a test is named `f_<name>`, or `m_<name>` when it is a mock; objects built inside a test have plain names. Shared fixtures live in `conftest.py` at `app/` and per app.
-- Stubs over mocks: implement the port in a stub and pass it through the constructor. View tests use mocks only, patched by import path string (`mock.patch('app.apps...')`); `monkeypatch.setattr` and `patch.object` stay unused.
+- Stubs over mocks: implement the port in a stub and pass it through the constructor. View tests use mocks only, patched by import path string (`mock.patch('apps.panel.views...')`; `app/` is the import root); `monkeypatch.setattr` and `patch.object` stay unused.
 - ORM tests declare `pytestmark = pytest.mark.django_db`; time is frozen with freezegun; API tests compare the whole `response.json()`.
 - Django models come from factory_boy factories that declare only the fields tests use:
 
