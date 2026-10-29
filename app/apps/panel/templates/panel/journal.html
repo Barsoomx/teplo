@@ -1,13 +1,54 @@
 {% extends 'panel/base.html' %}
+{% load i18n humanize panel_format %}
+{% block title %}{% translate 'teplo journal' %}{% endblock %}
 {% block content %}
-<table class="journal">
-  <thead><tr><th>Time</th><th>Event</th><th>Subject</th><th>Details</th></tr></thead>
-  <tbody>
-  {% for entry in entries %}
-    <tr><td>{{ entry.created_at|date:'d.m H:i:s' }}</td><td>{{ entry.kind }}</td><td>{{ entry.subject }}</td><td><code>{{ entry.payload }}</code></td></tr>
+<div class="journal">
+  <h1 class="page-title">{% translate 'Journal' %}</h1>
+  {% for day in days %}
+  <section class="journal-day">
+    <h2 class="journal-date">{{ day.day|naturalday:'j E'|capfirst }}</h2>
+    <ol class="timeline" role="list">
+      {% for entry in day.entries %}
+      <li class="event">
+        <time class="event-time" datetime="{{ entry.created_at|date:'c' }}">{{ entry.created_at|time:'H:i' }}</time>
+        {% if entry.kind == 'teplo_started' %}
+        <span class="event-mark">{% icon 'power' %}</span>
+        <div class="event-body"><p class="event-text">{% translate 'teplo started' %}</p></div>
+        {% elif entry.kind == 'device_availability_changed' and entry.payload.available %}
+        <span class="event-mark event-mark-online">{% icon 'wifi' %}</span>
+        <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name %}{{ name }}: thermostat is online{% endblocktranslate %}</p></div>
+        {% elif entry.kind == 'device_availability_changed' %}
+        <span class="event-mark event-mark-warn">{% icon 'wifi-off' %}</span>
+        <div class="event-body">
+          <p class="event-text">{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the thermostat{% endblocktranslate %}</p>
+          {% if entry.payload.reason %}<p class="event-note">{{ entry.payload.reason }}</p>{% endif %}
+        </div>
+        {% elif entry.kind == 'zone_command_issued' %}
+        <span class="event-mark event-mark-command">{% icon 'thermometer' %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry.subject_name }}: {{ entry.payload.change|command_summary }}</p>
+          {% if entry.payload.dry_run %}<p class="event-note">{% translate 'Not sent: watching only' %}</p>{% endif %}
+        </div>
+        {% elif entry.kind == 'zone_command_failed' %}
+        <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
+        <div class="event-body">
+          <p class="event-text">{% blocktranslate with name=entry.subject_name summary=entry.payload.change|command_summary %}{{ name }}: command failed ({{ summary }}){% endblocktranslate %}</p>
+          <p class="event-note">{{ entry.payload.error }}</p>
+        </div>
+        {% elif entry.kind == 'zone_boosted' %}
+        <span class="event-mark event-mark-boost">{% icon 'flame' %}</span>
+        <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name until=entry.payload.until|local_time %}{{ name }}: boost until {{ until }}{% endblocktranslate %}</p></div>
+        {% else %}
+        <span class="event-mark">{% icon 'scroll-text' %}</span>
+        <div class="event-body"><p class="event-text">{% if entry.subject_name %}{{ entry.subject_name }}: {% endif %}{{ entry.kind }}</p></div>
+        {% endif %}
+        <p class="event-ago">{{ entry.created_at|naturaltime }}</p>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
   {% empty %}
-    <tr><td colspan="4">No events yet.</td></tr>
+  <p class="journal-empty">{% translate 'Nothing here yet. Events appear once teplo has polled the thermostats.' %}</p>
   {% endfor %}
-  </tbody>
-</table>
+</div>
 {% endblock %}

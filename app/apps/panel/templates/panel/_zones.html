@@ -1,17 +1,51 @@
-{% if overview.dry_run %}<p class="banner">Dry run: commands are journaled, thermostats are not changed.</p>{% endif %}
-{% if not overview.clock.trusted %}<p class="banner warning">Clock not trusted ({{ overview.clock.reason }}): holding comfort setpoints.</p>{% endif %}
-<div class="zones">
+{% load i18n l10n panel_format %}
+{% now 'H:i' as house_time %}
+<ul class="house" role="list">
+  {% if overview.dry_run %}
+  <li class="fact">{% icon 'eye' %}{% translate 'Watching only: commands are not sent' %}</li>
+  {% else %}
+  <li class="fact">{% icon 'zap' %}{% translate 'teplo controls the floors' %}</li>
+  {% endif %}
+  {% if overview.clock.trusted %}
+  <li class="fact">{% icon 'clock' %}{% blocktranslate %}{{ house_time }}, clock synced{% endblocktranslate %}</li>
+  {% else %}
+  <li class="fact fact-warn">{% icon 'triangle-alert' %}{% blocktranslate with reason=overview.clock.reason %}{{ house_time }}, clock not synced ({{ reason }}): holding comfort{% endblocktranslate %}</li>
+  {% endif %}
+</ul>
+<div class="tiles">
   {% for zone in overview.zones %}
-  <article class="zone{% if not zone.available %} offline{% endif %}">
-    <h2>{{ zone.name }}</h2>
-    <p class="mode">{{ zone.mode }}{% if zone.boosted %} · boost{% endif %}{% if not zone.live_control %} · observe{% endif %}</p>
-    <dl>
-      <dt>Floor</dt><dd>{% if zone.floor_temperature is not None %}{{ zone.floor_temperature }} °C{% else %}—{% endif %}</dd>
-      <dt>Setpoint</dt><dd>{% if zone.setpoint is not None %}{{ zone.setpoint }} °C{% else %}—{% endif %}</dd>
-      <dt>Target</dt><dd>{% if zone.target_setpoint is not None %}{{ zone.target_setpoint }} °C{% else %}off{% endif %}</dd>
-    </dl>
-    {% if zone.error %}<p class="error">{{ zone.error }}</p>{% endif %}
-    <button hx-post="{% url 'panel:boost-zone' zone.slug %}" hx-target="#zones" hx-swap="innerHTML">Boost 2 h</button>
+  <article class="tile{% if not zone.available %} is-offline{% endif %}"{% if zone.available %} style="--t: {{ zone.floor_temperature|unlocalize }};{% if zone.target_setpoint is not None %} --target: {{ zone.target_setpoint|unlocalize }};{% endif %}"{% endif %}>
+    <header class="tile-head">
+      <h2 class="tile-name">{{ zone.name }}</h2>
+      <p class="tile-chips">
+        {% include 'panel/_regime.html' with regime=zone.regime %}
+        {% if overview.dry_run or not zone.live_control %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}
+      </p>
+    </header>
+    {% if zone.available %}
+    <div class="readout">
+      <p class="readout-value">{{ zone.floor_temperature|floatformat:1 }}<span class="readout-unit">°</span></p>
+      <p class="readout-caption">{% if zone.target_setpoint is None %}{% translate 'Floor, heating off' %}{% else %}{% blocktranslate with target=zone.target_setpoint|floatformat:'-1' %}Floor, target {{ target }}°{% endblocktranslate %}{% if zone.power is False %}. {% translate 'Thermostat is off' %}{% elif zone.setpoint != zone.target_setpoint %}. {% blocktranslate with setpoint=zone.setpoint|floatformat:'-1' %}Thermostat set to {{ setpoint }}°{% endblocktranslate %}{% endif %}{% endif %}</p>
+      {% if zone.regime == 'boost' %}
+      <p class="next next-boost">{% blocktranslate with until=zone.boost_until|time:'H:i' %}Boost until {{ until }}{% endblocktranslate %}</p>
+      {% elif zone.next_change %}
+      <p class="next">{% with mode=zone.next_change.mode at=zone.next_change.at|time:'H:i' day=zone.next_change.at|day_word %}{% if mode == 'night' %}{% blocktranslate %}Night from {{ at }}{% endblocktranslate %}{% elif mode == 'preheat' %}{% blocktranslate %}Warm-up from {{ at }}{% endblocktranslate %}{% else %}{% blocktranslate %}Comfort from {{ at }}{% endblocktranslate %}{% endif %}{% if day %} {{ day }}{% endif %}{% endwith %}</p>
+      {% endif %}
+    </div>
+    {% if zone.regime != 'off' %}
+    <div class="tile-actions">
+      <button class="boost" type="button" hx-post="{% url 'panel:boost-zone' zone.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% icon 'flame' %}{% if zone.boosted %}{% translate 'Extend boost' %}{% else %}{% translate 'Boost for 2 hours' %}{% endif %}</button>
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="readout">
+      <p class="readout-value readout-missing">—</p>
+      <p class="offline-note">{% icon 'wifi-off' %}<span>{% translate 'No connection. Check that the thermostat has power and Wi-Fi.' %}{% if zone.error %} <span class="offline-error">{{ zone.error }}</span>{% endif %}</span></p>
+    </div>
+    {% endif %}
+    <div class="tile-floor" aria-hidden="true">
+      {% if zone.available %}<div class="scale">{% if zone.target_setpoint is not None %}<span class="scale-target"></span>{% endif %}<span class="scale-now"></span></div>{% endif %}
+    </div>
   </article>
   {% endfor %}
 </div>
