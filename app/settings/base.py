@@ -78,6 +78,7 @@ STATIC_ROOT: str | None = os.getenv('TEPLO_STATIC_ROOT', str(LOCAL_DIR / 'static
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
+WHITENOISE_ROOT = BASE_DIR / 'apps' / 'panel' / 'root'
 }
 
 LOGIN_URL = 'panel:login'
