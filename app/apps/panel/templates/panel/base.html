@@ -1,0 +1,23 @@
+{% load static %}<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>teplo</title>
+  <link rel="stylesheet" href="{% static 'panel/panel.css' %}">
+  <script src="{% static 'panel/htmx.min.js' %}" defer></script>
+</head>
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  <header>
+    <a href="{% url 'panel:dashboard' %}">teplo</a>
+    {% if user.is_authenticated %}
+    <nav>
+      <a href="{% url 'panel:journal' %}">Journal</a>
+      <a href="{% url 'admin:index' %}">Settings</a>
+      <form method="post" action="{% url 'panel:logout' %}">{% csrf_token %}<button type="submit">Log out</button></form>
+    </nav>
+    {% endif %}
+  </header>
+  <main>{% block content %}{% endblock %}</main>
+</body>
+</html>
