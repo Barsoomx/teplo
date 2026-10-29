@@ -24,7 +24,7 @@ NOW = datetime(2026, 10, 29, 3, 0, tzinfo=UTC)
 
 
 @pytest.fixture
-def f_state() -> ThermostatState:
+def state() -> ThermostatState:
     return ThermostatState(
         power=True,
         mode=ThermostatMode.HOLD,
@@ -40,11 +40,11 @@ def f_store() -> ThermostatStateStore:
 
 
 @pytest.fixture
-def f_stale_store(f_state: ThermostatState) -> ThermostatStateStore:
+def stale_store(state: ThermostatState) -> ThermostatStateStore:
     store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
-    store.record_state('thermostat-hallway', replace(f_state, read_at=NOW - timedelta(minutes=11)))
+    store.record_state('thermostat-hallway', replace(state, read_at=NOW - timedelta(minutes=11)))
     store.mark_reported('thermostat-hallway', True)
-    store.record_state('thermostat-kitchen', f_state)
+    store.record_state('thermostat-kitchen', state)
     store.mark_reported('thermostat-kitchen', True)
     return store
 
@@ -55,12 +55,12 @@ def f_received() -> list[DomainEvent]:
 
 
 @pytest.fixture
-def provider(f_state: ThermostatState) -> ThermostatProviderStub:
+def provider(state: ThermostatState) -> ThermostatProviderStub:
     DeviceFactory(slug='thermostat-kitchen')
     DeviceFactory(slug='thermostat-hallway')
     return ThermostatProviderStub(
         thermostats={
-            'thermostat-kitchen': FloorThermostatStub(state=f_state),
+            'thermostat-kitchen': FloorThermostatStub(state=state),
             'thermostat-hallway': FloorThermostatStub(state=None, error=DeviceUnavailableError('timeout')),
         },
     )
@@ -85,13 +85,13 @@ def f_use_case(
 @pytest.fixture
 def f_stale_use_case(
     provider: ThermostatProviderStub,
-    f_stale_store: ThermostatStateStore,
+    stale_store: ThermostatStateStore,
     dispatcher: EventDispatcher,
 ) -> PollThermostatsUseCase:
     return PollThermostatsUseCase(
         devices=DeviceRepository(),
         provider=provider,
-        store=f_stale_store,
+        store=stale_store,
         dispatcher=dispatcher,
     )
 
