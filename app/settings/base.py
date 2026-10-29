@@ -96,6 +96,20 @@ TEPLO_DRY_RUN = to_bool(os.getenv('TEPLO_DRY_RUN'), default=True)
 TEPLO_PANEL_HOST = os.getenv('TEPLO_PANEL_HOST', '127.0.0.1')
 TEPLO_PANEL_PORT = int(os.getenv('TEPLO_PANEL_PORT', '8088'))
 
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'plain': {'format': '{asctime} {levelname} {name}: {message}', 'style': '{'},
+    },
+    'handlers': {
+        'stdout': {'class': 'logging.StreamHandler', 'stream': 'ext://sys.stdout', 'formatter': 'plain'},
+    },
+    'loggers': {
+        'django': {'handlers': ['stdout'], 'level': 'WARNING'},
+    },
+}
+
 structlog.configure(
     processors=[
         structlog.contextvars.merge_contextvars,
