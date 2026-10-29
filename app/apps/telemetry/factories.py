@@ -1,7 +1,7 @@
 import factory
 from django.utils import timezone
 
-from apps.telemetry.models import JournalEntry
+from apps.telemetry.models import JournalEntry, Sample
 
 
 class JournalEntryFactory(factory.django.DjangoModelFactory):
@@ -12,3 +12,13 @@ class JournalEntryFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = JournalEntry
+
+
+class SampleFactory(factory.django.DjangoModelFactory):
+    metric = 'floor_temperature'
+    subject = 'thermostat-kitchen'
+    value = 24.5
+    recorded_at = factory.LazyFunction(timezone.now)
+
+    class Meta:
+        model = Sample

@@ -51,6 +51,11 @@ def test_panel_password_is_read(f_secrets: SecretsFile) -> None:
     assert f_secrets.panel_password == 'panel-secret'
 
 
+def test_unknown_device_raises(f_secrets: SecretsFile) -> None:
+    with pytest.raises(SecretMissingError):
+        f_secrets.device('thermostat-attic')
+
+
 def test_missing_file_has_no_secrets(f_empty_secrets: SecretsFile) -> None:
     with pytest.raises(SecretMissingError):
         f_empty_secrets.device('thermostat-kitchen')

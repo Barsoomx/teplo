@@ -3,8 +3,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from django.core.serializers.json import DjangoJSONEncoder
 
-from apps.telemetry.factories import JournalEntryFactory
-from apps.telemetry.models import JournalEntry
+from apps.telemetry.factories import JournalEntryFactory, SampleFactory
+from apps.telemetry.models import JournalEntry, Sample
 from apps.telemetry.repositories.journal import JournalRepository
 from apps.telemetry.repositories.sample import SampleRepository
 from apps.telemetry.usecases.journal_startup import (
@@ -24,6 +24,11 @@ def f_previous_entry() -> JournalEntry:
 
 
 @pytest.fixture
+def f_later_sample(f_previous_entry: JournalEntry) -> Sample:
+    return SampleFactory.create(recorded_at=f_previous_entry.created_at + timedelta(hours=1))
+
+
+@pytest.fixture
 def f_use_case() -> JournalStartupUseCase:
     return JournalStartupUseCase(journal=JournalRepository(), samples=SampleRepository())
 
@@ -37,3 +42,12 @@ def test_startup_journals_last_activity(f_use_case: JournalStartupUseCase, f_pre
         {'last_activity': DjangoJSONEncoder().default(f_previous_entry.created_at)},
         NOW,
     )
+
+
+def test_startup_takes_later_sample_as_last_activity(
+    f_use_case: JournalStartupUseCase,
+    f_later_sample: Sample,
+) -> None:
+    output = f_use_case.execute(JournalStartupInputDTO(now=NOW))
+
+    assert output == JournalStartupOutputDTO(last_activity=f_later_sample.recorded_at)

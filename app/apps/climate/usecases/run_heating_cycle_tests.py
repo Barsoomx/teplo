@@ -246,10 +246,22 @@ def test_dry_run_journals_without_writing(
 def test_zone_without_live_control_stays_in_dry_run(
     f_observed_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
 ) -> None:
     output = f_observed_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
 
-    assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.DRY_RUN}, [])
+    assert (output.outcomes, f_thermostat.commands, f_events) == (
+        {'kitchen': ZoneCycleOutcome.DRY_RUN},
+        [],
+        [
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(setpoint=Decimal('28.0')),
+                dry_run=True,
+                occurred_at=MORNING,
+            ),
+        ],
+    )
 
 
 def test_cycle_switches_program_mode_to_hold(
