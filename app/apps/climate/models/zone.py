@@ -40,6 +40,7 @@ class Zone(models.Model):
     preheat_lead_minutes = models.PositiveIntegerField(default=180, validators=[MaxValueValidator(240)])
     boost_until = models.DateTimeField(null=True, blank=True)
     last_command_at = models.DateTimeField(null=True, blank=True)
+    last_dry_run_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

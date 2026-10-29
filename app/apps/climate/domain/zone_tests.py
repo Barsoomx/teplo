@@ -24,6 +24,7 @@ def f_zone(request: pytest.FixtureRequest) -> ZoneSettings:
         windows=(),
         boost_until=request.param,
         last_command_at=None,
+        last_dry_run_at=None,
     )
 
 

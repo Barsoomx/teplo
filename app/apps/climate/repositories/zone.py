@@ -17,8 +17,13 @@ class ZoneRepository:
         Zone.objects.filter(slug=slug).update(last_command_at=at)
 
     @staticmethod
+    def mark_dry_run(slug: str, at: datetime) -> None:
+        Zone.objects.filter(slug=slug).update(last_dry_run_at=at)
+
+    @staticmethod
     def boost(slug: str, until: datetime) -> None:
-        if Zone.objects.filter(slug=slug).update(boost_until=until, last_command_at=None) == 0:
+        updated = Zone.objects.filter(slug=slug).update(boost_until=until, last_command_at=None, last_dry_run_at=None)
+        if updated == 0:
             raise ZoneNotFoundError(slug)
 
 
@@ -42,4 +47,5 @@ def _to_settings(zone: Zone) -> ZoneSettings:
         ),
         boost_until=zone.boost_until,
         last_command_at=zone.last_command_at,
+        last_dry_run_at=zone.last_dry_run_at,
     )

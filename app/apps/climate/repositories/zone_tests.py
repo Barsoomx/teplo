@@ -25,7 +25,10 @@ def f_zone() -> Zone:
 
 @pytest.fixture
 def f_commanded_zone(f_zone: Zone) -> Zone:
-    Zone.objects.filter(pk=f_zone.pk).update(last_command_at=NOW - timedelta(minutes=5))
+    Zone.objects.filter(pk=f_zone.pk).update(
+        last_command_at=NOW - timedelta(minutes=5),
+        last_dry_run_at=NOW - timedelta(minutes=5),
+    )
     return f_zone
 
 
@@ -43,6 +46,7 @@ def test_all_settings_maps_zone(f_zone: Zone) -> None:
             windows=(ComfortWindow(weekday=0, start=time(6, 30), end=time(23, 30)),),
             boost_until=None,
             last_command_at=None,
+            last_dry_run_at=None,
         ),
     ]
 
@@ -53,11 +57,18 @@ def test_mark_commanded_stores_time(f_zone: Zone) -> None:
     assert Zone.objects.get(pk=f_zone.pk).last_command_at == NOW
 
 
-def test_boost_sets_until_and_clears_last_command(f_commanded_zone: Zone) -> None:
+def test_mark_dry_run_stores_time(f_zone: Zone) -> None:
+    ZoneRepository.mark_dry_run(f_zone.slug, NOW)
+
+    zone = Zone.objects.get(pk=f_zone.pk)
+    assert (zone.last_dry_run_at, zone.last_command_at) == (NOW, None)
+
+
+def test_boost_sets_until_and_clears_write_stamps(f_commanded_zone: Zone) -> None:
     ZoneRepository.boost(f_commanded_zone.slug, NOW + timedelta(hours=2))
 
     zone = Zone.objects.get(pk=f_commanded_zone.pk)
-    assert (zone.boost_until, zone.last_command_at) == (NOW + timedelta(hours=2), None)
+    assert (zone.boost_until, zone.last_command_at, zone.last_dry_run_at) == (NOW + timedelta(hours=2), None, None)
 
 
 def test_boost_unknown_zone_raises() -> None:

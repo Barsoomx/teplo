@@ -159,6 +159,26 @@ def f_recent_command_cycle(
 
 
 @pytest.fixture
+def f_promoted_cycle(
+    f_zone: Zone,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(pk=f_zone.pk).update(last_dry_run_at=MORNING - timedelta(minutes=10))
+    return _cycle(f_zone, _state('22.0'), f_thermostat, dispatcher)
+
+
+@pytest.fixture
+def f_recent_dry_run_cycle(
+    f_zone: Zone,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(pk=f_zone.pk).update(last_dry_run_at=MORNING - timedelta(minutes=10))
+    return _cycle(f_zone, _state('22.0'), f_thermostat, dispatcher, dry_run=True)
+
+
+@pytest.fixture
 def f_stale_cycle(
     f_zone: Zone,
     f_thermostat: FloorThermostatStub,
@@ -248,10 +268,12 @@ def test_dry_run_journals_without_writing(
     f_dry_run_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
     f_events: list[DomainEvent],
+    f_zone: Zone,
 ) -> None:
     output = f_dry_run_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
 
-    assert (output.outcomes, f_thermostat.commands, f_events) == (
+    zone = Zone.objects.get(pk=f_zone.pk)
+    assert (output.outcomes, f_thermostat.commands, f_events, zone.last_dry_run_at, zone.last_command_at) == (
         {'kitchen': ZoneCycleOutcome.DRY_RUN},
         [],
         [
@@ -262,6 +284,8 @@ def test_dry_run_journals_without_writing(
                 occurred_at=MORNING,
             ),
         ],
+        MORNING,
+        None,
     )
 
 
@@ -302,6 +326,27 @@ def test_cycle_throttles_zone_commanded_recently(
     output = f_recent_command_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
 
     assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.THROTTLED}, [])
+
+
+def test_cycle_writes_at_once_when_zone_goes_live_after_dry_run(
+    f_promoted_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_promoted_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+
+    assert (output.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+    )
+
+
+def test_dry_run_throttles_its_journal_like_live_writes(
+    f_recent_dry_run_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_recent_dry_run_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+
+    assert (output.outcomes, f_events) == ({'kitchen': ZoneCycleOutcome.THROTTLED}, [])
 
 
 def test_cycle_skips_unavailable_thermostat(

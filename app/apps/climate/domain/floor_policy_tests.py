@@ -26,6 +26,7 @@ def f_zone() -> ZoneSettings:
         windows=(),
         boost_until=None,
         last_command_at=None,
+        last_dry_run_at=None,
     )
 
 

@@ -86,18 +86,22 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         if change.is_empty:
             return ZoneCycleOutcome.UNCHANGED
 
-        if not write_allowed(zone.last_command_at, now):
+        live = zone.live_control and not self._dry_run
+        if not write_allowed(zone.last_command_at if live else zone.last_dry_run_at, now):
             return ZoneCycleOutcome.THROTTLED
+
+        if not live:
+            return self._journal_dry_run(zone, change, now)
 
         return self._issue(zone, change, now)
 
+    def _journal_dry_run(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
+        self._zones.mark_dry_run(zone.slug, now)
+        self._event_store.add_event(ZoneCommandIssued(zone=zone.slug, change=change, dry_run=True, occurred_at=now))
+        return ZoneCycleOutcome.DRY_RUN
+
     def _issue(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
         self._zones.mark_commanded(zone.slug, now)
-        dry_run = self._dry_run or not zone.live_control
-        if dry_run:
-            self._event_store.add_event(ZoneCommandIssued(zone=zone.slug, change=change, dry_run=True, occurred_at=now))
-            return ZoneCycleOutcome.DRY_RUN
-
         try:
             self._apply(zone.thermostat_slug, change)
         except DomainError as error:

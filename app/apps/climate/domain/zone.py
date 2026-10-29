@@ -34,6 +34,7 @@ class ZoneSettings:
     windows: tuple[ComfortWindow, ...]
     boost_until: datetime | None
     last_command_at: datetime | None
+    last_dry_run_at: datetime | None
 
     def is_boosted(self, now: datetime) -> bool:
         return self.boost_until is not None and now < self.boost_until <= now + BOOST_DURATION
