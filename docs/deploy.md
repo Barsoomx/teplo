@@ -11,7 +11,7 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
    ssh -p 222 root@192.168.1.1 sh /tmp/teplo-router/install.sh
    ```
 
-2. Edit `/opt/etc/teplo/teplo.env`: set `DJANGO_SECRET_KEY`, `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS`. Keep `TEPLO_DRY_RUN=true` for the first run.
+2. Edit `/opt/etc/teplo/teplo.env`: set `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS`. Keep `TEPLO_DRY_RUN=true` for the first run. The installer fills in a random `DJANGO_SECRET_KEY` when the file has none; teplo refuses to start without it.
 3. Create `/opt/etc/teplo/secrets.toml` from `deploy/router/secrets.toml.example`, one `[devices.<slug>]` table per device slug of the site, and `chmod 600` it. Local keys come from the Smart Life QR login described in `docs/design.md`.
 
 ## Deploy a release

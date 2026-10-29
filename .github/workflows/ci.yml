@@ -31,6 +31,7 @@ jobs:
       - name: Site migrations apply
         env:
           DJANGO_SETTINGS_MODULE: settings.settings
+          DJANGO_SECRET_KEY: ci-site-migrations-only
         run: |
           for site in example barsoom; do
             TEPLO_SITE=$site TEPLO_DB_PATH=/tmp/teplo-$site.sqlite3 poetry run python app/manage.py migrate --noinput

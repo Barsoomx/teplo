@@ -54,6 +54,7 @@ known-first-party = ['apps', 'settings', 'sites']
 [tool.ruff.lint.per-file-ignores]
 '*_tests.py' = ['S101', 'S105', 'S106']
 'app/settings/*' = ['S105']
+'app/settings/settings.py' = ['F403', 'F405']
 'app/settings/test_settings.py' = ['F403', 'F405']
 'app/apps/system/services/clock_trust.py' = ['S603']
 

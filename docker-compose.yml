@@ -6,6 +6,7 @@ services:
       - .:/code
     environment:
       DJANGO_SETTINGS_MODULE: settings.settings
+      DJANGO_SECRET_KEY: teplo-development-only
       TEPLO_SITE: ${TEPLO_SITE:-}
       TEPLO_DB_PATH: /code/.local/teplo.sqlite3
       TEPLO_STATIC_ROOT: /code/.local/static

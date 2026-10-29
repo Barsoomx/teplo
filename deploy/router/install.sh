@@ -2,6 +2,7 @@
 set -eu
 
 ROOT=/opt/share/teplo
+ENV_FILE=/opt/etc/teplo/teplo.env
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 opkg update
@@ -12,9 +13,14 @@ cp "$HERE/S90teplo" /opt/etc/init.d/S90teplo
 chmod 755 /opt/etc/init.d/S90teplo
 cp "$HERE/teplo-watchdog.sh" "$ROOT/teplo-watchdog.sh"
 chmod 755 "$ROOT/teplo-watchdog.sh"
-if [ ! -f /opt/etc/teplo/teplo.env ]; then
-    cp "$HERE/teplo.env.example" /opt/etc/teplo/teplo.env
-    chmod 600 /opt/etc/teplo/teplo.env
+if [ ! -f "$ENV_FILE" ]; then
+    cp "$HERE/teplo.env.example" "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+fi
+if ! grep -q '^DJANGO_SECRET_KEY=.' "$ENV_FILE"; then
+    key=$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')
+    sed -i '/^DJANGO_SECRET_KEY=/d' "$ENV_FILE"
+    printf 'DJANGO_SECRET_KEY=%s\n' "$key" >> "$ENV_FILE"
 fi
 if ! grep -q teplo-watchdog /opt/etc/crontabs/root; then
     printf '\n# teplo watchdog: restart when the process dies or exceeds 300 MB RSS\n* * * * * %s/teplo-watchdog.sh >/dev/null 2>&1\n' "$ROOT" >> /opt/etc/crontabs/root

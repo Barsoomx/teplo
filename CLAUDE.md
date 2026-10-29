@@ -18,7 +18,7 @@ Lightweight DDD in the altyn-backend style: Django models are the persistent ent
 
 ```
 app/
-  settings/              settings.py (os.getenv), test_settings.py, urls.py, asgi.py
+  settings/              base.py (os.getenv), settings.py (production: requires DJANGO_SECRET_KEY), test_settings.py, urls.py, asgi.py
   apps/
     core/                shared kernel: BaseUseCase, DomainError, DomainEvent, base command, runtime
     <context>/
