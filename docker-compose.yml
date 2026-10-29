@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    image: teplo-dev
+    volumes:
+      - .:/code
+    environment:
+      DJANGO_SETTINGS_MODULE: settings.settings
+      TEPLO_SITE: ${TEPLO_SITE:-}
+      TEPLO_DB_PATH: /code/.local/teplo.sqlite3
+      TEPLO_STATIC_ROOT: /code/.local/static
+      TEPLO_SECRETS_FILE: /code/secrets/secrets.toml
+      TEPLO_CLOCK_SOURCE: system
+      TEPLO_DRY_RUN: 'true'
+      TEPLO_PANEL_HOST: 0.0.0.0
+      TEPLO_ALLOWED_HOSTS: localhost,127.0.0.1
+    ports:
+      - '8088:8088'

@@ -23,3 +23,5 @@ esphome/secrets.yaml
 .idea/
 .vscode/
 .claude/worktrees/
+.local/
+requirements.txt

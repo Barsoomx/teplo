@@ -1,0 +1,74 @@
+[project]
+name = 'teplo'
+version = '0.1.0'
+description = 'Local-first heating and load controller for a home router'
+requires-python = '>=3.13,<3.14'
+dependencies = [
+    'django>=5.2,<5.3',
+    'djangorestframework>=3.16,<3.17',
+    'structlog>=25.1',
+    'tinytuya>=1.17,<2',
+    'uvicorn>=0.34',
+    'whitenoise>=6.9',
+]
+
+[tool.poetry]
+package-mode = false
+
+[tool.poetry.group.dev.dependencies]
+pytest = '>=8.3'
+pytest-django = '>=4.10'
+factory-boy = '>=3.3'
+freezegun = '>=1.5'
+ruff = '>=0.11'
+mypy = '>=1.15'
+django-stubs = { version = '>=5.2', extras = ['compatible-mypy'] }
+djangorestframework-stubs = { version = '>=3.15', extras = ['compatible-mypy'] }
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = 'settings.test_settings'
+pythonpath = ['app']
+testpaths = ['app']
+python_files = ['*_tests.py']
+addopts = '--strict-markers'
+
+[tool.ruff]
+line-length = 120
+target-version = 'py313'
+src = ['app']
+extend-exclude = ['app/apps/*/migrations', 'app/sites/*/migrations', '*.md']
+
+[tool.ruff.format]
+quote-style = 'single'
+
+[tool.ruff.lint]
+select = ['W', 'ARG', 'ANN', 'ASYNC', 'B', 'COM', 'C4', 'C90', 'DTZ', 'E', 'ERA', 'F', 'UP', 'T10', 'T20', 'Q', 'S', 'I', 'N', 'YTT', 'PTH']
+ignore = ['COM812']
+
+[tool.ruff.lint.flake8-quotes]
+inline-quotes = 'single'
+
+[tool.ruff.lint.isort]
+known-first-party = ['apps', 'settings', 'sites']
+
+[tool.ruff.lint.per-file-ignores]
+'*_tests.py' = ['S101', 'S105', 'S106']
+'app/settings/*' = ['S105']
+'app/settings/test_settings.py' = ['F403', 'F405']
+'app/apps/system/services/clock_trust.py' = ['S603']
+
+[tool.mypy]
+python_version = '3.13'
+mypy_path = 'app'
+explicit_package_bases = true
+disallow_untyped_defs = true
+warn_unused_ignores = true
+plugins = ['mypy_django_plugin.main', 'mypy_drf_plugin.main']
+exclude = ['/migrations/']
+
+[[tool.mypy.overrides]]
+module = ['tinytuya', 'tinytuya.*', 'factory', 'factory.*']
+ignore_missing_imports = true
+
+[tool.django-stubs]
+django_settings_module = 'settings.test_settings'
