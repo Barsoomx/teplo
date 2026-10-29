@@ -1,0 +1,17 @@
+{% if overview.dry_run %}<p class="banner">Dry run: commands are journaled, thermostats are not changed.</p>{% endif %}
+{% if not overview.clock.trusted %}<p class="banner warning">Clock not trusted ({{ overview.clock.reason }}): holding comfort setpoints.</p>{% endif %}
+<div class="zones">
+  {% for zone in overview.zones %}
+  <article class="zone{% if not zone.available %} offline{% endif %}">
+    <h2>{{ zone.name }}</h2>
+    <p class="mode">{{ zone.mode }}{% if zone.boosted %} · boost{% endif %}{% if not zone.live_control %} · observe{% endif %}</p>
+    <dl>
+      <dt>Floor</dt><dd>{% if zone.floor_temperature is not None %}{{ zone.floor_temperature }} °C{% else %}—{% endif %}</dd>
+      <dt>Setpoint</dt><dd>{% if zone.setpoint is not None %}{{ zone.setpoint }} °C{% else %}—{% endif %}</dd>
+      <dt>Target</dt><dd>{% if zone.target_setpoint is not None %}{{ zone.target_setpoint }} °C{% else %}off{% endif %}</dd>
+    </dl>
+    {% if zone.error %}<p class="error">{{ zone.error }}</p>{% endif %}
+    <button hx-post="{% url 'panel:boost-zone' zone.slug %}" hx-target="#zones" hx-swap="innerHTML">Boost 2 h</button>
+  </article>
+  {% endfor %}
+</div>

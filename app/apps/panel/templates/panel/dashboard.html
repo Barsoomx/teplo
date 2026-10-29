@@ -1,0 +1,6 @@
+{% extends 'panel/base.html' %}
+{% block content %}
+<section id="zones" hx-get="{% url 'panel:zones' %}" hx-trigger="every 10s" hx-swap="innerHTML">
+  {% include 'panel/_zones.html' %}
+</section>
+{% endblock %}

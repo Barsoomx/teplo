@@ -1,0 +1,46 @@
+from collections.abc import Iterator
+from unittest import mock
+from unittest.mock import MagicMock
+
+import pytest
+from django.test import Client
+
+from apps.panel.services.zone_overview import PanelOverview
+
+pytestmark = pytest.mark.django_db
+
+
+@pytest.fixture
+def m_overview_service(panel_overview: PanelOverview) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.api.v1.zones.ZoneOverviewService') as service:
+        service.init.return_value.overview.return_value = panel_overview
+        yield service
+
+
+def test_zones_api_returns_overview(f_client: Client, m_overview_service: MagicMock) -> None:
+    response = f_client.get('/api/v1/zones/')
+
+    assert (response.status_code, response.json(), m_overview_service.init.call_count) == (
+        200,
+        [
+            {
+                'slug': 'kitchen',
+                'name': 'Кухня',
+                'kind': 'air',
+                'mode': 'comfort',
+                'available': True,
+                'error': None,
+                'floor_temperature': '24.5',
+                'power': True,
+                'setpoint': '28.0',
+                'target_setpoint': '28.0',
+                'boosted': False,
+                'live_control': False,
+            },
+        ],
+        1,
+    )
+
+
+def test_zones_api_requires_login(f_anonymous_client: Client) -> None:
+    assert f_anonymous_client.get('/api/v1/zones/').status_code == 403
