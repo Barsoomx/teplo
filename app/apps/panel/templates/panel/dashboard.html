@@ -1,5 +1,7 @@
 {% extends 'panel/base.html' %}
+{% load i18n %}
 {% block content %}
+<h1 class="visually-hidden">{% translate 'Floors' %}</h1>
 <section id="zones" hx-get="{% url 'panel:zones' %}" hx-trigger="every 10s" hx-swap="innerHTML">
   {% include 'panel/_zones.html' %}
 </section>

@@ -1,23 +1,32 @@
-{% load static %}<!doctype html>
-<html lang="ru">
+{% load static i18n panel_format %}<!doctype html>
+{% get_current_language as LANGUAGE_CODE %}<html lang="{{ LANGUAGE_CODE }}">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>teplo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1a1433">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#e9e6f1">
+  <title>{% block title %}teplo{% endblock %}</title>
+  <link rel="icon" href="{% static 'panel/favicon.svg' %}" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="{% static 'panel/apple-touch-icon.png' %}">
+  <link rel="preload" href="{% static 'panel/fonts/unbounded-latin-wght-normal.woff2' %}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{% static 'panel/fonts/golos-text-cyrillic-wght-normal.woff2' %}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{% static 'panel/panel.css' %}">
   <script src="{% static 'panel/htmx.min.js' %}" defer></script>
 </head>
-<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
-  <header>
-    <a href="{% url 'panel:dashboard' %}">teplo</a>
+<body class="{% block body_class %}{% endblock %}" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
+  {% block header %}
+  <header class="topbar">
+    <a class="wordmark" href="{% url 'panel:dashboard' %}">teplo</a>
     {% if user.is_authenticated %}
-    <nav>
-      <a href="{% url 'panel:journal' %}">Journal</a>
-      <a href="{% url 'admin:index' %}">Settings</a>
-      <form method="post" action="{% url 'panel:logout' %}">{% csrf_token %}<button type="submit">Log out</button></form>
+    <nav class="nav" aria-label="{% translate 'Sections' %}">
+      <a class="nav-link" href="{% url 'panel:journal' %}"{% if request.resolver_match.url_name == 'journal' %} aria-current="page"{% endif %}>{% icon 'scroll-text' %}<span class="nav-label">{% translate 'Journal' %}</span></a>
+      <a class="nav-link" href="{% url 'admin:index' %}">{% icon 'settings-2' %}<span class="nav-label">{% translate 'Settings' %}</span></a>
+      <form class="nav-form" method="post" action="{% url 'panel:logout' %}">{% csrf_token %}<button class="nav-link" type="submit">{% icon 'log-out' %}<span class="nav-label">{% translate 'Log out' %}</span></button></form>
     </nav>
     {% endif %}
   </header>
-  <main>{% block content %}{% endblock %}</main>
+  {% endblock %}
+  <main class="page">{% block content %}{% endblock %}</main>
 </body>
 </html>

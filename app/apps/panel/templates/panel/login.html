@@ -1,8 +1,17 @@
 {% extends 'panel/base.html' %}
+{% load i18n %}
+{% block body_class %}page-login{% endblock %}
+{% block header %}{% endblock %}
 {% block content %}
-<form method="post" class="login">
-  {% csrf_token %}
-  {{ form.as_p }}
-  <button type="submit">Log in</button>
-</form>
+<div class="login">
+  <h1 class="login-mark">teplo</h1>
+  <form class="login-form" method="post">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<p class="form-error" role="alert">{{ form.non_field_errors.0 }}</p>{% endif %}
+    <label class="field"><span class="field-label">{% translate 'Name' %}</span>{{ form.username }}</label>
+    <label class="field"><span class="field-label">{% translate 'Password' %}</span>{{ form.password }}</label>
+    <input type="hidden" name="next" value="{{ next }}">
+    <button class="button-primary" type="submit">{% translate 'Log in' %}</button>
+  </form>
+</div>
 {% endblock %}

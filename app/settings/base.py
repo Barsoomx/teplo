@@ -20,6 +20,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.humanize',
     'rest_framework',
     'apps.core',
     'apps.devices',
@@ -34,6 +35,7 @@ MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -68,17 +70,18 @@ DATABASES = {
 }
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'en'
+LANGUAGES = [('en', 'English'), ('ru', 'Русский')]
 TIME_ZONE = os.getenv('TEPLO_TIME_ZONE', 'Europe/Moscow')
 USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = 'static/'
 STATIC_ROOT: str | None = os.getenv('TEPLO_STATIC_ROOT', str(LOCAL_DIR / 'static'))
+WHITENOISE_ROOT = BASE_DIR / 'apps' / 'panel' / 'root'
 STORAGES = {
     'default': {'BACKEND': 'django.core.files.storage.FileSystemStorage'},
     'staticfiles': {'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage'},
-WHITENOISE_ROOT = BASE_DIR / 'apps' / 'panel' / 'root'
 }
 
 LOGIN_URL = 'panel:login'

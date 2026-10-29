@@ -1,0 +1,148 @@
+# Russian translation of the teplo panel.
+msgid ""
+msgstr ""
+"Project-Id-Version: teplo\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<12 || n%100>14) ? 1 : n%10==0 || (n%10>=5 && n%10<=9) || (n%100>=11 && n%100<=14)? 2 : 3);\n"
+
+msgid "Comfort"
+msgstr "Комфорт"
+
+msgid "Warm-up"
+msgstr "Разогрев"
+
+msgid "Night"
+msgstr "Ночь"
+
+msgid "Boost"
+msgstr "Буст"
+
+msgid "Off"
+msgstr "Выключено"
+
+msgid "Watching only: commands are not sent"
+msgstr "Режим наблюдения: команды не отправляются"
+
+msgid "teplo controls the floors"
+msgstr "teplo управляет полами"
+
+#, python-format
+msgid "%(house_time)s, clock synced"
+msgstr "%(house_time)s, время сверено"
+
+#, python-format
+msgid "%(house_time)s, clock not synced (%(reason)s): holding comfort"
+msgstr "%(house_time)s, время не сверено (%(reason)s): держу комфорт"
+
+msgid "Watching"
+msgstr "Наблюдение"
+
+msgid "Floor, heating off"
+msgstr "Пол, отопление выключено"
+
+#, python-format
+msgid "Floor, target %(target)s°"
+msgstr "Пол, цель %(target)s°"
+
+msgid "Thermostat is off"
+msgstr "Термостат выключен"
+
+#, python-format
+msgid "Thermostat set to %(setpoint)s°"
+msgstr "На термостате %(setpoint)s°"
+
+#, python-format
+msgid "Boost until %(until)s"
+msgstr "Буст до %(until)s"
+
+#, python-format
+msgid "Night from %(at)s"
+msgstr "Ночь с %(at)s"
+
+#, python-format
+msgid "Warm-up from %(at)s"
+msgstr "Разогрев с %(at)s"
+
+#, python-format
+msgid "Comfort from %(at)s"
+msgstr "Комфорт с %(at)s"
+
+msgid "Extend boost"
+msgstr "Продлить буст"
+
+msgid "Boost for 2 hours"
+msgstr "Буст на 2 часа"
+
+msgid "No connection. Check that the thermostat has power and Wi-Fi."
+msgstr "Нет связи. Проверьте питание термостата и Wi-Fi."
+
+msgid "Sections"
+msgstr "Разделы"
+
+msgid "Journal"
+msgstr "Журнал"
+
+msgid "Settings"
+msgstr "Настройки"
+
+msgid "Log out"
+msgstr "Выйти"
+
+msgid "Floors"
+msgstr "Полы"
+
+msgid "teplo journal"
+msgstr "Журнал teplo"
+
+msgid "teplo started"
+msgstr "teplo запущен"
+
+#, python-format
+msgid "%(name)s: thermostat is online"
+msgstr "%(name)s: термостат на связи"
+
+#, python-format
+msgid "%(name)s: no connection to the thermostat"
+msgstr "%(name)s: нет связи с термостатом"
+
+msgid "Not sent: watching only"
+msgstr "Не отправлено: режим наблюдения"
+
+#, python-format
+msgid "%(name)s: command failed (%(summary)s)"
+msgstr "%(name)s: команда не прошла (%(summary)s)"
+
+#, python-format
+msgid "%(name)s: boost until %(until)s"
+msgstr "%(name)s: буст до %(until)s"
+
+msgid "Nothing here yet. Events appear once teplo has polled the thermostats."
+msgstr "Пока пусто. События появятся, когда teplo опросит термостаты."
+
+msgid "Name"
+msgstr "Имя"
+
+msgid "Password"
+msgstr "Пароль"
+
+msgid "Log in"
+msgstr "Войти"
+
+msgid "turn on"
+msgstr "включить"
+
+msgid "turn off"
+msgstr "выключить"
+
+msgid "manual mode"
+msgstr "ручной режим"
+
+#, python-format
+msgid "set to %(temperature)s°"
+msgstr "уставка %(temperature)s°"
+
+msgid "tomorrow"
+msgstr "завтра"
