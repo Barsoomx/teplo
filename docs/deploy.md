@@ -22,6 +22,31 @@ sh deploy/deploy.sh
 
 The script installs pinned requirements into `/opt/share/teplo/venv` (Entware provides `cryptography`), migrates, collects static files, creates or updates the `owner` panel account from `secrets.toml`, switches `/opt/share/teplo/current` and restarts the service. The panel is at `http://192.168.1.1:8088/`.
 
+```mermaid
+flowchart LR
+    archive["git archive HEAD<br/>app, deploy"] -->|ssh| release["releases/commit"]
+    release --> prepare["pip install --no-deps<br/>migrate, collectstatic<br/>owner account"]
+    prepare --> switch["current → releases/commit"]
+    switch --> restart["S90teplo restart"]
+```
+
+A failed step stops the script before `current` moves, so the running release stays in place.
+
+Layout on the router:
+
+```
+/opt/share/teplo/
+  releases/<commit>/    app and deploy trees of one commit
+  current               symlink to the running release
+  venv/                 laid out by hand: Entware's python3 ships no venv module
+/opt/etc/teplo/
+  teplo.env             settings, read at start
+  secrets.toml          device addresses and keys, panel password (chmod 600)
+/opt/etc/init.d/S90teplo
+/opt/var/lib/teplo/     SQLite database and static files
+/opt/var/log/teplo/     teplo.log, restarts.log
+```
+
 Releases ship without tests: `.gitattributes` marks `*_tests.py` and `conftest.py` as `export-ignore`. Django imports every module of a `templatetags` package at startup, and the router has no pytest.
 
 ## Operate

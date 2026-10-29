@@ -109,11 +109,14 @@ One process on the router runs an asyncio runtime:
 - use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
 - jobs run concurrently: in-memory state (state store, sample buffer) is guarded by locks, and the Tuya driver serializes calls to each thermostat.
 
-```
-drivers ──► state store ──► control loops ──► commands ──► drivers
-                │                 │
-                ▼                 ▼
-             panel          recorder ──► SQLite
+```mermaid
+flowchart LR
+    drivers["Drivers"] -->|"readings, every 30 s"| store["State store"]
+    store --> loops["Control loops<br/>every minute"]
+    loops -->|commands| drivers
+    store --> panel["Panel and API"]
+    store --> recorder["Recorder<br/>buffers every minute"]
+    recorder -->|"every 5 min"| sqlite[("SQLite")]
 ```
 
 ### Modules
@@ -167,6 +170,17 @@ Every zone carries three floor setpoints. A floor zone always runs in floor mode
 | Bathroom 1F | 18 °C | 18 °C | 30 °C |
 
 Pre-heat in floor mode starts a fixed lead before the comfort period, 3 hours by default and configurable per zone.
+
+```mermaid
+stateDiagram-v2
+    direction LR
+    state "Night · night setpoint" as night
+    state "Pre-heat · comfort setpoint" as preheat
+    state "Comfort · comfort setpoint" as comfort
+    night --> preheat: lead before the comfort period
+    preheat --> comfort: comfort period starts
+    comfort --> night: comfort period ends
+```
 
 ### Optimal start
 
