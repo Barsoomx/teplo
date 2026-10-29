@@ -3,7 +3,7 @@
 Local-first controller for electric floor heating and household load balancing.
 It runs 24/7 on a home router and needs no cloud at runtime.
 
-> Status: design phase. The design lives in [`docs/design.md`](docs/design.md); code lands stage by stage (see [Roadmap](#roadmap)).
+> Status: stage 1 (thermostats and schedules) is implemented; the next step is a dry-run rollout on the router, described in [`docs/deploy.md`](docs/deploy.md). The design lives in [`docs/design.md`](docs/design.md); later stages follow the [Roadmap](#roadmap).
 
 ## Why
 
