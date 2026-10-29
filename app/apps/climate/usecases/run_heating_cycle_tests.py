@@ -130,6 +130,16 @@ def f_clock_behind_cycle(
 
 
 @pytest.fixture
+def f_boost_ahead_of_clock_cycle(
+    f_zone: Zone,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(pk=f_zone.pk).update(boost_until=NIGHT + timedelta(hours=5))
+    return _cycle(f_zone, _state('22.0', read_at=NIGHT), f_thermostat, dispatcher, clock_trusted=False)
+
+
+@pytest.fixture
 def f_program_mode_cycle(
     f_zone: Zone,
     f_thermostat: FloorThermostatStub,
@@ -215,6 +225,18 @@ def test_cycle_holds_comfort_when_clock_fell_behind_last_command(
     f_thermostat: FloorThermostatStub,
 ) -> None:
     output = f_clock_behind_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+
+    assert (output.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+    )
+
+
+def test_cycle_ignores_boost_ending_beyond_boost_duration_after_clock_moved_back(
+    f_boost_ahead_of_clock_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_boost_ahead_of_clock_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
 
     assert (output.outcomes, f_thermostat.commands) == (
         {'kitchen': ZoneCycleOutcome.APPLIED},

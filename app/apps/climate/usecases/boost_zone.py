@@ -1,12 +1,11 @@
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from apps.climate.domain.events import ZoneBoosted
+from apps.climate.domain.zone import BOOST_DURATION
 from apps.climate.repositories.zone import ZoneRepository
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
-
-BOOST_DURATION = timedelta(hours=2)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -4,6 +4,8 @@ from decimal import Decimal
 
 from apps.climate.domain.modes import ZoneKind
 
+BOOST_DURATION = timedelta(hours=2)
+
 
 @dataclass(frozen=True, kw_only=True)
 class FloorSetpoints:
@@ -34,4 +36,4 @@ class ZoneSettings:
     last_command_at: datetime | None
 
     def is_boosted(self, now: datetime) -> bool:
-        return self.boost_until is not None and now < self.boost_until
+        return self.boost_until is not None and now < self.boost_until <= now + BOOST_DURATION
