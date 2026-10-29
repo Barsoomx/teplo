@@ -106,7 +106,8 @@ One process on the router runs an asyncio runtime:
 - control loops read the state store, decide, and send commands through drivers;
 - a recorder batches history to SQLite;
 - uvicorn serves the Django ASGI app (panel and API) from the same loop;
-- use cases are synchronous and run through `sync_to_async`, so blocking device and ORM calls stay off the loop.
+- use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
+- jobs run concurrently: in-memory state (state store, sample buffer) is guarded by locks, and the Tuya driver serializes calls to each thermostat.
 
 ```
 drivers ──► state store ──► control loops ──► commands ──► drivers
