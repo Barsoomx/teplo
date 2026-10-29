@@ -20,7 +20,7 @@ Lightweight DDD in the altyn-backend style: Django models are the persistent ent
 app/
   settings/              base.py (os.getenv), settings.py (production: requires DJANGO_SECRET_KEY), test_settings.py, urls.py, asgi.py
   apps/
-    core/                shared kernel: BaseUseCase, DomainError, DomainEvent, base command, runtime
+    core/                shared kernel: BaseUseCase, DomainError, DomainEvent, runtime
     <context>/
       domain/            pure policies, value objects, ports (Protocol), errors
       usecases/          <verb>_<noun>.py: <Verb><Noun>UseCase, <Verb><Noun>InputDTO, <Verb><Noun>OutputDTO
@@ -40,7 +40,7 @@ deploy/                  router install and deploy scripts
 
 Contexts: `core`, `devices`, `climate`, `power`, `tariffs`, `telemetry`, `notifications`, `system`, `panel`.
 
-- **Use cases** extend `BaseUseCase[TInput, TOutput]`: the public `execute(input_dto)` handles logging, `DomainError` and event dispatch, the subclass implements `_execute`; `UseCaseTransactional` runs `_execute` in a transaction. Views, management commands and runtime loops only call use cases.
+- **Use cases** extend `BaseUseCase[TInput, TOutput]`: the public `execute(input_dto)` handles logging, `DomainError` and event dispatch, the subclass implements `_execute`. Views, management commands and runtime loops only call use cases.
 - **Use cases are synchronous**; the asyncio runtime runs each periodic job in a worker thread (`asyncio.to_thread`), so jobs run concurrently: shared in-memory state takes a lock and a driver serializes calls to its device.
 - **Domain policies** (`climate/domain`, `power/domain`) are pure: value objects in, decisions out, no imports from Django, drivers or the network. AST architecture tests enforce the boundaries.
 - **Devices** are reached through capability ports declared as `Protocol` in `devices/domain/capabilities.py` (`FloorThermostat`, `SwitchablePlug`, `TemperatureSensor`, `PhaseMeter`, `ClimateUnit`, `EvCharger`). A new device type is a driver implementing a port; an unsupported one is a stub driver raising `DriverNotImplementedError`.
