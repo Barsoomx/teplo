@@ -1,19 +1,28 @@
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 
 from django.conf import settings
 from django.utils import timezone
 
 from apps.climate.domain.floor_policy import decide_floor_target
 from apps.climate.domain.modes import ScheduleMode, ZoneKind
-from apps.climate.domain.schedule import resolve_mode
+from apps.climate.domain.schedule import ScheduleTransition, next_transition, resolve_mode
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.repositories.zone import ZoneRepository
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.services.state_store import ThermostatStateStore, thermostat_state_store
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
+
+
+class ZoneRegime(StrEnum):
+    COMFORT = 'comfort'
+    PREHEAT = 'preheat'
+    NIGHT = 'night'
+    BOOST = 'boost'
+    OFF = 'off'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,6 +44,9 @@ class ZoneOverview:
     target_setpoint: Decimal | None
     boosted: bool
     live_control: bool
+    regime: ZoneRegime
+    boost_until: datetime | None
+    next_change: ScheduleTransition | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -71,7 +83,10 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         now = timezone.localtime(input_dto.now)
         clock = self._clock.status()
         return GetPanelOverviewOutputDTO(
-            zones=tuple(self._zone(zone, now, clock.trusted) for zone in self._zones.all_settings()),
+            zones=tuple(
+                self._zone(zone, now, clock.trusted)
+                for zone in sorted(self._zones.all_settings(), key=lambda zone: zone.name)
+            ),
             clock=clock,
             dry_run=self._dry_run,
         )
@@ -80,6 +95,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         snapshot = self._store.snapshot(zone.thermostat_slug, now)
         mode = resolve_mode(zone.windows, now, zone.preheat_lead)
         target = decide_floor_target(zone, mode, now, clock_trusted=clock_trusted)
+        boosted = zone.is_boosted(now)
         state = snapshot.state
         return ZoneOverview(
             slug=zone.slug,
@@ -92,6 +108,26 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             power=state.power if state else None,
             setpoint=state.setpoint if state else None,
             target_setpoint=target.setpoint,
-            boosted=zone.is_boosted(now),
+            boosted=boosted,
             live_control=zone.live_control,
+            regime=_regime(zone, mode, boosted=boosted, clock_trusted=clock_trusted),
+            boost_until=zone.boost_until if boosted else None,
+            next_change=(
+                next_transition(zone.windows, now, zone.preheat_lead)
+                if clock_trusted and zone.heating_enabled
+                else None
+            ),
         )
+
+
+def _regime(zone: ZoneSettings, mode: ScheduleMode, *, boosted: bool, clock_trusted: bool) -> ZoneRegime:
+    if not zone.heating_enabled:
+        return ZoneRegime.OFF
+
+    if boosted:
+        return ZoneRegime.BOOST
+
+    if not clock_trusted:
+        return ZoneRegime.COMFORT
+
+    return ZoneRegime(mode.value)

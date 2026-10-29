@@ -1,9 +1,12 @@
+from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from apps.climate.domain.modes import ScheduleMode, ZoneKind
-from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, ZoneOverview
+from apps.climate.domain.schedule import ScheduleTransition
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, ZoneOverview, ZoneRegime
 from apps.system.domain.clock import ClockStatus
 
 
@@ -24,6 +27,12 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
                 target_setpoint=Decimal('28.0'),
                 boosted=False,
                 live_control=False,
+                regime=ZoneRegime.COMFORT,
+                boost_until=None,
+                next_change=ScheduleTransition(
+                    mode=ScheduleMode.NIGHT,
+                    at=datetime(2026, 10, 29, 23, 30, tzinfo=ZoneInfo('Europe/Moscow')),
+                ),
             ),
         ),
         clock=ClockStatus(trusted=True, reason='ntp synchronized'),
