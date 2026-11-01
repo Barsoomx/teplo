@@ -61,6 +61,7 @@ The theme and the language follow the device.
 flowchart LR
     subgraph lan [Home LAN]
         thermostats["5 floor thermostats<br/>Tuya ET-44W"]
+        plugs["2 water heater plugs<br/>Tuya, read-only"]
         phone["Phone or laptop"]
     end
     subgraph router [Keenetic router, Entware on USB flash]
@@ -68,10 +69,13 @@ flowchart LR
         db[("SQLite")]
         ntp["Router NTP status"]
     end
+    telegram["Telegram Bot API"]
     teplo <-->|"Tuya local protocol 3.3<br/>read every 30 s"| thermostats
+    teplo -->|"Tuya local protocol 3.5<br/>read every 30 s"| plugs
     phone -->|"panel and API, port 8088"| teplo
     teplo -->|"batched writes every 5 min"| db
     ntp -.->|"clock trust"| teplo
+    teplo -.->|"alerts over HTTPS, optional proxy"| telegram
 ```
 
 Every minute the heating cycle decides each zone's target and sends only what differs from the thermostat's last reading:

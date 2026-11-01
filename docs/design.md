@@ -289,7 +289,7 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 ## 9. Reliability
 
 - **Clock.** The clock is trusted when NTP has synchronised since boot. Otherwise schedules pause (section 6) and the panel offers "take time from this device", which stores an offset inside teplo without touching the system clock. A last command stamped later than the clock (the clock moved back, e.g. after a reboot) does not hold back the next write. Likewise a boost counts only while it ends within its 2-hour duration from now, trusted clock or not, so a boost stamped before the clock moved back cannot hold a zone at the boost setpoint.
-- **Supervision.** An Entware init script starts teplo at boot; a cron job restarts it if the process is gone. More than 3 restarts an hour sends an alert.
+- **Supervision.** An Entware init script starts teplo at boot; a cron job restarts it if the process is gone and lists each restart in `restarts.log`. Planned: an alert after more than 3 restarts an hour. The teplo resumed alert does not catch a restart loop, as each gap is shorter than its 3 minutes.
 - **Device loss.** A device without a reading for 10 minutes appears in the panel as unavailable; one that stays unavailable sends an alert (see Alerts below). A failed read or write keeps its error code (`device_unavailable`, `device_protocol_error`, `driver_not_implemented`, `device_not_found`, `secret_missing`, `device_config_invalid`) beside the driver's own error text: the state store holds both, the log records both, and the journal entries `device_availability_changed` and `zone_command_failed` store the code as `error_code` next to `reason` and `error`. A secrets table with an empty address or a protocol other than 3.1–3.5, or one tinytuya refuses, fails as `device_config_invalid` for that device alone: the poll records it and goes on to the next device.
 - **Power loss.** On start teplo reads every device, reconciles the desired state, and journals the outage interval from the last heartbeat. Thermostats may come back switched off and the zone's next allowed write switches them on. Every Tuya driver takes its client from one shared function that disables tinytuya's device22 fallback, so the client keeps the full status query and a device that answers badly while booting is read normally afterwards.
 - **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately. Pruning history to one year of minute samples is planned; until then it only grows, in the reference house by 23 rows a minute (three per thermostat, four per plug), about 12 million rows a year. The start reads the newest sample by its row id rather than scanning the table for the latest time, so it does not slow down as history grows.
@@ -305,7 +305,7 @@ The `notifications` context sends alerts to one Telegram chat. A pure policy dec
 | Zone off | the zone's floor target wants the thermostat on (any heating-enabled zone, day or night, live or dry-run) and the thermostat has reported power off for 35 minutes | the thermostat reports power on, or the zone no longer wants it on |
 | teplo resumed | teplo starts more than 3 minutes after its last activity | — |
 
-- A job checks the alerts every minute. An alert is sent once and its recovery once. The state lives in memory: after a restart a device that is still lost alerts again 10 minutes later.
+- A job checks the alerts every minute. An alert is sent once and its recovery once. The state lives in memory, so a restart forgets which alerts were raised: a device that is still lost alerts again 10 minutes later and a zone that is still off 35 minutes later, while one that recovers before that sends no recovery. For example, «Кухня: нет связи с термостатом с 20:24» goes out, a deploy restarts teplo at 20:40, the thermostat answers at 20:45, and no «снова на связи» follows; the panel and the journal show the thermostat back. Restoring raised alerts from the journal would instead send recoveries of alerts that never reached the chat, as the journal does not record delivery.
 - Durations are measured on the monotonic clock, so a clock step after a reboot neither raises nor hides an alert; a reading taken before the step keeps its true age, so a device that goes silent right after NTP sets the clock alerts about 12 minutes after its last reading, as any other.
 - The moment a message names is kept on the monotonic clock as well: when teplo first notices the condition it records the last reading's age, or the notice itself for a device that has not answered since the start and for a zone that is off. The moment becomes local time only when the message is made, so a clock set in between does not shift it; a message made while the clock is untrusted names no time, e.g. «Кухня: нет связи с термостатом», and is not held back.
 - The monitored devices come from a list of sources: the thermostats, named by their zone, and the metered plugs, named by their device name. The text names the kind of device that went silent, e.g. «Кухня: нет связи с термостатом с 20:24» and «Бойлер 1 этаж: нет связи с розеткой с 20:24», and its recovery «Бойлер 1 этаж: розетка снова на связи».
@@ -339,13 +339,13 @@ Diagnostic text never reaches the page. A failure or an untrusted clock is expla
 
 ```toml
 [devices.thermostat-kitchen]
-address = '192.168.1.52'
+address = '192.0.2.10'
 device_id = '...'
 local_key = '...'
 protocol = '3.3'
 
 [devices.plug-boiler-1f]
-address = '192.168.1.53'
+address = '192.0.2.11'
 device_id = '...'
 local_key = '...'
 protocol = '3.5'
