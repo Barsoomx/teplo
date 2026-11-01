@@ -13,3 +13,5 @@ TEPLO_SITE = ''
 TEPLO_SECRETS_FILE = '/nonexistent/teplo/secrets.toml'
 TEPLO_CLOCK_SOURCE = 'system'
 TEPLO_DRY_RUN = True
+TEPLO_ALERT_LANGUAGE = 'ru'
+TIME_ZONE = 'Europe/Moscow'
