@@ -2,28 +2,19 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Protocol
 
-import tinytuya
 from django.utils import timezone
 
 from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
+from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, tuya_client
 
 POWER_DP = 1
 MODE_DP = 2
 SETPOINT_DP = 16
 FLOOR_TEMPERATURE_DP = 24
 TENTHS = Decimal(10)
-
-TuyaPayload = dict[str, object]
-
-
-class TuyaClient(Protocol):
-    def status(self) -> TuyaPayload | None: ...
-
-    def set_value(self, index: int, value: bool | int | str) -> TuyaPayload | None: ...
 
 
 class TuyaThermostatDriver:
@@ -34,21 +25,7 @@ class TuyaThermostatDriver:
 
     @classmethod
     def init(cls, secret: DeviceSecret) -> 'TuyaThermostatDriver':
-        client = tinytuya.Device(
-            secret.device_id,
-            secret.address,
-            secret.local_key,
-            version=float(secret.protocol),
-            connection_timeout=5,
-            connection_retry_limit=2,
-            connection_retry_delay=1,
-        )
-        client.disabledetect = True
-        return cls(client=client, clock=timezone.now)
-
-    @property
-    def client(self) -> TuyaClient:
-        return self._client
+        return cls(client=tuya_client(secret), clock=timezone.now)
 
     def read_state(self) -> ThermostatState:
         try:
