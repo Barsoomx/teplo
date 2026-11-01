@@ -19,3 +19,8 @@ class DriverNotImplementedError(DomainError):
 class DeviceNotFoundError(DomainError):
     def __init__(self, slug: str) -> None:
         super().__init__(f'device not found: {slug}', error_code='device_not_found')
+
+
+class DeviceConfigError(DomainError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, error_code='device_config_invalid')

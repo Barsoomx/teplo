@@ -8,6 +8,7 @@ from freezegun import freeze_time
 
 from apps.core.domain.errors import DomainError, SecretMissingError
 from apps.devices.domain.errors import (
+    DeviceConfigError,
     DeviceNotFoundError,
     DeviceProtocolError,
     DeviceUnavailableError,
@@ -69,6 +70,7 @@ def test_command_summary_lists_the_changed_settings(change: dict[str, object], e
         (DriverNotImplementedError('unsupported'), 'teplo пока не умеет управлять этим устройством'),
         (DeviceNotFoundError('thermostat-attic'), 'Устройства нет в настройках'),
         (SecretMissingError('thermostat-attic'), 'В файле секретов нет адреса и ключа этого термостата'),
+        (DeviceConfigError('no address'), 'В файле секретов у этого термостата неверный адрес или протокол'),
         (DomainError('boom'), 'Неизвестная ошибка'),
     ],
 )
@@ -84,6 +86,7 @@ def test_failure_note_names_the_cause_by_error_code(error: DomainError, expected
         (DeviceProtocolError('payload without dps'), 'Розетка прислала неожиданный ответ'),
         (DriverNotImplementedError('unsupported'), 'teplo пока не умеет управлять этим устройством'),
         (SecretMissingError('plug-boiler-1f'), 'В файле секретов нет адреса и ключа этой розетки'),
+        (DeviceConfigError('no address'), 'В файле секретов у этой розетки неверный адрес или протокол'),
     ],
 )
 def test_failure_note_names_the_plug_for_a_plug(error: DomainError, expected: str) -> None:

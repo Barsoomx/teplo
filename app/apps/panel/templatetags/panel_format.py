@@ -23,12 +23,14 @@ FAILURE_NOTES = {
     'driver_not_implemented': gettext_lazy('teplo cannot control this device yet'),
     'device_not_found': gettext_lazy('The device is missing from the settings'),
     'secret_missing': gettext_lazy('The secrets file has no address and key for this thermostat'),
+    'device_config_invalid': gettext_lazy('The secrets file gives this thermostat a wrong address or protocol'),
 }
 PLUG_FAILURE_NOTES = {
     **FAILURE_NOTES,
     'device_unavailable': gettext_lazy('No connection to the plug'),
     'device_protocol_error': gettext_lazy('The plug sent an unexpected reply'),
     'secret_missing': gettext_lazy('The secrets file has no address and key for this plug'),
+    'device_config_invalid': gettext_lazy('The secrets file gives this plug a wrong address or protocol'),
 }
 UNKNOWN_FAILURE = gettext_lazy('Unknown error')
 CLOCK_NOTES = {

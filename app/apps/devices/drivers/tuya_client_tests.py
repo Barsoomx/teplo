@@ -1,7 +1,10 @@
+from dataclasses import replace
+
 import pytest
 import tinytuya
 
 from apps.core.services.secrets import DeviceSecret
+from apps.devices.domain.errors import DeviceConfigError
 from apps.devices.drivers.tuya_client import tuya_client
 
 LOCAL_KEY = '0123456789abcdef'
@@ -44,3 +47,25 @@ def test_plug_client_never_switches_to_device22(f_plug_secret: DeviceSecret) -> 
     assert isinstance(client, tinytuya.Device)
 
     assert (client.disabledetect, client.version) == (True, 3.5)
+
+
+@pytest.mark.parametrize('protocol', ['3,5', 'v3.5', '', '3.6'])
+def test_unknown_protocol_is_a_config_error(f_plug_secret: DeviceSecret, protocol: str) -> None:
+    with pytest.raises(DeviceConfigError) as raised:
+        tuya_client(replace(f_plug_secret, protocol=protocol))
+
+    assert (raised.value.error_code, raised.value.detail) == (
+        'device_config_invalid',
+        f'protocol {protocol!r} is not one of 3.1, 3.2, 3.3, 3.4, 3.5',
+    )
+
+
+@pytest.mark.parametrize('address', ['', '  '])
+def test_missing_address_is_a_config_error_without_a_network_scan(f_secret: DeviceSecret, address: str) -> None:
+    with pytest.raises(DeviceConfigError, match='no address'):
+        tuya_client(replace(f_secret, address=address))
+
+
+def test_settings_tinytuya_refuses_are_a_config_error(f_secret: DeviceSecret) -> None:
+    with pytest.raises(DeviceConfigError, match='tinytuya refused the device settings'):
+        tuya_client(replace(f_secret, local_key='ключ-не-latin-1'))

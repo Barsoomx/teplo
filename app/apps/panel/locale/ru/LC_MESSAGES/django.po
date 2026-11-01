@@ -182,6 +182,9 @@ msgstr "Устройства нет в настройках"
 msgid "The secrets file has no address and key for this thermostat"
 msgstr "В файле секретов нет адреса и ключа этого термостата"
 
+msgid "The secrets file gives this thermostat a wrong address or protocol"
+msgstr "В файле секретов у этого термостата неверный адрес или протокол"
+
 msgid "No connection to the plug"
 msgstr "Нет связи с розеткой"
 
@@ -190,6 +193,9 @@ msgstr "Розетка прислала неожиданный ответ"
 
 msgid "The secrets file has no address and key for this plug"
 msgstr "В файле секретов нет адреса и ключа этой розетки"
+
+msgid "The secrets file gives this plug a wrong address or protocol"
+msgstr "В файле секретов у этой розетки неверный адрес или протокол"
 
 msgid "Unknown error"
 msgstr "Неизвестная ошибка"
