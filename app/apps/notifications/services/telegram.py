@@ -18,6 +18,7 @@ logger = structlog.get_logger(__name__)
 
 SEND_TIMEOUT = 10.0
 TOO_MANY_REQUESTS = 429
+MALFORMED_ADDRESS = 'telegram unreachable: malformed proxy or API address'
 
 
 class HttpResponse(Protocol):
@@ -55,7 +56,9 @@ class TelegramClient:
             response = self._opener.open(request, timeout=self._timeout)
         except urllib.error.HTTPError as error:
             raise _refusal(error) from None
-        except (OSError, http.client.HTTPException, ValueError) as error:
+        except (ValueError, http.client.InvalidURL):
+            raise AlertDeliveryError(MALFORMED_ADDRESS) from None
+        except (OSError, http.client.HTTPException) as error:
             raise AlertDeliveryError(f'telegram unreachable: {error}') from None
 
         response.close()

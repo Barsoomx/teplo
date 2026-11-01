@@ -13,6 +13,7 @@ from apps.notifications.domain.errors import AlertDeliveryError, AlertRejectedEr
 from apps.notifications.services.telegram import (
     TelegramClient,
     UnconfiguredSender,
+    UrlOpener,
     alert_sender_for,
     build_opener,
     proxies_for,
@@ -22,6 +23,8 @@ from apps.notifications.stubs import UrlOpenerStub
 TOKEN = '123456:telegram-token'
 URL = f'https://api.telegram.org/bot{TOKEN}/sendMessage'
 TEXT = 'Кухня: термостат снова на связи'
+PROXY_USER = 'teplo-proxy-user'
+PROXY_PASSWORD = 'proxy-password'
 
 
 def _http_error(code: int, reason: str) -> urllib.error.HTTPError:
@@ -51,11 +54,6 @@ def f_unauthorized_client() -> TelegramClient:
         opener=UrlOpenerStub(error=_http_error(401, 'Unauthorized')),
         timeout=10.0,
     )
-
-
-@pytest.fixture
-def f_malformed_proxy_client() -> TelegramClient:
-    return TelegramClient(token=TOKEN, chat_id='42', opener=build_opener('http:/proxy.invalid'), timeout=10.0)
 
 
 @pytest.fixture
@@ -118,13 +116,26 @@ def test_refusal_names_the_status_and_keeps_the_token_out(f_unauthorized_client:
     )
 
 
-def test_malformed_proxy_is_a_delivery_failure(f_malformed_proxy_client: TelegramClient) -> None:
-    with pytest.raises(AlertDeliveryError) as raised:
-        f_malformed_proxy_client.send(TEXT)
+@pytest.mark.parametrize(
+    'opener',
+    [
+        build_opener(f'http:/{PROXY_USER}:{PROXY_PASSWORD}@proxy.invalid:3128'),
+        UrlOpenerStub(error=http.client.InvalidURL(f"nonnumeric port: '{PROXY_PASSWORD}'")),
+    ],
+    ids=['url_without_authority', 'credentials_without_host'],
+)
+def test_malformed_proxy_fails_without_its_credentials(opener: UrlOpener) -> None:
+    client = TelegramClient(token=TOKEN, chat_id='42', opener=opener, timeout=10.0)
 
-    assert (raised.value.error_code, raised.value.detail) == (
+    with pytest.raises(AlertDeliveryError) as raised:
+        client.send(TEXT)
+
+    detail = raised.value.detail
+    assert (raised.value.error_code, detail, PROXY_USER in detail, PROXY_PASSWORD in detail) == (
         'alert_delivery_failed',
-        "telegram unreachable: proxy URL with no authority: 'http:/proxy.invalid'",
+        'telegram unreachable: malformed proxy or API address',
+        False,
+        False,
     )
 
 
