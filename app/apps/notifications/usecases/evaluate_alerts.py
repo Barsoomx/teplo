@@ -10,6 +10,7 @@ from apps.notifications.domain.outage import Outage, detect_outage
 from apps.notifications.domain.policy import AlertChange, Condition, device_condition, evaluate_alerts, zone_condition
 from apps.notifications.domain.ports import DeviceSource, ZoneSource
 from apps.notifications.services.alert_book import AlertBook, alert_book
+from apps.notifications.services.plug_source import PlugSource
 from apps.notifications.services.thermostat_source import ThermostatSource
 from apps.notifications.services.zone_source import ZoneHeatingSource
 from apps.system.domain.clock import ClockTrustSource
@@ -47,7 +48,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
     @classmethod
     def init(cls) -> 'EvaluateAlertsUseCase':
         return cls(
-            devices=(ThermostatSource.init(),),
+            devices=(ThermostatSource.init(), PlugSource.init()),
             zones=ZoneHeatingSource.init(),
             clock=clock_trust_source(),
             book=alert_book,

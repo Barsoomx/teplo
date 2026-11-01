@@ -159,6 +159,20 @@ def m_alerts_timeline_use_case() -> Iterator[MagicMock]:
                             },
                             created_at=MORNING - timedelta(minutes=5),
                         ),
+                        TimelineEntry(
+                            kind='alert_cleared',
+                            subject='plug-boiler-1f',
+                            subject_name='Бойлер 1 этаж',
+                            device_kind=DeviceKind.PLUG,
+                            payload={
+                                'kind': 'device_lost',
+                                'subject': 'plug-boiler-1f',
+                                'name': 'Бойлер 1 этаж',
+                                'device_kind': 'plug',
+                                'since': '2026-10-29T05:30:00Z',
+                            },
+                            created_at=MORNING - timedelta(minutes=10),
+                        ),
                     ),
                 ),
             ),
@@ -222,9 +236,10 @@ def test_journal_reads_alerts_like_the_telegram_messages(
     assert (
         'Прихожая: термостат снова работает по расписанию' in content,
         'Кухня: нет связи с термостатом с 08:40' in content,
+        'Бойлер 1 этаж: розетка снова на связи' in content,
         'неизвестное событие' in content,
         m_alerts_timeline_use_case.init.call_count,
-    ) == (True, True, False, 1)
+    ) == (True, True, True, False, 1)
 
 
 def test_journal_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

@@ -50,6 +50,18 @@ def f_raised() -> AlertRaised:
 
 
 @pytest.fixture
+def f_plug_raised() -> AlertRaised:
+    return AlertRaised(
+        kind=AlertKind.DEVICE_LOST,
+        subject='plug-boiler-1f',
+        name='Бойлер 1 этаж',
+        device_kind=DeviceKind.PLUG,
+        since=SINCE,
+        occurred_at=AT,
+    )
+
+
+@pytest.fixture
 def f_cleared() -> AlertCleared:
     return AlertCleared(
         kind=AlertKind.ZONE_OFF,
@@ -73,6 +85,12 @@ def test_raised_alert_is_queued_in_russian(f_outbox: AlertOutbox, f_raised: Aler
     queue_alert_raised(f_raised)
 
     assert _texts(f_outbox) == ['Кухня: нет связи с термостатом с 20:24']
+
+
+def test_raised_plug_alert_names_the_plug(f_outbox: AlertOutbox, f_plug_raised: AlertRaised) -> None:
+    queue_alert_raised(f_plug_raised)
+
+    assert _texts(f_outbox) == ['Бойлер 1 этаж: нет связи с розеткой с 20:24']
 
 
 def test_cleared_alert_is_queued_in_russian(f_outbox: AlertOutbox, f_cleared: AlertCleared) -> None:

@@ -20,6 +20,7 @@ NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 NOTICED = 1000.0
 LAST_READING = NOW - timedelta(minutes=11)
 THERMOSTAT_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
+PLUG_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='plug-boiler-1f')
 ZONE_KEY = AlertKey(kind=AlertKind.ZONE_OFF, subject='hallway')
 LOST_THERMOSTAT = MonitoredDevice(
     slug='thermostat-kitchen',
@@ -42,6 +43,13 @@ SILENT_THERMOSTAT = MonitoredDevice(
     available=False,
     last_seen_at=None,
 )
+LOST_PLUG = MonitoredDevice(
+    slug='plug-boiler-1f',
+    name='Бойлер 1 этаж',
+    kind=DeviceKind.PLUG,
+    available=False,
+    last_seen_at=LAST_READING,
+)
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
 CLOCK_STEP = timedelta(hours=3)
 RESTART_NOTE = StartupNote(last_activity=NOW - timedelta(minutes=16), monotonic=NOTICED)
@@ -59,6 +67,16 @@ def _use_case(
         devices=(DeviceSourceStub(devices=devices),),
         zones=zones,
         clock=ClockStub(trusted=clock_trusted),
+        book=book,
+        dispatcher=dispatcher,
+    )
+
+
+def _thermostats_and_plugs_use_case(book: AlertBook, dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return EvaluateAlertsUseCase(
+        devices=(DeviceSourceStub(devices=[LOST_THERMOSTAT]), DeviceSourceStub(devices=[LOST_PLUG])),
+        zones=ZoneSourceStub(zones=[]),
+        clock=ClockStub(trusted=True),
         book=book,
         dispatcher=dispatcher,
     )
@@ -105,6 +123,13 @@ def f_silence_noticed_book() -> AlertBook:
     _use_case([SILENT_THERMOSTAT], ZoneSourceStub(zones=[]), book, EventDispatcher(), clock_trusted=False).execute(
         _input(timedelta(0)),
     )
+    return book
+
+
+@pytest.fixture
+def f_plug_noticed_book() -> AlertBook:
+    book = AlertBook()
+    _thermostats_and_plugs_use_case(book, EventDispatcher()).execute(_input(timedelta(0)))
     return book
 
 
@@ -162,6 +187,11 @@ def f_untrusted_silent_use_case(
 
 
 @pytest.fixture
+def f_plug_lost_use_case(f_plug_noticed_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _thermostats_and_plugs_use_case(f_plug_noticed_book, f_dispatcher)
+
+
+@pytest.fixture
 def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return _use_case([], ZoneSourceStub(zones=[]), f_restarted_book, f_dispatcher)
 
@@ -193,6 +223,25 @@ def test_confirmed_device_loss_raises_an_alert(
                 occurred_at=NOW + timedelta(minutes=2),
             ),
         ],
+    )
+
+
+def test_lost_plug_raises_the_same_alert_under_its_own_name(
+    f_plug_lost_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_plug_lost_use_case.execute(_input(timedelta(minutes=2)))
+
+    assert (output.raised, f_events[-1]) == (
+        (THERMOSTAT_KEY, PLUG_KEY),
+        AlertRaised(
+            kind=AlertKind.DEVICE_LOST,
+            subject='plug-boiler-1f',
+            name='Бойлер 1 этаж',
+            device_kind=DeviceKind.PLUG,
+            since=LAST_READING,
+            occurred_at=NOW + timedelta(minutes=2),
+        ),
     )
 
 

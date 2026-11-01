@@ -15,10 +15,15 @@ FORBIDDEN_LAYERS = (
     'management',
     'usecases',
 )
+TUYA_CLIENT_BUILDER = 'devices/drivers/tuya_client.py'
 
 
 def _domain_modules() -> list[Path]:
     return sorted(path for path in APPS_ROOT.glob('*/domain/**/*.py') if not path.name.endswith('_tests.py'))
+
+
+def _app_modules() -> list[Path]:
+    return sorted(path for path in APPS_ROOT.glob('**/*.py') if not path.name.endswith('_tests.py'))
 
 
 def _imports(path: Path) -> list[str]:
@@ -58,3 +63,13 @@ def test_domain_module_imports_only_pure_code(module_path: Path) -> None:
 )
 def test_forbidden_import_rules(module: str, expected: bool) -> None:
     assert _is_forbidden(module) is expected
+
+
+def test_only_the_shared_builder_imports_tinytuya() -> None:
+    importers = [
+        path.relative_to(APPS_ROOT).as_posix()
+        for path in _app_modules()
+        if any(module.split('.')[0] == 'tinytuya' for module in _imports(path))
+    ]
+
+    assert importers == [TUYA_CLIENT_BUILDER]

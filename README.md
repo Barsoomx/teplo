@@ -36,7 +36,9 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Offline by design.** Thermostats are reached with the Tuya local protocol. The panel and every asset it loads are served from the router.
 - **Keeps heating when teplo stops.** Each thermostat regulates on its own at the last setpoint, and a cron watchdog restarts the process.
 - **A panel made for the phone.** Server-rendered Django with htmx, dark and light themes, English and Russian, a timeline journal and a JSON API under `api/v1`.
-- **Reusable.** A house is a site app with data migrations. Device keys and the panel password stay in a secrets file on the router.
+- **Alerts in Telegram.** One chat hears about a thermostat or water heater plug that stops answering, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
+- **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo only reads the plugs.
+- **Reusable.** A house is a site app with data migrations. Device keys, the panel password and the Telegram bot token stay in a secrets file on the router.
 
 ## Panel
 
@@ -112,10 +114,10 @@ flowchart TB
     usecases --> repositories["Repositories<br/>Django ORM, SQLite"]
     usecases --> ports["Capability ports<br/>FloorThermostat, PhaseMeter, ..."]
     ports --> drivers["Drivers<br/>Tuya, stubs"]
-    usecases -->|events| handlers["Handlers<br/>journal, Telegram later"]
+    usecases -->|events| handlers["Handlers<br/>journal, Telegram alerts"]
 ```
 
-- One asyncio process runs the periodic jobs (poll, heating cycle, capture, flush) in worker threads and serves the panel with uvicorn from the same loop.
+- One asyncio process runs the periodic jobs (polls, heating cycle, capture, flush, alerts) in worker threads and serves the panel with uvicorn from the same loop.
 - Domain policies import nothing from Django, drivers or the network; AST architecture tests keep the boundaries.
 - A new device type is a driver behind a capability port; an unsupported one is a stub that raises `DriverNotImplementedError`.
 - Dependencies are pure Python or provided by Entware, so the router needs no compiler.
@@ -123,18 +125,19 @@ flowchart TB
 ```
 app/
   apps/
-    core/        BaseUseCase, DomainError, domain events, asyncio runtime
-    climate/     zones, schedules, floor policy, heating cycle
-    devices/     device registry, capability ports, Tuya driver, state store
-    telemetry/   samples and the event journal
-    system/      trusted clock
-    panel/       dashboard, journal, API v1
+    core/           BaseUseCase, DomainError, domain events, asyncio runtime
+    climate/        zones, schedules, floor policy, heating cycle
+    devices/        device registry, capability ports, Tuya drivers, state stores
+    telemetry/      samples and the event journal
+    notifications/  Telegram alerts: policy, outbox, Bot API client
+    system/         trusted clock
+    panel/          dashboard, journal, API v1
   sites/
-    example/     a two-zone sample house
-    barsoom/     the house teplo heats today
-deploy/          router installer, init script and release script
-docs/            design, deployment, screenshots
-scripts/         demo house, screenshot generator, CI watcher
+    example/        a two-zone sample house
+    barsoom/        the house teplo heats today
+deploy/             router installer, init script and release script
+docs/               design, deployment, screenshots
+scripts/            demo house, screenshot generator, CI watcher
 ```
 
 ## Run it
@@ -171,7 +174,7 @@ Heat your own house:
 | Floor thermostats | Tuya Wi-Fi thermostats (tested: Warmfloor ET-44W) | Tuya local protocol | 1, live |
 | Phase meter | ESP32 with 3× SCT-013 split-core CT clamps | ESPHome over MQTT | 2 |
 | Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | 3 |
-| Smart plugs | Tuya Wi-Fi plugs with power metering | Tuya local protocol | 4 |
+| Smart plugs | Tuya Wi-Fi plugs with power metering | Tuya local protocol 3.5 | read-only now, switching in 4 |
 | Heat pump, air conditioner, EV charger | any | driver stub | later |
 
 The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM); teplo takes about 70 MB of it.
@@ -179,10 +182,12 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 ## Roadmap
 
 - [x] **Thermostats and schedules:** night setback, timed pre-heat, boost, dry-run, panel and journal. Live since 29 October 2026.
+- [x] **Telegram alerts:** a lost thermostat or plug, a zone left off while it should heat, teplo back after an outage.
+- [x] **Water heater monitoring:** relay state, power, current and voltage of the water heater plugs, read-only.
 - [ ] **Phase meter:** per-phase current from CT clamps, a configurable shedding priority and staggered starts.
 - [ ] **Air sensors:** air-temperature regulation and a learned optimal start.
 - [ ] **Smart plugs:** water heaters as sheddable loads, washing machine monitoring.
-- [ ] Telegram alerts; schedule and settings pages in the panel.
+- [ ] Schedule and settings pages in the panel.
 
 Each stage first runs in dry-run, journaling the decisions it would make, before it is allowed to switch devices.
 

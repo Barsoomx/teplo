@@ -7,9 +7,11 @@ from apps.core.services.secrets import DeviceSecret
 TuyaPayload = dict[str, object]
 
 
-class TuyaClient(Protocol):
+class TuyaStatusClient(Protocol):
     def status(self) -> TuyaPayload | None: ...
 
+
+class TuyaClient(TuyaStatusClient, Protocol):
     def set_value(self, index: int, value: bool | int | str) -> TuyaPayload | None: ...
 
 

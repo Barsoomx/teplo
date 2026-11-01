@@ -12,7 +12,8 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
    ```
 
 2. Edit `/opt/etc/teplo/teplo.env`: set `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS`. Keep `TEPLO_DRY_RUN=true` for the first run. The installer fills in a random `DJANGO_SECRET_KEY` when the file has none; teplo refuses to start without it.
-3. Create `/opt/etc/teplo/secrets.toml` from `deploy/router/secrets.toml.example`, one `[devices.<slug>]` table per device slug of the site, and `chmod 600` it. Tuya plugs need `protocol = '3.5'`: a table without it gets 3.3, the thermostats' protocol, and the plug shows as unavailable. Local keys come from the Smart Life QR login described in `docs/design.md`.
+3. Create `/opt/etc/teplo/secrets.toml` from `deploy/router/secrets.toml.example`, one `[devices.<slug>]` table per device slug of the site, and `chmod 600` it. The `barsoom` site has five thermostats and the water heater plugs `plug-boiler-1f` and `plug-boiler-2f`. Tuya plugs need `protocol = '3.5'`: a table without it gets 3.3, the thermostats' protocol, and the plug shows as unavailable. A device without a table stays unavailable and raises a device-lost alert 10 minutes after the start. Local keys come from the Smart Life QR login described in `docs/design.md`.
+4. For alerts, add the `[telegram]` table described in [Telegram alerts](#telegram-alerts).
 
 ## Deploy a release
 
@@ -32,6 +33,8 @@ flowchart LR
 
 A failed step stops the script before `current` moves, so the running release stays in place.
 
+After the deploy, send a test alert as shown in [Telegram alerts](#telegram-alerts) to confirm that the new release still reaches the chat.
+
 Layout on the router:
 
 ```
@@ -41,7 +44,7 @@ Layout on the router:
   venv/                 laid out by hand: Entware's python3 ships no venv module
 /opt/etc/teplo/
   teplo.env             settings, read at start
-  secrets.toml          device addresses and keys, panel password (chmod 600)
+  secrets.toml          device addresses and keys, panel password, Telegram bot (chmod 600)
 /opt/etc/init.d/S90teplo
 /opt/var/lib/teplo/     SQLite database and static files
 /opt/var/log/teplo/     teplo.log, restarts.log
@@ -51,7 +54,22 @@ Releases ship without tests: `.gitattributes` marks `*_tests.py` and `conftest.p
 
 ## Telegram alerts
 
-Alerts go to the chat in the `[telegram]` table of `secrets.toml`; `deploy/router/secrets.toml.example` shows its keys. After adding or changing the table, restart teplo (`/opt/etc/init.d/S90teplo restart`) and send a test message:
+teplo sends its alerts (a lost thermostat or plug, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
+
+```toml
+[telegram]
+token = 'bot-token'
+chat_id = 'chat-id'
+proxy = 'http://proxy.example:3128'
+```
+
+- `token`: the bot's token from BotFather.
+- `chat_id`: the chat that receives the alerts. Send the bot a message, or add it to a group, and take `chat.id` from `https://api.telegram.org/bot<token>/getUpdates`; a group's id is negative.
+- `proxy`: optional, an HTTP proxy for `api.telegram.org`. Leave it out to connect directly.
+
+Without the table, or with an empty `token` or `chat_id`, alerts are only journaled and `teplo.log` says so once. Alerts are written in Russian; `TEPLO_ALERT_LANGUAGE=en` in `teplo.env` switches them to English.
+
+teplo reads the table at start: after adding or changing it, restart teplo (`/opt/etc/init.d/S90teplo restart`). After that, and after every deploy, send a test message:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py send_test_alert'

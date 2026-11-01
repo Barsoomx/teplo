@@ -85,8 +85,8 @@ DP 3 always reads `warming` and does not reflect the relay. DPs 104–117 are ve
 
 - Wi-Fi plugs with power metering (Tuya category `cz`), local protocol 3.5 on TCP 6668; their secrets set `protocol = '3.5'`.
 - The two water heater plugs are read-only until stage 4: the driver implements `MeteredPlug` and has no switching operation, so nothing in teplo can switch them. Switching will come as `SwitchablePlug` behind dry-run.
-- The driver sets tinytuya's `disabledetect`, so its long-lived client never switches itself to "device22" mode, which queries DP 1 only.
-- A job of their own polls the plugs every 30 seconds, so a lost plug never delays the thermostats. Availability changes are journaled as for a thermostat, and the recorder samples `plug_on` (0 or 1), `plug_power` (W), `plug_current` (A) and `plug_voltage` (V) every minute.
+- The driver takes its client from the shared Tuya client builder, like the thermostat driver, so the long-lived client never switches itself to "device22" mode, which queries DP 1 only (see Power loss in section 9). tinytuya 1.20 makes that switch only for protocols 3.3 and 3.4, so for the 3.5 plugs the guard is insurance.
+- A job of their own polls the plugs every 30 seconds, so a lost plug never delays the thermostats. Availability changes are journaled as for a thermostat, a plug that stays unavailable raises the device-lost alert under its own name (section 9), and the recorder samples `plug_on` (0 or 1), `plug_power` (W), `plug_current` (A) and `plug_voltage` (V) every minute.
 - Data points, from the Tuya cloud model and a local status read:
 
 | DP | Code | Meaning | Values |
@@ -116,21 +116,24 @@ ESPHome firmware publishes readings to the Mosquitto broker on the router. Confi
 
 One process on the router runs an asyncio runtime:
 
-- device drivers and the MQTT client feed a **state store** (latest readings and availability);
-- control loops read the state store, decide, and send commands through drivers;
+- device drivers and the MQTT client feed a **state store** per device kind (latest readings and availability);
+- control loops read the state stores, decide, and send commands through drivers;
 - a recorder batches history to SQLite;
+- an alert job checks the state stores every minute and queues alerts, which a second job sends to Telegram (section 9);
 - uvicorn serves the Django ASGI app (panel and API) from the same loop;
 - use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
-- jobs run concurrently: in-memory state (state store, sample buffer) is guarded by locks, and the Tuya driver serializes calls to each thermostat.
+- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox) is guarded by locks, and the Tuya drivers serialize calls to each device.
 
 ```mermaid
 flowchart LR
-    drivers["Drivers"] -->|"readings, every 30 s"| store["State store"]
+    drivers["Drivers"] -->|"readings, every 30 s"| store["State stores"]
     store --> loops["Control loops<br/>every minute"]
     loops -->|commands| drivers
     store --> panel["Panel and API"]
     store --> recorder["Recorder<br/>buffers every minute"]
     recorder -->|"every 5 min"| sqlite[("SQLite")]
+    store --> alerts["Alerts<br/>every minute"]
+    alerts -->|"queued, best effort"| telegram["Telegram"]
 ```
 
 ### Modules
@@ -298,23 +301,23 @@ The `notifications` context sends alerts to one Telegram chat. A pure policy dec
 
 | Alert | Raised when | Cleared when |
 |---|---|---|
-| Device lost | a monitored device has stayed unavailable for 2 minutes, about 12 minutes after its last reading; a device without a reading since teplo started, 10 minutes after the start | the device reads again |
+| Device lost | a thermostat or plug has stayed unavailable for 2 minutes, about 12 minutes after its last reading; a device without a reading since teplo started, 10 minutes after the start | the device reads again |
 | Zone off | the zone's floor target wants the thermostat on (any heating-enabled zone, day or night, live or dry-run) and the thermostat has reported power off for 35 minutes | the thermostat reports power on, or the zone no longer wants it on |
 | teplo resumed | teplo starts more than 3 minutes after its last activity | — |
 
 - A job checks the alerts every minute. An alert is sent once and its recovery once. The state lives in memory: after a restart a device that is still lost alerts again 10 minutes later.
 - Durations are measured on the monotonic clock, so a clock step after a reboot neither raises nor hides an alert. Right after a step every reading looks 10 minutes old until the next poll; the 2 minutes of confirmation outlast that.
 - The moment a message names is kept on the monotonic clock as well: when teplo first notices the condition it records the last reading's age, or the notice itself for a device that has not answered since the start and for a zone that is off. The moment becomes local time only when the message is made, so a clock set in between does not shift it; a message made while the clock is untrusted names no time, e.g. «Кухня: нет связи с термостатом», and is not held back.
-- The monitored devices come from a list of sources: the thermostats, named by their zone, are the first; plugs join as another source.
+- The monitored devices come from a list of sources: the thermostats, named by their zone, and the metered plugs, named by their device name. The text names the kind of device that went silent, e.g. «Кухня: нет связи с термостатом с 20:24» and «Бойлер 1 этаж: нет связи с розеткой с 20:24», and its recovery «Бойлер 1 этаж: розетка снова на связи».
 - Zone off takes the floor target from the climate policy (`resolve_mode`, `decide_floor_target`). 35 minutes exceed the 30-minute write budget, so a correction teplo is about to make never alerts. While the thermostat is unavailable its power is unknown and the zone-off timer stops; it starts over once the power is known again, as teplo can correct the thermostat only after it answers. The message still names the moment teplo first saw the thermostat off.
 - teplo resumed: the outage runs from the last journal entry or flushed sample to the start, in local time, e.g. «teplo снова работает. Перерыв 20:24–20:33 (9 мин)». A deploy restart flushes the samples on stop and takes under a minute; after a power loss the outage may start up to 5 minutes early, one sample flush period, and if no device was readable and nothing was journaled for a while, it reaches back to the last record. The notice waits for a trusted clock and dates the start by teplo's uptime; it is not journaled again, as `teplo_started` already holds the last activity.
-- Texts are translated with gettext into `TEPLO_ALERT_LANGUAGE`, Russian by default, and name rooms by zone.
+- Texts are translated with gettext into `TEPLO_ALERT_LANGUAGE`, Russian by default.
 - Delivery is best effort and never holds up control: a second job sends queued messages every minute through the Bot API `sendMessage` over HTTPS with the standard library, with a 10-second timeout and the optional HTTP proxy from the secrets file. A failed send stays queued and is retried for an hour; a message Telegram refuses (4xx other than 429) is dropped and logged. Without a `[telegram]` table alerts are only journaled, and the log says so once.
 - `manage.py send_test_alert` sends a test message at once and prints `ok`, or fails with the error code and the reason, so a wrong token or chat, missing CA certificates or a blocked network shows up when the table is set rather than at the next outage. `docs/deploy.md` lists the codes.
 
 ## 10. Panel
 
-Server-rendered Django templates with HTMX; zone cards refresh every 10 seconds (thermostats are polled every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
+Server-rendered Django templates with HTMX; zone cards and the loads block refresh every 10 seconds (thermostats and plugs are polled every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
 
 - **Dashboard:** zone cards (air, floor, target, state: heating, waiting, shed), `+/-` and boost, a loads block, phase bars to 25 A with the EV marker, outdoor temperature, clock and device warnings.
 - **Schedules:** weekly periods per zone and mode targets.
@@ -341,6 +344,12 @@ device_id = '...'
 local_key = '...'
 protocol = '3.3'
 
+[devices.plug-boiler-1f]
+address = '192.168.1.53'
+device_id = '...'
+local_key = '...'
+protocol = '3.5'
+
 [telegram]
 token = '...'
 chat_id = '...'
@@ -364,7 +373,7 @@ password = '...'
 - **Infrastructure:** protocol encoding against captured frames; repositories against the test database with factories.
 - **Views:** mocks.
 - **Scenarios:** a house simulator (thermal model per zone, phase currents, EV and appliance events) drives the control loops through days of simulated time, e.g. "EV at 22 A, water heater and microwave on the same phase: no phase above 24 A for more than 3 s".
-- **Architecture:** AST tests fail when a domain module imports Django, a driver or a network client.
+- **Architecture:** AST tests fail when a domain module imports Django, a driver or a network client, and when any module but the shared Tuya client builder imports tinytuya.
 - **CI:** GitHub Actions runs ruff, mypy, `makemigrations --check` and pytest on every push; any failure fails the build.
 - **Rollout:** every stage first runs in dry-run, journalling the commands it would send, then is enabled zone by zone.
 
@@ -373,7 +382,7 @@ password = '...'
 1. Thermostats in floor mode: schedules, night setback, timed pre-heat, boost, dry-run, dashboard and journal.
 2. Phase meter and load management.
 3. Air sensors, air regulation, learned optimal start.
-4. Smart plugs: water heaters as sheddable loads, washing machine monitoring.
+4. Smart plugs: water heaters as sheddable loads (their plugs are already read and alert when lost), washing machine monitoring.
 
 Later: heat pump driver, EV charger driver, away and frost modes.
 

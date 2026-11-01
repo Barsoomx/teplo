@@ -2,14 +2,13 @@ import threading
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
 
-import tinytuya
 from django.utils import timezone
 
 from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import PlugState
+from apps.devices.drivers.tuya_client import TuyaPayload, TuyaStatusClient, tuya_client
 
 SWITCH_DP = 1
 CURRENT_DP = 18
@@ -17,26 +16,6 @@ POWER_DP = 19
 VOLTAGE_DP = 20
 MILLIAMPS = Decimal(1000)
 TENTHS = Decimal(10)
-
-TuyaPayload = dict[str, object]
-
-
-class TuyaStatusClient(Protocol):
-    def status(self) -> TuyaPayload | None: ...
-
-
-def plug_client(secret: DeviceSecret) -> tinytuya.Device:
-    client = tinytuya.Device(
-        secret.device_id,
-        secret.address,
-        secret.local_key,
-        version=float(secret.protocol),
-        connection_timeout=5,
-        connection_retry_limit=2,
-        connection_retry_delay=1,
-    )
-    client.disabledetect = True
-    return client
 
 
 class TuyaPlugDriver:
@@ -47,7 +26,7 @@ class TuyaPlugDriver:
 
     @classmethod
     def init(cls, secret: DeviceSecret) -> 'TuyaPlugDriver':
-        return cls(client=plug_client(secret), clock=timezone.now)
+        return cls(client=tuya_client(secret), clock=timezone.now)
 
     def read_state(self) -> PlugState:
         try:
