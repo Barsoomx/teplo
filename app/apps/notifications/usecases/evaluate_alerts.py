@@ -60,6 +60,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
             self._book.tracks(),
             input_dto.now,
             input_dto.monotonic,
+            clock_trusted=clock_trusted,
         )
         self._book.replace_tracks(evaluation.tracks)
         for change in evaluation.changes:

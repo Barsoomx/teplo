@@ -13,7 +13,7 @@ class AlertEvent(DomainEvent):
     subject: str
     name: str
     device_kind: DeviceKind
-    since: datetime
+    since: datetime | None
 
 
 @dataclass(frozen=True, kw_only=True)

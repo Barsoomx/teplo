@@ -17,6 +17,9 @@ from apps.notifications.domain.policy import (
 NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 LAST_READING = NOW - timedelta(minutes=11)
 NOTICED = 1000.0
+LAST_READING_MONOTONIC = NOTICED - 11 * 60
+CLOCK_STEP = timedelta(hours=3)
+POWER_KNOWN_AGAIN = timedelta(minutes=40)
 THERMOSTAT_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
 ZONE_KEY = AlertKey(kind=AlertKind.ZONE_OFF, subject='kitchen')
 
@@ -24,7 +27,7 @@ Tracks = dict[AlertKey, AlertTrack]
 
 
 def _evaluate(conditions: list[Condition], tracks: Tracks, after: timedelta) -> AlertEvaluation:
-    return evaluate_alerts(conditions, tracks, NOW + after, NOTICED + after.total_seconds())
+    return evaluate_alerts(conditions, tracks, NOW + after, NOTICED + after.total_seconds(), clock_trusted=True)
 
 
 def _thermostat(*, available: bool, last_seen_at: datetime | None) -> MonitoredDevice:
@@ -88,8 +91,13 @@ def f_noticed_cold_zone(f_cold_zone: ZoneHeating) -> Tracks:
 
 
 @pytest.fixture
-def f_held_cold_zone(f_unknown_zone: ZoneHeating, f_noticed_cold_zone: Tracks) -> Tracks:
+def f_paused_cold_zone(f_unknown_zone: ZoneHeating, f_noticed_cold_zone: Tracks) -> Tracks:
     return _evaluate([zone_condition(f_unknown_zone)], f_noticed_cold_zone, timedelta(minutes=20)).tracks
+
+
+@pytest.fixture
+def f_resumed_cold_zone(f_cold_zone: ZoneHeating, f_paused_cold_zone: Tracks) -> Tracks:
+    return _evaluate([zone_condition(f_cold_zone)], f_paused_cold_zone, POWER_KNOWN_AGAIN).tracks
 
 
 @pytest.fixture
@@ -97,12 +105,17 @@ def f_raised_cold_zone(f_cold_zone: ZoneHeating, f_noticed_cold_zone: Tracks) ->
     return _evaluate([zone_condition(f_cold_zone)], f_noticed_cold_zone, timedelta(minutes=35)).tracks
 
 
+@pytest.fixture
+def f_paused_raised_cold_zone(f_unknown_zone: ZoneHeating, f_raised_cold_zone: Tracks) -> Tracks:
+    return _evaluate([zone_condition(f_unknown_zone)], f_raised_cold_zone, timedelta(minutes=40)).tracks
+
+
 def test_lost_device_waits_for_confirmation(f_lost_thermostat: MonitoredDevice) -> None:
     evaluation = _evaluate([device_condition(f_lost_thermostat)], {}, timedelta(0))
 
     assert (evaluation.changes, evaluation.tracks) == (
         (),
-        {THERMOSTAT_KEY: AlertTrack(since=LAST_READING, noticed_at=NOTICED, raised=False)},
+        {THERMOSTAT_KEY: AlertTrack(began_at=LAST_READING_MONOTONIC, noticed_at=NOTICED, raised=False)},
     )
 
 
@@ -162,11 +175,48 @@ def test_clock_step_does_not_count_toward_a_loss(f_lost_thermostat: MonitoredDev
     evaluation = evaluate_alerts(
         [device_condition(f_lost_thermostat)],
         f_noticed_loss,
-        NOW + timedelta(hours=3),
+        NOW + CLOCK_STEP,
         NOTICED + 30,
+        clock_trusted=True,
     )
 
     assert (evaluation.changes, evaluation.tracks) == ((), f_noticed_loss)
+
+
+def test_alert_dates_the_last_reading_by_the_monotonic_clock_across_a_clock_step(
+    f_lost_thermostat: MonitoredDevice,
+    f_noticed_loss: Tracks,
+) -> None:
+    evaluation = evaluate_alerts(
+        [device_condition(f_lost_thermostat)],
+        f_noticed_loss,
+        NOW + CLOCK_STEP + timedelta(minutes=2),
+        NOTICED + 120,
+        clock_trusted=True,
+    )
+
+    change = AlertChange(
+        condition=device_condition(f_lost_thermostat),
+        transition=AlertTransition.RAISED,
+        since=LAST_READING + CLOCK_STEP,
+    )
+    assert evaluation.changes == (change,)
+
+
+def test_alert_raised_on_an_untrusted_clock_names_no_time(
+    f_lost_thermostat: MonitoredDevice,
+    f_noticed_loss: Tracks,
+) -> None:
+    evaluation = evaluate_alerts(
+        [device_condition(f_lost_thermostat)],
+        f_noticed_loss,
+        NOW + timedelta(minutes=2),
+        NOTICED + 120,
+        clock_trusted=False,
+    )
+
+    change = AlertChange(condition=device_condition(f_lost_thermostat), transition=AlertTransition.RAISED, since=None)
+    assert evaluation.changes == (change,)
 
 
 @pytest.mark.parametrize(
@@ -227,17 +277,61 @@ def test_zone_off_alerts_after_thirty_five_minutes(
     assert evaluation.changes == ((change,) if raised else ())
 
 
-def test_unknown_power_keeps_the_zone_off_timer(f_unknown_zone: ZoneHeating, f_noticed_cold_zone: Tracks) -> None:
+def test_unknown_power_stops_the_zone_off_timer(f_unknown_zone: ZoneHeating, f_noticed_cold_zone: Tracks) -> None:
     evaluation = _evaluate([zone_condition(f_unknown_zone)], f_noticed_cold_zone, timedelta(minutes=20))
 
-    assert (evaluation.changes, evaluation.tracks) == ((), f_noticed_cold_zone)
+    assert (evaluation.changes, evaluation.tracks) == (
+        (),
+        {ZONE_KEY: AlertTrack(began_at=NOTICED, noticed_at=None, raised=False)},
+    )
 
 
-def test_zone_off_counts_through_unknown_power(f_cold_zone: ZoneHeating, f_held_cold_zone: Tracks) -> None:
-    evaluation = _evaluate([zone_condition(f_cold_zone)], f_held_cold_zone, timedelta(minutes=35))
+def test_zone_off_timer_starts_over_once_the_power_is_known_again(
+    f_cold_zone: ZoneHeating,
+    f_paused_cold_zone: Tracks,
+) -> None:
+    evaluation = _evaluate([zone_condition(f_cold_zone)], f_paused_cold_zone, POWER_KNOWN_AGAIN)
 
-    assert evaluation.changes == (
-        AlertChange(condition=zone_condition(f_cold_zone), transition=AlertTransition.RAISED, since=NOW),
+    assert (evaluation.changes, evaluation.tracks) == (
+        (),
+        {
+            ZONE_KEY: AlertTrack(
+                began_at=NOTICED,
+                noticed_at=NOTICED + POWER_KNOWN_AGAIN.total_seconds(),
+                raised=False,
+            ),
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ('elapsed', 'raised'),
+    [
+        (timedelta(minutes=34, seconds=59), False),
+        (timedelta(minutes=35), True),
+    ],
+)
+def test_zone_off_alerts_thirty_five_minutes_after_the_power_is_known_again(
+    f_cold_zone: ZoneHeating,
+    f_resumed_cold_zone: Tracks,
+    elapsed: timedelta,
+    raised: bool,
+) -> None:
+    evaluation = _evaluate([zone_condition(f_cold_zone)], f_resumed_cold_zone, POWER_KNOWN_AGAIN + elapsed)
+
+    change = AlertChange(condition=zone_condition(f_cold_zone), transition=AlertTransition.RAISED, since=NOW)
+    assert evaluation.changes == ((change,) if raised else ())
+
+
+def test_raised_zone_off_is_not_repeated_after_unknown_power(
+    f_cold_zone: ZoneHeating,
+    f_paused_raised_cold_zone: Tracks,
+) -> None:
+    evaluation = _evaluate([zone_condition(f_cold_zone)], f_paused_raised_cold_zone, timedelta(minutes=45))
+
+    assert (evaluation.changes, evaluation.tracks) == (
+        (),
+        {ZONE_KEY: AlertTrack(began_at=NOTICED, noticed_at=NOTICED + 45 * 60, raised=True)},
     )
 
 

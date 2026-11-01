@@ -7,7 +7,12 @@ from django.utils import translation
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertKind, AlertTransition
 from apps.notifications.domain.outage import Outage
-from apps.notifications.services.messages import alert_text, alert_text_from_payload, outage_text
+from apps.notifications.services.messages import (
+    alert_text,
+    alert_text_from_payload,
+    delivery_check_text,
+    outage_text,
+)
 
 SINCE = datetime(2026, 10, 31, 17, 24, 30, tzinfo=UTC)
 AT = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
@@ -68,6 +73,20 @@ def test_alert_reads_in_russian(
     expected: str,
 ) -> None:
     assert alert_text(kind, transition, 'Кухня', device_kind, SINCE, AT) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'device_kind', 'expected'),
+    [
+        (AlertKind.DEVICE_LOST, DeviceKind.THERMOSTAT, 'Кухня: нет связи с термостатом'),
+        (AlertKind.DEVICE_LOST, DeviceKind.PLUG, 'Кухня: нет связи с розеткой'),
+        (AlertKind.DEVICE_LOST, DeviceKind.TEMPERATURE_SENSOR, 'Кухня: нет связи'),
+        (AlertKind.ZONE_OFF, DeviceKind.THERMOSTAT, 'Кухня: термостат выключен, хотя по расписанию должен греть'),
+    ],
+)
+def test_alert_without_a_trusted_time_names_none(kind: AlertKind, device_kind: DeviceKind, expected: str) -> None:
+    assert alert_text(kind, AlertTransition.RAISED, 'Кухня', device_kind, None, AT) == expected
 
 
 @pytest.mark.usefixtures('russian')
@@ -133,6 +152,13 @@ def test_journaled_alert_reads_like_the_message(transition: AlertTransition, exp
     assert alert_text_from_payload(transition, PAYLOAD, AT) == expected
 
 
+@pytest.mark.usefixtures('russian')
+def test_journaled_alert_without_a_time_reads_without_one() -> None:
+    text = alert_text_from_payload(AlertTransition.RAISED, {**PAYLOAD, 'since': None}, AT)
+
+    assert text == 'Кухня: нет связи с термостатом'
+
+
 @pytest.mark.parametrize(
     'payload',
     [
@@ -145,3 +171,8 @@ def test_journaled_alert_reads_like_the_message(transition: AlertTransition, exp
 )
 def test_unreadable_journal_payload_gives_no_text(payload: dict[str, object]) -> None:
     assert alert_text_from_payload(AlertTransition.RAISED, payload, AT) is None
+
+
+@pytest.mark.usefixtures('russian')
+def test_delivery_check_reads_in_russian() -> None:
+    assert delivery_check_text() == 'teplo: проверка связи. Оповещения будут приходить в этот чат'

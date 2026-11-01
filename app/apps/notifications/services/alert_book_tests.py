@@ -9,7 +9,7 @@ from apps.notifications.services.alert_book import AlertBook
 
 NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
-TRACK = AlertTrack(since=NOW, noticed_at=10.0, raised=False)
+TRACK = AlertTrack(began_at=4.0, noticed_at=10.0, raised=False)
 NOTE = StartupNote(last_activity=NOW, monotonic=5.0)
 
 

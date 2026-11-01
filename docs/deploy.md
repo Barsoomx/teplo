@@ -49,6 +49,20 @@ Layout on the router:
 
 Releases ship without tests: `.gitattributes` marks `*_tests.py` and `conftest.py` as `export-ignore`. Django imports every module of a `templatetags` package at startup, and the router has no pytest.
 
+## Telegram alerts
+
+Alerts go to the chat in the `[telegram]` table of `secrets.toml`; `deploy/router/secrets.toml.example` shows its keys. After adding or changing the table, restart teplo (`/opt/etc/init.d/S90teplo restart`) and send a test message:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py send_test_alert'
+```
+
+It prints `ok` once Telegram has accepted the message, and otherwise fails with the error code and the reason:
+
+- `telegram_not_configured`: the table is missing, or its `token` or `chat_id` is empty.
+- `alert_rejected`: Telegram refused the message. HTTP 401 or 404 means a wrong token; 400 or 403, a wrong `chat_id` or a chat the bot may not write to: open the chat with the bot and press Start.
+- `alert_delivery_failed`: Telegram could not be reached. `CERTIFICATE_VERIFY_FAILED` in the reason means the router lacks CA certificates: `opkg install ca-bundle`. A timeout points at the network or the `proxy`.
+
 ## Operate
 
 - Service: `/opt/etc/init.d/S90teplo {start|stop|restart|status}`. `stop` gives teplo 10 s to finish its cleanup and then kills it, so `restart` never runs two instances.

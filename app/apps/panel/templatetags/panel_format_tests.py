@@ -137,6 +137,7 @@ def test_day_word_names_days_other_than_today(moment: datetime, expected: str) -
     ('kind', 'payload', 'expected'),
     [
         ('alert_raised', ALERT_PAYLOAD, 'Кухня: нет связи с термостатом с 20:24'),
+        ('alert_raised', {**ALERT_PAYLOAD, 'since': None}, 'Кухня: нет связи с термостатом'),
         ('alert_cleared', ALERT_PAYLOAD, 'Кухня: термостат снова на связи'),
         ('alert_raised', {}, 'Кухня: неизвестное событие'),
     ],

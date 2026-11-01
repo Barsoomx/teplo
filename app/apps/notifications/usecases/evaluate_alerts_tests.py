@@ -35,7 +35,15 @@ FOUND_THERMOSTAT = MonitoredDevice(
     available=True,
     last_seen_at=NOW,
 )
+SILENT_THERMOSTAT = MonitoredDevice(
+    slug='thermostat-kitchen',
+    name='Кухня',
+    kind=DeviceKind.THERMOSTAT,
+    available=False,
+    last_seen_at=None,
+)
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
+CLOCK_STEP = timedelta(hours=3)
 RESTART_NOTE = StartupNote(last_activity=NOW - timedelta(minutes=16), monotonic=NOTICED)
 
 
@@ -92,6 +100,15 @@ def f_raised_book(f_noticed_book: AlertBook, f_zones: ZoneSourceStub) -> AlertBo
 
 
 @pytest.fixture
+def f_silence_noticed_book() -> AlertBook:
+    book = AlertBook()
+    _use_case([SILENT_THERMOSTAT], ZoneSourceStub(zones=[]), book, EventDispatcher(), clock_trusted=False).execute(
+        _input(timedelta(0)),
+    )
+    return book
+
+
+@pytest.fixture
 def f_restarted_book() -> AlertBook:
     book = AlertBook()
     book.note_startup(RESTART_NOTE)
@@ -123,6 +140,25 @@ def f_found_use_case(
     f_dispatcher: EventDispatcher,
 ) -> EvaluateAlertsUseCase:
     return _use_case([FOUND_THERMOSTAT], f_zones, f_raised_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_silent_use_case(f_silence_noticed_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _use_case([SILENT_THERMOSTAT], ZoneSourceStub(zones=[]), f_silence_noticed_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_untrusted_silent_use_case(
+    f_silence_noticed_book: AlertBook,
+    f_dispatcher: EventDispatcher,
+) -> EvaluateAlertsUseCase:
+    return _use_case(
+        [SILENT_THERMOSTAT],
+        ZoneSourceStub(zones=[]),
+        f_silence_noticed_book,
+        f_dispatcher,
+        clock_trusted=False,
+    )
 
 
 @pytest.fixture
@@ -207,6 +243,44 @@ def test_device_reading_again_clears_its_alert(
             ),
         ],
     )
+
+
+def test_loss_noticed_before_a_clock_step_is_dated_by_the_monotonic_clock(
+    f_silent_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_silent_use_case.execute(
+        EvaluateAlertsInputDTO(now=NOW + CLOCK_STEP + timedelta(minutes=10), monotonic=NOTICED + 600),
+    )
+
+    assert f_events == [
+        AlertRaised(
+            kind=AlertKind.DEVICE_LOST,
+            subject='thermostat-kitchen',
+            name='Кухня',
+            device_kind=DeviceKind.THERMOSTAT,
+            since=NOW + CLOCK_STEP,
+            occurred_at=NOW + CLOCK_STEP + timedelta(minutes=10),
+        ),
+    ]
+
+
+def test_alert_raised_while_the_clock_is_untrusted_names_no_time(
+    f_untrusted_silent_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_untrusted_silent_use_case.execute(_input(timedelta(minutes=10)))
+
+    assert f_events == [
+        AlertRaised(
+            kind=AlertKind.DEVICE_LOST,
+            subject='thermostat-kitchen',
+            name='Кухня',
+            device_kind=DeviceKind.THERMOSTAT,
+            since=None,
+            occurred_at=NOW + timedelta(minutes=10),
+        ),
+    ]
 
 
 def test_outage_before_the_start_is_reported_once(

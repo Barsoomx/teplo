@@ -22,8 +22,8 @@ class Condition:
 
 @dataclass(frozen=True, kw_only=True)
 class AlertTrack:
-    since: datetime
-    noticed_at: float
+    began_at: float
+    noticed_at: float | None
     raised: bool
 
 
@@ -31,13 +31,32 @@ class AlertTrack:
 class AlertChange:
     condition: Condition
     transition: AlertTransition
-    since: datetime
+    since: datetime | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class AlertEvaluation:
     tracks: dict[AlertKey, AlertTrack]
     changes: tuple[AlertChange, ...]
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Clock:
+    now: datetime
+    monotonic: float
+    trusted: bool
+
+    def monotonic_of(self, wall: datetime | None) -> float:
+        if wall is None:
+            return self.monotonic
+
+        return self.monotonic - (self.now - wall).total_seconds()
+
+    def wall_of(self, moment: float) -> datetime | None:
+        if not self.trusted:
+            return None
+
+        return self.now - timedelta(seconds=self.monotonic - moment)
 
 
 def device_condition(device: MonitoredDevice) -> Condition:
@@ -67,11 +86,14 @@ def evaluate_alerts(
     tracks: Mapping[AlertKey, AlertTrack],
     now: datetime,
     monotonic: float,
+    *,
+    clock_trusted: bool,
 ) -> AlertEvaluation:
+    clock = _Clock(now=now, monotonic=monotonic, trusted=clock_trusted)
     next_tracks: dict[AlertKey, AlertTrack] = {}
     changes: list[AlertChange] = []
     for condition in conditions:
-        track, change = _step(condition, tracks.get(condition.key), now, monotonic)
+        track, change = _step(condition, tracks.get(condition.key), clock)
         if track is not None:
             next_tracks[condition.key] = track
         if change is not None:
@@ -82,26 +104,48 @@ def evaluate_alerts(
 def _step(
     condition: Condition,
     track: AlertTrack | None,
-    now: datetime,
-    monotonic: float,
+    clock: _Clock,
 ) -> tuple[AlertTrack | None, AlertChange | None]:
     if condition.failing is None:
-        return track, None
+        return _paused(track), None
 
     if not condition.failing:
         if track is None or not track.raised:
             return None, None
 
-        return None, AlertChange(condition=condition, transition=AlertTransition.CLEARED, since=track.since)
+        return None, _change(condition, AlertTransition.CLEARED, track, clock)
 
-    current = track or AlertTrack(since=condition.since or now, noticed_at=monotonic, raised=False)
-    if current.raised or monotonic - current.noticed_at < condition.raise_after.total_seconds():
+    current = _running(condition, track, clock)
+    if current.raised or not _due(current, condition.raise_after, clock.monotonic):
         return current, None
 
-    return (
-        replace(current, raised=True),
-        AlertChange(condition=condition, transition=AlertTransition.RAISED, since=current.since),
-    )
+    raised = replace(current, raised=True)
+    return raised, _change(condition, AlertTransition.RAISED, raised, clock)
+
+
+def _paused(track: AlertTrack | None) -> AlertTrack | None:
+    if track is None:
+        return None
+
+    return replace(track, noticed_at=None)
+
+
+def _running(condition: Condition, track: AlertTrack | None, clock: _Clock) -> AlertTrack:
+    if track is None:
+        return AlertTrack(began_at=clock.monotonic_of(condition.since), noticed_at=clock.monotonic, raised=False)
+
+    if track.noticed_at is None:
+        return replace(track, noticed_at=clock.monotonic)
+
+    return track
+
+
+def _due(track: AlertTrack, raise_after: timedelta, monotonic: float) -> bool:
+    return track.noticed_at is not None and monotonic - track.noticed_at >= raise_after.total_seconds()
+
+
+def _change(condition: Condition, transition: AlertTransition, track: AlertTrack, clock: _Clock) -> AlertChange:
+    return AlertChange(condition=condition, transition=transition, since=clock.wall_of(track.began_at))
 
 
 def _zone_off(zone: ZoneHeating) -> bool | None:

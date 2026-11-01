@@ -14,14 +14,21 @@ DEVICE_LOST = {
     DeviceKind.PLUG: gettext_lazy('%(name)s: no connection to the plug since %(since)s'),
 }
 ANY_DEVICE_LOST = gettext_lazy('%(name)s: no connection since %(since)s')
+UNDATED_DEVICE_LOST = {
+    DeviceKind.THERMOSTAT: gettext_lazy('%(name)s: no connection to the thermostat'),
+    DeviceKind.PLUG: gettext_lazy('%(name)s: no connection to the plug'),
+}
+ANY_UNDATED_DEVICE_LOST = gettext_lazy('%(name)s: no connection')
 DEVICE_FOUND = {
     DeviceKind.THERMOSTAT: gettext_lazy('%(name)s: the thermostat is back online'),
     DeviceKind.PLUG: gettext_lazy('%(name)s: the plug is back online'),
 }
 ANY_DEVICE_FOUND = gettext_lazy('%(name)s: back online')
 ZONE_OFF = gettext_lazy('%(name)s: the thermostat has been off since %(since)s although the schedule wants heat')
+UNDATED_ZONE_OFF = gettext_lazy('%(name)s: the thermostat is off although the schedule wants heat')
 ZONE_FOLLOWS_SCHEDULE = gettext_lazy('%(name)s: the thermostat follows the schedule again')
 TEPLO_RESUMED = gettext_lazy('teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)')
+DELIVERY_CHECK = gettext_lazy('teplo: test message. Alerts will arrive in this chat')
 
 
 def alert_text(
@@ -29,10 +36,11 @@ def alert_text(
     transition: AlertTransition,
     name: str,
     device_kind: DeviceKind,
-    since: datetime,
+    since: datetime | None,
     at: datetime,
 ) -> str:
-    return _template(kind, transition, device_kind) % {'name': name, 'since': _moment(since, at)}
+    template = _template(kind, transition, device_kind, dated=since is not None)
+    return template % {'name': name, 'since': '' if since is None else _moment(since, at)}
 
 
 def alert_text_from_payload(transition: AlertTransition, payload: Mapping[str, object], at: datetime) -> str | None:
@@ -42,7 +50,7 @@ def alert_text_from_payload(transition: AlertTransition, payload: Mapping[str, o
             transition=transition,
             name=str(payload['name']),
             device_kind=DeviceKind(str(payload['device_kind'])),
-            since=datetime.fromisoformat(str(payload['since'])),
+            since=_since(payload['since']),
             at=at,
         )
     except (KeyError, ValueError):
@@ -59,15 +67,31 @@ def outage_text(outage: Outage) -> str:
     }
 
 
-def _template(kind: AlertKind, transition: AlertTransition, device_kind: DeviceKind) -> str:
-    raised = transition is AlertTransition.RAISED
-    if kind is AlertKind.ZONE_OFF:
-        return str(ZONE_OFF if raised else ZONE_FOLLOWS_SCHEDULE)
+def delivery_check_text() -> str:
+    return str(DELIVERY_CHECK)
 
-    if raised:
+
+def _template(kind: AlertKind, transition: AlertTransition, device_kind: DeviceKind, *, dated: bool) -> str:
+    if transition is AlertTransition.CLEARED:
+        if kind is AlertKind.ZONE_OFF:
+            return str(ZONE_FOLLOWS_SCHEDULE)
+
+        return str(DEVICE_FOUND.get(device_kind, ANY_DEVICE_FOUND))
+
+    if kind is AlertKind.ZONE_OFF:
+        return str(ZONE_OFF if dated else UNDATED_ZONE_OFF)
+
+    if dated:
         return str(DEVICE_LOST.get(device_kind, ANY_DEVICE_LOST))
 
-    return str(DEVICE_FOUND.get(device_kind, ANY_DEVICE_FOUND))
+    return str(UNDATED_DEVICE_LOST.get(device_kind, ANY_UNDATED_DEVICE_LOST))
+
+
+def _since(value: object) -> datetime | None:
+    if value is None:
+        return None
+
+    return datetime.fromisoformat(str(value))
 
 
 def _moment(moment: datetime, reference: datetime) -> str:

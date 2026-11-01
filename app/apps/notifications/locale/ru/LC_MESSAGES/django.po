@@ -21,6 +21,18 @@ msgid "%(name)s: no connection since %(since)s"
 msgstr "%(name)s: нет связи с %(since)s"
 
 #, python-format
+msgid "%(name)s: no connection to the thermostat"
+msgstr "%(name)s: нет связи с термостатом"
+
+#, python-format
+msgid "%(name)s: no connection to the plug"
+msgstr "%(name)s: нет связи с розеткой"
+
+#, python-format
+msgid "%(name)s: no connection"
+msgstr "%(name)s: нет связи"
+
+#, python-format
 msgid "%(name)s: the thermostat is back online"
 msgstr "%(name)s: термостат снова на связи"
 
@@ -37,12 +49,19 @@ msgid "%(name)s: the thermostat has been off since %(since)s although the schedu
 msgstr "%(name)s: термостат выключен с %(since)s, хотя по расписанию должен греть"
 
 #, python-format
+msgid "%(name)s: the thermostat is off although the schedule wants heat"
+msgstr "%(name)s: термостат выключен, хотя по расписанию должен греть"
+
+#, python-format
 msgid "%(name)s: the thermostat follows the schedule again"
 msgstr "%(name)s: термостат снова работает по расписанию"
 
 #, python-format
 msgid "teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)"
 msgstr "teplo снова работает. Перерыв %(began)s–%(ended)s (%(duration)s)"
+
+msgid "teplo: test message. Alerts will arrive in this chat"
+msgstr "teplo: проверка связи. Оповещения будут приходить в этот чат"
 
 #, python-format
 msgid "%(minutes)s min"
