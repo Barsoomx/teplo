@@ -14,6 +14,7 @@ from apps.notifications.services.telegram import (
     TelegramClient,
     UnconfiguredSender,
     alert_sender_for,
+    build_opener,
     proxies_for,
 )
 from apps.notifications.stubs import UrlOpenerStub
@@ -50,6 +51,11 @@ def f_unauthorized_client() -> TelegramClient:
         opener=UrlOpenerStub(error=_http_error(401, 'Unauthorized')),
         timeout=10.0,
     )
+
+
+@pytest.fixture
+def f_malformed_proxy_client() -> TelegramClient:
+    return TelegramClient(token=TOKEN, chat_id='42', opener=build_opener('http:/proxy.invalid'), timeout=10.0)
 
 
 @pytest.fixture
@@ -92,6 +98,7 @@ def test_token_is_quoted_into_the_path(f_odd_token_client: TelegramClient, f_ope
         (urllib.error.URLError('Name or service not known'), AlertDeliveryError),
         (TimeoutError('timed out'), AlertDeliveryError),
         (http.client.IncompleteRead(b''), AlertDeliveryError),
+        (UnicodeError("encoding with 'idna' codec failed (UnicodeError: label empty or too long)"), AlertDeliveryError),
     ],
 )
 def test_failed_send_says_whether_a_retry_can_help(error: Exception, expected: type[DomainError]) -> None:
@@ -108,6 +115,16 @@ def test_refusal_names_the_status_and_keeps_the_token_out(f_unauthorized_client:
     assert (raised.value.detail, raised.value.error_code) == (
         'telegram answered: HTTP Error 401: Unauthorized',
         'alert_rejected',
+    )
+
+
+def test_malformed_proxy_is_a_delivery_failure(f_malformed_proxy_client: TelegramClient) -> None:
+    with pytest.raises(AlertDeliveryError) as raised:
+        f_malformed_proxy_client.send(TEXT)
+
+    assert (raised.value.error_code, raised.value.detail) == (
+        'alert_delivery_failed',
+        "telegram unreachable: proxy URL with no authority: 'http:/proxy.invalid'",
     )
 
 

@@ -108,3 +108,10 @@ def test_telegram_table_without_token_configures_nothing(f_tokenless_telegram_se
 
 def test_missing_telegram_table_configures_nothing(f_empty_secrets: SecretsFile) -> None:
     assert f_empty_secrets.telegram is None
+
+
+def test_addresses_keys_and_tokens_stay_out_of_repr(f_secrets: SecretsFile) -> None:
+    assert (repr(f_secrets.device('thermostat-kitchen')), repr(f_secrets.telegram)) == (
+        "DeviceSecret(protocol='3.3')",
+        "TelegramSecret(chat_id='-1001234')",
+    )

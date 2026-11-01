@@ -1,5 +1,5 @@
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from apps.core.domain.errors import SecretMissingError
@@ -7,17 +7,17 @@ from apps.core.domain.errors import SecretMissingError
 
 @dataclass(frozen=True, kw_only=True)
 class DeviceSecret:
-    address: str
-    device_id: str
-    local_key: str
+    address: str = field(repr=False)
+    device_id: str = field(repr=False)
+    local_key: str = field(repr=False)
     protocol: str
 
 
 @dataclass(frozen=True, kw_only=True)
 class TelegramSecret:
-    token: str
+    token: str = field(repr=False)
     chat_id: str
-    proxy: str | None
+    proxy: str | None = field(repr=False)
 
 
 class SecretsFile:

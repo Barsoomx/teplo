@@ -55,7 +55,7 @@ class TelegramClient:
             response = self._opener.open(request, timeout=self._timeout)
         except urllib.error.HTTPError as error:
             raise _refusal(error) from None
-        except (OSError, http.client.HTTPException) as error:
+        except (OSError, http.client.HTTPException, ValueError) as error:
             raise AlertDeliveryError(f'telegram unreachable: {error}') from None
 
         response.close()

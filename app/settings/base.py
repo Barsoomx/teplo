@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import structlog
+from structlog.tracebacks import ExceptionDictTransformer
 
 from settings.utils import to_bool, to_list
 
@@ -121,7 +122,7 @@ structlog.configure(
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt='iso'),
-        structlog.processors.dict_tracebacks,
+        structlog.processors.ExceptionRenderer(ExceptionDictTransformer(show_locals=False)),
         structlog.processors.JSONRenderer(ensure_ascii=False),
     ],
 )
