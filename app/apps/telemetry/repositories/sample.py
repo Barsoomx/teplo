@@ -1,8 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime
 
-from django.db.models import Max
-
 from apps.telemetry.domain.samples import SampleValue
 from apps.telemetry.models import Sample
 
@@ -20,4 +18,4 @@ class SampleRepository:
 
     @staticmethod
     def last_recorded_at() -> datetime | None:
-        return Sample.objects.aggregate(last=Max('recorded_at'))['last']
+        return Sample.objects.order_by('-pk').values_list('recorded_at', flat=True).first()

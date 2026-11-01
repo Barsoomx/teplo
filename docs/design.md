@@ -144,7 +144,7 @@ Bounded contexts are Django apps laid out in the altyn-backend style described i
 - **power**: phases, limits, loads, shedding, phase map learning, EV detection.
 - **devices**: registry, capabilities, drivers, state store.
 - **tariffs**: tariff intervals.
-- **telemetry**: history samples, event journal, retention.
+- **telemetry**: history samples, event journal, retention (planned).
 - **notifications**: Telegram alerts.
 - **system**: trusted clock, dry-run, health.
 - **panel**: web pages and API.
@@ -292,7 +292,7 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 - **Supervision.** An Entware init script starts teplo at boot; a cron job restarts it if the process is gone. More than 3 restarts an hour sends an alert.
 - **Device loss.** A device without a reading for 10 minutes appears in the panel as unavailable; one that stays unavailable sends an alert (see Alerts below). A failed read or write keeps its error code (`device_unavailable`, `device_protocol_error`, `driver_not_implemented`, `device_not_found`, `secret_missing`, `device_config_invalid`) beside the driver's own error text: the state store holds both, the log records both, and the journal entries `device_availability_changed` and `zone_command_failed` store the code as `error_code` next to `reason` and `error`. A secrets table with an empty address or a protocol other than 3.1–3.5, or one tinytuya refuses, fails as `device_config_invalid` for that device alone: the poll records it and goes on to the next device.
 - **Power loss.** On start teplo reads every device, reconciles the desired state, and journals the outage interval from the last heartbeat. Thermostats may come back switched off and the zone's next allowed write switches them on. Every Tuya driver takes its client from one shared function that disables tinytuya's device22 fallback, so the client keeps the full status query and a device that answers badly while booting is read normally afterwards.
-- **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately; retention is one year of minute samples.
+- **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately. Pruning history to one year of minute samples is planned; until then it only grows, in the reference house by 23 rows a minute (three per thermostat, four per plug), about 12 million rows a year. The start reads the newest sample by its row id rather than scanning the table for the latest time, so it does not slow down as history grows.
 - **Coexistence.** teplo runs at nice 10 on its own ports (panel 8088, MQTT 1883); the watchdog restarts it when its resident memory exceeds 300 MB.
 
 ### Alerts
