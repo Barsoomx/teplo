@@ -25,6 +25,20 @@ class TuyaStatusClient(Protocol):
     def status(self) -> TuyaPayload | None: ...
 
 
+def plug_client(secret: DeviceSecret) -> tinytuya.Device:
+    client = tinytuya.Device(
+        secret.device_id,
+        secret.address,
+        secret.local_key,
+        version=float(secret.protocol),
+        connection_timeout=5,
+        connection_retry_limit=2,
+        connection_retry_delay=1,
+    )
+    client.disabledetect = True
+    return client
+
+
 class TuyaPlugDriver:
     def __init__(self, client: TuyaStatusClient, clock: Callable[[], datetime]) -> None:
         self._client = client
@@ -33,17 +47,7 @@ class TuyaPlugDriver:
 
     @classmethod
     def init(cls, secret: DeviceSecret) -> 'TuyaPlugDriver':
-        client = tinytuya.Device(
-            secret.device_id,
-            secret.address,
-            secret.local_key,
-            version=float(secret.protocol),
-            connection_timeout=5,
-            connection_retry_limit=2,
-            connection_retry_delay=1,
-        )
-        client.disabledetect = True
-        return cls(client=client, clock=timezone.now)
+        return cls(client=plug_client(secret), clock=timezone.now)
 
     def read_state(self) -> PlugState:
         try:

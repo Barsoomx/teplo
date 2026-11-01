@@ -5,9 +5,10 @@ from decimal import Decimal
 
 import pytest
 
+from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import PlugState
-from apps.devices.drivers.tuya_plug import TuyaPayload, TuyaPlugDriver
+from apps.devices.drivers.tuya_plug import TuyaPayload, TuyaPlugDriver, plug_client
 
 NOW = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
 BOILER_DPS = {
@@ -104,6 +105,16 @@ def f_serial_driver(f_serial_client: SerialClientStub) -> TuyaPlugDriver:
     return TuyaPlugDriver(client=f_serial_client, clock=_now)
 
 
+@pytest.fixture
+def f_secret() -> DeviceSecret:
+    return DeviceSecret(
+        address='plug.invalid',
+        device_id='plug-device-id',
+        local_key='plug-local-key',
+        protocol='3.5',
+    )
+
+
 def test_read_state_maps_data_points(f_driver: TuyaPlugDriver) -> None:
     assert f_driver.read_state() == PlugState(
         on=True,
@@ -157,3 +168,9 @@ def test_reads_are_serialized_across_threads(
         thread.join()
 
     assert f_serial_client.max_active == 1
+
+
+def test_plug_client_never_switches_to_device22(f_secret: DeviceSecret) -> None:
+    client = plug_client(f_secret)
+
+    assert (client.disabledetect, client.version) == (True, 3.5)
