@@ -42,7 +42,7 @@ def f_stale_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertO
 
 
 @pytest.fixture
-def f_lasting_alert_outbox(f_clock: MonotonicClockStub) -> AlertOutbox:
+def lasting_alert_outbox(f_clock: MonotonicClockStub) -> AlertOutbox:
     outbox = AlertOutbox(clock=f_clock, lifetime=timedelta(hours=1))
     outbox.put(LOST, alert=KITCHEN_LOST, transition=AlertTransition.RAISED)
     return outbox
@@ -85,18 +85,18 @@ def f_stale_use_case(f_stale_outbox: AlertOutbox, f_sender: AlertSenderStub) -> 
 
 @pytest.fixture
 def f_reconnected_use_case(
-    f_lasting_alert_outbox: AlertOutbox,
+    lasting_alert_outbox: AlertOutbox,
     f_clock: MonotonicClockStub,
     f_sender: AlertSenderStub,
 ) -> DeliverAlertsUseCase:
     offline = DeliverAlertsUseCase(
-        outbox=f_lasting_alert_outbox,
+        outbox=lasting_alert_outbox,
         sender=AlertSenderStub(errors={LOST: AlertDeliveryError(TIMED_OUT)}),
     )
     for _minute in range(120):
         offline.execute(DeliverAlertsInputDTO())
         f_clock.advance(60)
-    return DeliverAlertsUseCase(outbox=f_lasting_alert_outbox, sender=f_sender)
+    return DeliverAlertsUseCase(outbox=lasting_alert_outbox, sender=f_sender)
 
 
 def test_queued_messages_go_out_in_order(f_use_case: DeliverAlertsUseCase, f_sender: AlertSenderStub) -> None:

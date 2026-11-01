@@ -44,22 +44,22 @@ def f_long_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOu
 
 
 @pytest.fixture
-def f_recovered_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
+def recovered_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
     f_clock.advance(HOUR)
     f_outbox.put(FOUND, alert=KITCHEN_LOST, transition=AlertTransition.CLEARED)
     return f_outbox
 
 
 @pytest.fixture
-def f_recovered_hour_ago_outbox(f_recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
+def f_recovered_hour_ago_outbox(recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
     f_clock.advance(HOUR)
-    return f_recovered_outbox
+    return recovered_outbox
 
 
 @pytest.fixture
-def f_recovered_long_ago_outbox(f_recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
+def f_recovered_long_ago_outbox(recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
     f_clock.advance(HOUR + 1)
-    return f_recovered_outbox
+    return recovered_outbox
 
 
 @pytest.fixture
