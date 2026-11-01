@@ -13,10 +13,27 @@ from apps.devices.domain.errors import (
     DeviceUnavailableError,
     DriverNotImplementedError,
 )
-from apps.panel.templatetags.panel_format import clock_note, command_summary, day_word, failure_note, icon, local_time
+from apps.devices.domain.kinds import DeviceKind
+from apps.panel.templatetags.panel_format import (
+    alert_text,
+    clock_note,
+    command_summary,
+    day_word,
+    failure_note,
+    icon,
+    local_time,
+)
+from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.system.domain.clock import ClockStatusCode
 
 MOSCOW = ZoneInfo('Europe/Moscow')
+ALERT_PAYLOAD = {
+    'kind': 'device_lost',
+    'subject': 'thermostat-kitchen',
+    'name': 'Кухня',
+    'device_kind': 'thermostat',
+    'since': '2026-10-31T17:24:00Z',
+}
 
 
 @pytest.fixture
@@ -113,3 +130,29 @@ def test_local_time_shows_journal_timestamps_in_house_time() -> None:
 )
 def test_day_word_names_days_other_than_today(moment: datetime, expected: str) -> None:
     assert day_word(moment) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        ('alert_raised', ALERT_PAYLOAD, 'Кухня: нет связи с термостатом с 20:24'),
+        ('alert_cleared', ALERT_PAYLOAD, 'Кухня: термостат снова на связи'),
+        ('alert_raised', {}, 'Кухня: неизвестное событие'),
+    ],
+)
+def test_alert_text_reads_journaled_alerts_like_the_messages(
+    kind: str,
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    entry = TimelineEntry(
+        kind=kind,
+        subject='thermostat-kitchen',
+        subject_name='Кухня',
+        device_kind=DeviceKind.THERMOSTAT,
+        payload=payload,
+        created_at=datetime(2026, 10, 31, 20, 40, tzinfo=MOSCOW),
+    )
+
+    assert alert_text(entry) == expected

@@ -13,10 +13,23 @@ class DeviceSecret:
     protocol: str
 
 
+@dataclass(frozen=True, kw_only=True)
+class TelegramSecret:
+    token: str
+    chat_id: str
+    proxy: str | None
+
+
 class SecretsFile:
-    def __init__(self, devices: dict[str, DeviceSecret], panel_password: str | None) -> None:
+    def __init__(
+        self,
+        devices: dict[str, DeviceSecret],
+        panel_password: str | None,
+        telegram: TelegramSecret | None = None,
+    ) -> None:
         self._devices = devices
         self._panel_password = panel_password
+        self._telegram = telegram
 
     @classmethod
     def init(cls, path: Path) -> 'SecretsFile':
@@ -30,14 +43,31 @@ class SecretsFile:
             )
             for slug, entry in data.get('devices', {}).items()
         }
-        return cls(devices=devices, panel_password=data.get('panel', {}).get('password'))
+        return cls(
+            devices=devices,
+            panel_password=data.get('panel', {}).get('password'),
+            telegram=_telegram(data.get('telegram', {})),
+        )
 
     @property
     def panel_password(self) -> str | None:
         return self._panel_password
+
+    @property
+    def telegram(self) -> TelegramSecret | None:
+        return self._telegram
 
     def device(self, slug: str) -> DeviceSecret:
         if slug not in self._devices:
             raise SecretMissingError(slug)
 
         return self._devices[slug]
+
+
+def _telegram(entry: dict[str, object]) -> TelegramSecret | None:
+    token = str(entry.get('token') or '').strip()
+    chat_id = str(entry.get('chat_id') or '').strip()
+    if not token or not chat_id:
+        return None
+
+    return TelegramSecret(token=token, chat_id=chat_id, proxy=str(entry.get('proxy') or '').strip() or None)

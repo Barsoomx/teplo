@@ -6,8 +6,13 @@ import pytest
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.events import ZoneBoosted, ZoneCommandFailed, ZoneCommandIssued
 from apps.devices.domain.events import DeviceAvailabilityChanged
+from apps.devices.domain.kinds import DeviceKind
 from apps.devices.domain.readings import ThermostatMode
+from apps.notifications.domain.alerts import AlertKind
+from apps.notifications.domain.events import AlertCleared, AlertRaised
 from apps.telemetry.event_handlers import (
+    journal_alert_cleared,
+    journal_alert_raised,
     journal_device_availability,
     journal_zone_boost,
     journal_zone_command,
@@ -90,3 +95,55 @@ def test_zone_boost_is_journaled() -> None:
     journal_zone_boost(ZoneBoosted(zone='bathroom-1f', until=NOW + timedelta(hours=2), occurred_at=NOW))
 
     assert _entry() == ('zone_boosted', 'bathroom-1f', {'zone': 'bathroom-1f', 'until': '2026-10-29T08:00:00Z'}, NOW)
+
+
+def test_raised_alert_is_journaled() -> None:
+    journal_alert_raised(
+        AlertRaised(
+            kind=AlertKind.DEVICE_LOST,
+            subject='thermostat-kitchen',
+            name='Кухня',
+            device_kind=DeviceKind.THERMOSTAT,
+            since=NOW - timedelta(minutes=12),
+            occurred_at=NOW,
+        ),
+    )
+
+    assert _entry() == (
+        'alert_raised',
+        'thermostat-kitchen',
+        {
+            'kind': 'device_lost',
+            'subject': 'thermostat-kitchen',
+            'name': 'Кухня',
+            'device_kind': 'thermostat',
+            'since': '2026-10-29T05:48:00Z',
+        },
+        NOW,
+    )
+
+
+def test_cleared_alert_is_journaled() -> None:
+    journal_alert_cleared(
+        AlertCleared(
+            kind=AlertKind.ZONE_OFF,
+            subject='kitchen',
+            name='Кухня',
+            device_kind=DeviceKind.THERMOSTAT,
+            since=NOW - timedelta(minutes=40),
+            occurred_at=NOW,
+        ),
+    )
+
+    assert _entry() == (
+        'alert_cleared',
+        'kitchen',
+        {
+            'kind': 'zone_off',
+            'subject': 'kitchen',
+            'name': 'Кухня',
+            'device_kind': 'thermostat',
+            'since': '2026-10-29T05:20:00Z',
+        },
+        NOW,
+    )

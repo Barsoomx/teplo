@@ -40,6 +40,12 @@
         {% elif entry.kind == 'zone_boosted' %}
         <span class="event-mark event-mark-boost">{% icon 'flame' %}</span>
         <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name until=entry.payload.until|local_time %}{{ name }}: boost until {{ until }}{% endblocktranslate %}</p></div>
+        {% elif entry.kind == 'alert_raised' %}
+        <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>
+        {% elif entry.kind == 'alert_cleared' %}
+        <span class="event-mark event-mark-online">{% if entry.payload.kind == 'zone_off' %}{% icon 'power' %}{% else %}{% icon 'wifi' %}{% endif %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>
         {% else %}
         <span class="event-mark">{% icon 'scroll-text' %}</span>
         <div class="event-body" title="{{ entry.kind }}"><p class="event-text">{% if entry.subject_name %}{% blocktranslate with name=entry.subject_name %}{{ name }}: unknown event{% endblocktranslate %}{% else %}{% translate 'Unknown event' %}{% endif %}</p></div>

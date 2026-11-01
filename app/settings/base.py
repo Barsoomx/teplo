@@ -27,6 +27,7 @@ INSTALLED_APPS = [
     'apps.system',
     'apps.climate',
     'apps.telemetry',
+    'apps.notifications',
     'apps.panel',
     *([f'sites.{TEPLO_SITE}'] if TEPLO_SITE else []),
 ]
@@ -99,6 +100,7 @@ TEPLO_CLOCK_SOURCE = os.getenv('TEPLO_CLOCK_SOURCE', 'ndms')
 TEPLO_DRY_RUN = to_bool(os.getenv('TEPLO_DRY_RUN'), default=True)
 TEPLO_PANEL_HOST = os.getenv('TEPLO_PANEL_HOST', '127.0.0.1')
 TEPLO_PANEL_PORT = int(os.getenv('TEPLO_PANEL_PORT', '8088'))
+TEPLO_ALERT_LANGUAGE = os.getenv('TEPLO_ALERT_LANGUAGE', 'ru')
 
 LOGGING = {
     'version': 1,

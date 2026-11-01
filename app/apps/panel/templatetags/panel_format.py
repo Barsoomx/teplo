@@ -10,6 +10,9 @@ from django.utils.safestring import SafeString
 from django.utils.translation import gettext, gettext_lazy
 
 from apps.devices.domain.kinds import DeviceKind
+from apps.notifications.domain.alerts import AlertTransition
+from apps.notifications.services.messages import alert_text_from_payload
+from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.system.domain.clock import ClockStatusCode
 
 register = template.Library()
@@ -32,6 +35,7 @@ CLOCK_NOTES = {
     ClockStatusCode.NTP_STATUS_MISSING: gettext_lazy('the router reports no NTP status'),
     ClockStatusCode.NTP_STATUS_FAILED: gettext_lazy('could not read the NTP status from the router'),
 }
+ALERT_TRANSITIONS = {'alert_raised': AlertTransition.RAISED, 'alert_cleared': AlertTransition.CLEARED}
 
 
 @register.simple_tag
@@ -91,3 +95,13 @@ def day_word(value: datetime) -> str:
         return gettext('tomorrow')
 
     return date_format(day, 'j E')
+
+
+@register.filter
+def alert_text(entry: TimelineEntry) -> str:
+    transition = ALERT_TRANSITIONS.get(entry.kind)
+    text = alert_text_from_payload(transition, entry.payload, entry.created_at) if transition is not None else None
+    if text is None:
+        return gettext('%(name)s: unknown event') % {'name': entry.subject_name}
+
+    return text

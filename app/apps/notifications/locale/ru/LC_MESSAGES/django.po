@@ -1,0 +1,57 @@
+# Russian translation of teplo alerts.
+msgid ""
+msgstr ""
+"Project-Id-Version: teplo\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=4; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<12 || n%100>14) ? 1 : n%10==0 || (n%10>=5 && n%10<=9) || (n%100>=11 && n%100<=14)? 2 : 3);\n"
+
+#, python-format
+msgid "%(name)s: no connection to the thermostat since %(since)s"
+msgstr "%(name)s: нет связи с термостатом с %(since)s"
+
+#, python-format
+msgid "%(name)s: no connection to the plug since %(since)s"
+msgstr "%(name)s: нет связи с розеткой с %(since)s"
+
+#, python-format
+msgid "%(name)s: no connection since %(since)s"
+msgstr "%(name)s: нет связи с %(since)s"
+
+#, python-format
+msgid "%(name)s: the thermostat is back online"
+msgstr "%(name)s: термостат снова на связи"
+
+#, python-format
+msgid "%(name)s: the plug is back online"
+msgstr "%(name)s: розетка снова на связи"
+
+#, python-format
+msgid "%(name)s: back online"
+msgstr "%(name)s: снова на связи"
+
+#, python-format
+msgid "%(name)s: the thermostat has been off since %(since)s although the schedule wants heat"
+msgstr "%(name)s: термостат выключен с %(since)s, хотя по расписанию должен греть"
+
+#, python-format
+msgid "%(name)s: the thermostat follows the schedule again"
+msgstr "%(name)s: термостат снова работает по расписанию"
+
+#, python-format
+msgid "teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)"
+msgstr "teplo снова работает. Перерыв %(began)s–%(ended)s (%(duration)s)"
+
+#, python-format
+msgid "%(minutes)s min"
+msgstr "%(minutes)s мин"
+
+#, python-format
+msgid "%(hours)s h"
+msgstr "%(hours)s ч"
+
+#, python-format
+msgid "%(hours)s h %(minutes)s min"
+msgstr "%(hours)s ч %(minutes)s мин"

@@ -123,6 +123,49 @@ def m_plug_timeline_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+@pytest.fixture
+def m_alerts_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=(
+                        TimelineEntry(
+                            kind='alert_cleared',
+                            subject='hallway',
+                            subject_name='Прихожая',
+                            device_kind=None,
+                            payload={
+                                'kind': 'zone_off',
+                                'subject': 'hallway',
+                                'name': 'Прихожая',
+                                'device_kind': 'thermostat',
+                                'since': '2026-10-29T05:00:00Z',
+                            },
+                            created_at=MORNING,
+                        ),
+                        TimelineEntry(
+                            kind='alert_raised',
+                            subject='thermostat-kitchen',
+                            subject_name='Кухня',
+                            device_kind=DeviceKind.THERMOSTAT,
+                            payload={
+                                'kind': 'device_lost',
+                                'subject': 'thermostat-kitchen',
+                                'name': 'Кухня',
+                                'device_kind': 'thermostat',
+                                'since': '2026-10-29T05:40:00Z',
+                            },
+                            created_at=MORNING - timedelta(minutes=5),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
 def test_journal_describes_entries_in_words(f_client: Client, m_timeline_use_case: MagicMock) -> None:
     response = f_client.get('/journal/')
 
@@ -167,6 +210,21 @@ def test_journal_words_plug_events_as_plug_events(
         (content.count(PLUG_DETAIL), f'title="{PLUG_DETAIL}"' in content),
         m_plug_timeline_use_case.init.call_count,
     ) == (True, True, True, False, (1, True), 1)
+
+
+def test_journal_reads_alerts_like_the_telegram_messages(
+    f_russian_client: Client,
+    m_alerts_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        'Прихожая: термостат снова работает по расписанию' in content,
+        'Кухня: нет связи с термостатом с 08:40' in content,
+        'неизвестное событие' in content,
+        m_alerts_timeline_use_case.init.call_count,
+    ) == (True, True, False, 1)
 
 
 def test_journal_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

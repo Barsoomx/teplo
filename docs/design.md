@@ -287,10 +287,28 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 
 - **Clock.** The clock is trusted when NTP has synchronised since boot. Otherwise schedules pause (section 6) and the panel offers "take time from this device", which stores an offset inside teplo without touching the system clock. A last command stamped later than the clock (the clock moved back, e.g. after a reboot) does not hold back the next write. Likewise a boost counts only while it ends within its 2-hour duration from now, trusted clock or not, so a boost stamped before the clock moved back cannot hold a zone at the boost setpoint.
 - **Supervision.** An Entware init script starts teplo at boot; a cron job restarts it if the process is gone. More than 3 restarts an hour sends an alert.
-- **Device loss.** Any device unavailable for 10 minutes appears in the panel and sends an alert. A failed read or write keeps its error code (`device_unavailable`, `device_protocol_error`, `driver_not_implemented`, `device_not_found`, `secret_missing`) beside the driver's own error text: the state store holds both, the log records both, and the journal entries `device_availability_changed` and `zone_command_failed` store the code as `error_code` next to `reason` and `error`.
+- **Device loss.** A device without a reading for 10 minutes appears in the panel as unavailable; one that stays unavailable sends an alert (see Alerts below). A failed read or write keeps its error code (`device_unavailable`, `device_protocol_error`, `driver_not_implemented`, `device_not_found`, `secret_missing`) beside the driver's own error text: the state store holds both, the log records both, and the journal entries `device_availability_changed` and `zone_command_failed` store the code as `error_code` next to `reason` and `error`.
 - **Power loss.** On start teplo reads every device, reconciles the desired state, and journals the outage interval from the last heartbeat. Thermostats may come back switched off and the zone's next allowed write switches them on. Every Tuya driver takes its client from one shared function that disables tinytuya's device22 fallback, so the client keeps the full status query and a device that answers badly while booting is read normally afterwards.
 - **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately; retention is one year of minute samples.
 - **Coexistence.** teplo runs at nice 10 on its own ports (panel 8088, MQTT 1883); the watchdog restarts it when its resident memory exceeds 300 MB.
+
+### Alerts
+
+The `notifications` context sends alerts to one Telegram chat. A pure policy decides when an alert is raised and cleared; each raise and clear is journaled as `alert_raised` or `alert_cleared`, which the panel's journal shows in the page's language, and queued for Telegram.
+
+| Alert | Raised when | Cleared when |
+|---|---|---|
+| Device lost | a monitored device has stayed unavailable for 2 minutes, about 12 minutes after its last reading; a device without a reading since teplo started, 10 minutes after the start | the device reads again |
+| Zone off | the zone's floor target wants the thermostat on (any heating-enabled zone, day or night, live or dry-run) and the thermostat has reported power off for 35 minutes | the thermostat reports power on, or the zone no longer wants it on |
+| teplo resumed | teplo starts more than 3 minutes after its last activity | — |
+
+- A job checks the alerts every minute. An alert is sent once and its recovery once. The state lives in memory: after a restart a device that is still lost alerts again 10 minutes later.
+- Durations are measured on the monotonic clock, so a clock step after a reboot neither raises nor hides an alert. Right after a step every reading looks 10 minutes old until the next poll; the 2 minutes of confirmation outlast that.
+- The monitored devices come from a list of sources: the thermostats, named by their zone, are the first; plugs join as another source.
+- Zone off takes the floor target from the climate policy (`resolve_mode`, `decide_floor_target`). 35 minutes exceed the 30-minute write budget, so a correction teplo is about to make never alerts. While the thermostat is unavailable, its power is unknown and the zone-off timer neither fires nor resets.
+- teplo resumed: the outage runs from the last journal entry or flushed sample to the start, in local time, e.g. «teplo снова работает. Перерыв 20:24–20:33 (9 мин)». A deploy restart flushes the samples on stop and takes under a minute; after a power loss the outage may start up to 5 minutes early, one sample flush period, and if no device was readable and nothing was journaled for a while, it reaches back to the last record. The notice waits for a trusted clock and dates the start by teplo's uptime; it is not journaled again, as `teplo_started` already holds the last activity.
+- Texts are translated with gettext into `TEPLO_ALERT_LANGUAGE`, Russian by default, and name rooms by zone.
+- Delivery is best effort and never holds up control: a second job sends queued messages every minute through the Bot API `sendMessage` over HTTPS with the standard library, with a 10-second timeout and the optional HTTP proxy from the secrets file. A failed send stays queued and is retried for an hour; a message Telegram refuses (4xx other than 429) is dropped and logged. Without a `[telegram]` table alerts are only journaled, and the log says so once.
 
 ## 10. Panel
 

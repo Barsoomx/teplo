@@ -3,6 +3,7 @@ from dataclasses import asdict
 from apps.climate.domain.events import ZoneBoosted, ZoneCommandFailed, ZoneCommandIssued
 from apps.core.domain.events import DomainEvent, domain_event_handler
 from apps.devices.domain.events import DeviceAvailabilityChanged
+from apps.notifications.domain.events import AlertCleared, AlertRaised
 from apps.telemetry.repositories.journal import JournalRepository
 
 
@@ -47,6 +48,26 @@ def journal_zone_boost(event: ZoneBoosted) -> None:
     JournalRepository.add(
         kind='zone_boosted',
         subject=event.zone,
+        payload=_payload(event),
+        created_at=event.occurred_at,
+    )
+
+
+@domain_event_handler(AlertRaised)
+def journal_alert_raised(event: AlertRaised) -> None:
+    JournalRepository.add(
+        kind='alert_raised',
+        subject=event.subject,
+        payload=_payload(event),
+        created_at=event.occurred_at,
+    )
+
+
+@domain_event_handler(AlertCleared)
+def journal_alert_cleared(event: AlertCleared) -> None:
+    JournalRepository.add(
+        kind='alert_cleared',
+        subject=event.subject,
         payload=_payload(event),
         created_at=event.occurred_at,
     )
