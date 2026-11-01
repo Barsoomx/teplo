@@ -12,6 +12,7 @@ from apps.system.domain.clock import ClockStatus, ClockStatusCode
 pytestmark = pytest.mark.django_db
 
 RAW_DETAILS = ('Network Error: Device Unreachable', 'secret missing: thermostat-hallway', 'ndmc failed: timed out')
+PLUG_DETAIL = 'unexpected plug payload: {}'
 
 
 @pytest.fixture
@@ -63,6 +64,26 @@ def test_dashboard_explains_failures_in_words_and_keeps_raw_details_in_tooltips(
         [(content.count(detail), f'title="{detail}"' in content) for detail in RAW_DETAILS],
         m_failing_overview_use_case.init.call_count,
     ) == (True, False, True, [(1, True)] * len(RAW_DETAILS), 1)
+
+
+def test_dashboard_shows_loads_and_explains_a_lost_plug(
+    f_russian_client: Client,
+    m_overview_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Нагрузки' in content,
+        'Бойлер 1 этаж' in content,
+        'Включено' in content,
+        '1305 Вт' in content,
+        '217 В' in content,
+        'Нет связи. Проверьте питание розетки и Wi-Fi.' in content,
+        'Розетка прислала неожиданный ответ' in content,
+        (content.count(PLUG_DETAIL), f'title="{PLUG_DETAIL}"' in content),
+        m_overview_use_case.init.call_count,
+    ) == (True, True, True, True, True, True, True, (1, True), 1)
 
 
 def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

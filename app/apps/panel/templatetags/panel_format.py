@@ -9,6 +9,7 @@ from django.utils.html import format_html
 from django.utils.safestring import SafeString
 from django.utils.translation import gettext, gettext_lazy
 
+from apps.devices.domain.kinds import DeviceKind
 from apps.system.domain.clock import ClockStatusCode
 
 register = template.Library()
@@ -19,6 +20,12 @@ FAILURE_NOTES = {
     'driver_not_implemented': gettext_lazy('teplo cannot control this device yet'),
     'device_not_found': gettext_lazy('The device is missing from the settings'),
     'secret_missing': gettext_lazy('The secrets file has no address and key for this thermostat'),
+}
+PLUG_FAILURE_NOTES = {
+    **FAILURE_NOTES,
+    'device_unavailable': gettext_lazy('No connection to the plug'),
+    'device_protocol_error': gettext_lazy('The plug sent an unexpected reply'),
+    'secret_missing': gettext_lazy('The secrets file has no address and key for this plug'),
 }
 UNKNOWN_FAILURE = gettext_lazy('Unknown error')
 CLOCK_NOTES = {
@@ -52,14 +59,15 @@ def command_summary(change: dict[str, object]) -> str:
 
 
 @register.simple_tag
-def failure_note(error_code: str | None, error: str | None, omit: str = '') -> str:
+def failure_note(error_code: str | None, error: str | None, omit: str = '', device: str | None = None) -> str:
     if not error_code:
         return str(UNKNOWN_FAILURE) if error else ''
 
     if error_code == omit:
         return ''
 
-    return str(FAILURE_NOTES.get(error_code, UNKNOWN_FAILURE))
+    notes = PLUG_FAILURE_NOTES if device == DeviceKind.PLUG else FAILURE_NOTES
+    return str(notes.get(error_code, UNKNOWN_FAILURE))
 
 
 @register.simple_tag

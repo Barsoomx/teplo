@@ -489,7 +489,8 @@ body {
   box-shadow: 0 0 0 2px var(--tile);
 }
 
-.tile.is-offline {
+.tile.is-offline,
+.load.is-offline {
   background: repeating-linear-gradient(-45deg, var(--tile) 0 14px, var(--tile-quiet) 14px 15px);
 }
 
@@ -499,6 +500,84 @@ body {
 
 .tile.is-offline .tile-floor::before {
   content: none;
+}
+
+/* Loads: metered plugs, drawn in ink only so that colour keeps meaning floor temperature */
+
+.loads {
+  margin-top: 1.75rem;
+}
+
+.loads-title {
+  margin: 0 0 0.5rem;
+  color: var(--ink-muted);
+  font: 600 0.9375rem/1.3 var(--font-text);
+}
+
+.load-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 6px;
+}
+
+.load {
+  display: grid;
+  align-content: start;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem 1.125rem;
+  border-radius: 6px;
+  background: var(--tile);
+}
+
+.load-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+.load-name {
+  margin: 0;
+  font: 600 1rem/1.25 var(--font-text);
+}
+
+.switch-on {
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink);
+}
+
+.switch-off {
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+}
+
+.load-readings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.load-power {
+  font: 500 1.75rem/1 var(--font-readout);
+  letter-spacing: -0.03em;
+}
+
+.load-missing {
+  color: var(--ink-muted);
+  font-weight: 200;
+}
+
+.load-voltage {
+  color: var(--ink-muted);
+  font-size: 0.9375rem;
+}
+
+.load .offline-note {
+  margin: 0;
 }
 
 /* Journal */

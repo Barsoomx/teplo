@@ -1,0 +1,22 @@
+{% load i18n panel_format %}{% if plugs %}
+<section class="loads" aria-labelledby="loads-title">
+  <h2 class="loads-title" id="loads-title">{% translate 'Loads' %}</h2>
+  <div class="load-tiles">
+    {% for plug in plugs %}
+    <article class="load{% if not plug.available %} is-offline{% endif %}">
+      <header class="load-head">
+        <h3 class="load-name">{{ plug.name }}</h3>
+        {% if plug.available %}{% if plug.on %}<span class="chip switch-on">{% icon 'power' %}{% translate 'On' %}</span>{% else %}<span class="chip switch-off">{% icon 'power-off' %}{% translate 'Off' %}</span>{% endif %}{% endif %}
+      </header>
+      {% if plug.available %}
+      <p class="load-readings"><span class="load-power">{% blocktranslate with power=plug.power_watts|floatformat:0 %}{{ power }} W{% endblocktranslate %}</span> <span class="load-voltage">{% blocktranslate with voltage=plug.voltage_volts|floatformat:0 %}{{ voltage }} V{% endblocktranslate %}</span></p>
+      {% else %}
+      <p class="load-readings"><span class="load-power load-missing">—</span></p>
+      {% failure_note plug.error_code plug.error omit='device_unavailable' device='plug' as note %}
+      <p class="offline-note"{% if plug.error %} title="{{ plug.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% translate 'No connection. Check that the plug has power and Wi-Fi.' %}{% if note %} <span class="offline-error">{{ note }}</span>{% endif %}</span></p>
+      {% endif %}
+    </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}

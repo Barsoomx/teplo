@@ -36,6 +36,8 @@ class ThermostatState:
 class PlugState:
     on: bool
     power_watts: Decimal
+    current_amps: Decimal
+    voltage_volts: Decimal
     read_at: datetime
 
 

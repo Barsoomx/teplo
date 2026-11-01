@@ -1,9 +1,9 @@
 from decimal import Decimal
 
 from apps.core.domain.errors import DomainError
-from apps.devices.domain.capabilities import FloorThermostat
+from apps.devices.domain.capabilities import FloorThermostat, MeteredPlug
 from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError
-from apps.devices.domain.readings import ThermostatMode, ThermostatState
+from apps.devices.domain.readings import PlugState, ThermostatMode, ThermostatState
 
 
 class FloorThermostatStub:
@@ -50,3 +50,29 @@ class ThermostatProviderStub:
             raise DriverNotImplementedError(slug)
 
         return self._thermostats[slug]
+
+
+class MeteredPlugStub:
+    def __init__(self, state: PlugState | None, error: DomainError | None = None) -> None:
+        self._state = state
+        self._error = error
+
+    def read_state(self) -> PlugState:
+        if self._error is not None:
+            raise self._error
+
+        if self._state is None:
+            raise DeviceUnavailableError('no state configured')
+
+        return self._state
+
+
+class PlugProviderStub:
+    def __init__(self, plugs: dict[str, MeteredPlug]) -> None:
+        self._plugs = plugs
+
+    def plug(self, slug: str) -> MeteredPlug:
+        if slug not in self._plugs:
+            raise DriverNotImplementedError(slug)
+
+        return self._plugs[slug]

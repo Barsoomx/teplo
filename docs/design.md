@@ -51,7 +51,8 @@ The domain talks to devices through capability ports. A driver implements one or
 | Capability | Reads | Commands |
 |---|---|---|
 | `FloorThermostat` | power, setpoint, floor temperature | power, setpoint |
-| `SwitchablePlug` | on/off, power, current | on/off |
+| `MeteredPlug` | on/off, power, current, voltage | — |
+| `SwitchablePlug` | as `MeteredPlug` | on/off |
 | `TemperatureSensor` | temperature, optional humidity | — |
 | `PhaseMeter` | current per phase | — |
 | `ClimateUnit` | mode, target, room temperature | mode, target |
@@ -82,7 +83,20 @@ DP 3 always reads `warming` and does not reflect the relay. DPs 104–117 are ve
 
 ### Tuya plugs
 
-Wi-Fi plugs with power metering. Protocol version and DP map are verified on arrival and recorded here.
+- Wi-Fi plugs with power metering (Tuya category `cz`), local protocol 3.5 on TCP 6668; their secrets set `protocol = '3.5'`.
+- The two water heater plugs are read-only until stage 4: the driver implements `MeteredPlug` and has no switching operation, so nothing in teplo can switch them. Switching will come as `SwitchablePlug` behind dry-run.
+- The driver sets tinytuya's `disabledetect`, so its long-lived client never switches itself to "device22" mode, which queries DP 1 only.
+- A job of their own polls the plugs every 30 seconds, so a lost plug never delays the thermostats. Availability changes are journaled as for a thermostat, and the recorder samples `plug_on` (0 or 1), `plug_power` (W), `plug_current` (A) and `plug_voltage` (V) every minute.
+- Data points, from the Tuya cloud model and a local status read:
+
+| DP | Code | Meaning | Values |
+|---|---|---|---|
+| 1 | `switch_1` | relay | bool |
+| 18 | `cur_current` | current | int, mA |
+| 19 | `cur_power` | active power | int, 0.1 W |
+| 20 | `cur_voltage` | voltage | int, 0.1 V |
+
+Not read yet: 9 `countdown`, 17 `add_ele` (energy since the previous report, 0.001 kWh), 26 `fault`, 38 `relay_status` (`memory`: the relay returns to its last state after a power cut) and the remaining vendor DPs.
 
 ### Local keys
 
@@ -282,14 +296,16 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 
 Server-rendered Django templates with HTMX; zone cards refresh every 10 seconds (thermostats are polled every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
 
-- **Dashboard:** zone cards (air, floor, target, state: heating, waiting, shed), `+/-` and boost, phase bars to 25 A with the EV marker, outdoor temperature, clock and device warnings.
+- **Dashboard:** zone cards (air, floor, target, state: heating, waiting, shed), `+/-` and boost, a loads block, phase bars to 25 A with the EV marker, outdoor temperature, clock and device warnings.
 - **Schedules:** weekly periods per zone and mode targets.
 - **Settings:** tariffs, phase thresholds, shedding priority (drag to reorder), floor limits, water heater cheap-only switch, calibration.
 - **History:** temperatures, phase currents, zone states; the event journal.
 
-A JSON API under `api/v1` exposes the same state. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
+A JSON API under `api/v1` exposes the same state: `zones/` and `plugs/`. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
 
 The visual language is a thermal camera. An ironbow ramp maps 14 to 32 °C and is the only saturated colour, so colour always means floor temperature. Each room is a floor tile: its reading is set in large type, and its floor band glows in the ramp colour at the point of the scale where the floor reads, with the target marked on the same scale. Dark and light themes follow the device setting. Fonts (Unbounded for readings, Golos Text for text, both OFL) and the Lucide icons (ISC) are vendored with their licenses. The interface is English and Russian, picked from the browser's language; zones are listed by name.
+
+Below the floor tiles, the loads block lists the metered plugs by name with their relay state, power and voltage. It is drawn in ink only, so colour keeps meaning floor temperature; a lost plug is hatched and says what to check, like a lost thermostat.
 
 Diagnostic text never reaches the page. A failure or an untrusted clock is explained by a translated message chosen by its code; a message that would only repeat its headline is left out, and an unknown code or a journal entry written before codes existed gets a generic one. The raw text stays in the element's tooltip, and for a device failure also in the journal payload and the log.
 
@@ -344,5 +360,4 @@ Later: heat pump driver, EV charger driver, away and frost modes.
 ## 15. Open questions
 
 - ET-44W: meaning of DPs 104–121; whether setpoint writes wear its flash.
-- Tuya plugs: protocol version and DP map.
 - Zone and water heater currents and phases: learned by calibration.

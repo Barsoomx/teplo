@@ -12,7 +12,15 @@ from apps.climate.domain.schedule import ScheduleTransition, next_transition, re
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.repositories.zone import ZoneRepository
 from apps.core.domain.usecases.base import BaseUseCase
-from apps.devices.services.state_store import ThermostatStateStore, thermostat_state_store
+from apps.devices.domain.device import DeviceSettings
+from apps.devices.domain.kinds import DeviceKind
+from apps.devices.repositories.device import DeviceRepository
+from apps.devices.services.state_store import (
+    PlugStateStore,
+    ThermostatStateStore,
+    plug_state_store,
+    thermostat_state_store,
+)
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
 
@@ -51,8 +59,22 @@ class ZoneOverview:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PlugOverview:
+    slug: str
+    name: str
+    available: bool
+    error_code: str | None
+    error: str | None
+    on: bool | None
+    power_watts: Decimal | None
+    current_amps: Decimal | None
+    voltage_volts: Decimal | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class GetPanelOverviewOutputDTO:
     zones: tuple[ZoneOverview, ...]
+    plugs: tuple[PlugOverview, ...]
     clock: ClockStatus
     dry_run: bool
 
@@ -61,13 +83,17 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
     def __init__(
         self,
         zones: ZoneRepository,
-        store: ThermostatStateStore,
+        devices: DeviceRepository,
+        thermostat_store: ThermostatStateStore,
+        plug_store: PlugStateStore,
         clock: ClockTrustSource,
         dry_run: bool,
     ) -> None:
         super().__init__()
         self._zones = zones
-        self._store = store
+        self._devices = devices
+        self._thermostat_store = thermostat_store
+        self._plug_store = plug_store
         self._clock = clock
         self._dry_run = dry_run
 
@@ -75,7 +101,9 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
     def init(cls) -> 'GetPanelOverviewUseCase':
         return cls(
             zones=ZoneRepository(),
-            store=thermostat_state_store,
+            devices=DeviceRepository(),
+            thermostat_store=thermostat_state_store,
+            plug_store=plug_state_store,
             clock=clock_trust_source(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
@@ -88,12 +116,17 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 self._zone(zone, now, clock.trusted)
                 for zone in sorted(self._zones.all_settings(), key=lambda zone: zone.name)
             ),
+            plugs=tuple(
+                self._plug(device, now)
+                for device in sorted(self._devices.all_settings(), key=lambda device: device.name)
+                if device.kind == DeviceKind.PLUG
+            ),
             clock=clock,
             dry_run=self._dry_run,
         )
 
     def _zone(self, zone: ZoneSettings, now: datetime, clock_trusted: bool) -> ZoneOverview:
-        snapshot = self._store.snapshot(zone.thermostat_slug, now)
+        snapshot = self._thermostat_store.snapshot(zone.thermostat_slug, now)
         mode = resolve_mode(zone.windows, now, zone.preheat_lead)
         target = decide_floor_target(zone, mode, now, clock_trusted=clock_trusted)
         boosted = zone.is_boosted(now)
@@ -119,6 +152,21 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 if clock_trusted and zone.heating_enabled
                 else None
             ),
+        )
+
+    def _plug(self, device: DeviceSettings, now: datetime) -> PlugOverview:
+        snapshot = self._plug_store.snapshot(device.slug, now)
+        state = snapshot.state
+        return PlugOverview(
+            slug=device.slug,
+            name=device.name,
+            available=snapshot.available,
+            error_code=snapshot.error_code,
+            error=snapshot.error,
+            on=state.on if state else None,
+            power_watts=state.power_watts if state else None,
+            current_amps=state.current_amps if state else None,
+            voltage_volts=state.voltage_volts if state else None,
         )
 
 

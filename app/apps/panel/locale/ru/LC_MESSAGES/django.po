@@ -83,6 +83,23 @@ msgstr "Буст на 2 часа"
 msgid "No connection. Check that the thermostat has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание термостата и Wi-Fi."
 
+msgid "Loads"
+msgstr "Нагрузки"
+
+msgid "On"
+msgstr "Включено"
+
+#, python-format
+msgid "%(power)s W"
+msgstr "%(power)s Вт"
+
+#, python-format
+msgid "%(voltage)s V"
+msgstr "%(voltage)s В"
+
+msgid "No connection. Check that the plug has power and Wi-Fi."
+msgstr "Нет связи. Проверьте питание розетки и Wi-Fi."
+
 msgid "Sections"
 msgstr "Разделы"
 
@@ -109,8 +126,16 @@ msgid "%(name)s: thermostat is online"
 msgstr "%(name)s: термостат на связи"
 
 #, python-format
+msgid "%(name)s: plug is online"
+msgstr "%(name)s: розетка на связи"
+
+#, python-format
 msgid "%(name)s: no connection to the thermostat"
 msgstr "%(name)s: нет связи с термостатом"
+
+#, python-format
+msgid "%(name)s: no connection to the plug"
+msgstr "%(name)s: нет связи с розеткой"
 
 msgid "Not sent: watching only"
 msgstr "Не отправлено: режим наблюдения"
@@ -156,6 +181,15 @@ msgstr "Устройства нет в настройках"
 
 msgid "The secrets file has no address and key for this thermostat"
 msgstr "В файле секретов нет адреса и ключа этого термостата"
+
+msgid "No connection to the plug"
+msgstr "Нет связи с розеткой"
+
+msgid "The plug sent an unexpected reply"
+msgstr "Розетка прислала неожиданный ответ"
+
+msgid "The secrets file has no address and key for this plug"
+msgstr "В файле секретов нет адреса и ключа этой розетки"
 
 msgid "Unknown error"
 msgstr "Неизвестная ошибка"

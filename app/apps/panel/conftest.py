@@ -10,7 +10,7 @@ from django.utils import translation
 
 from apps.climate.domain.modes import ScheduleMode, ZoneKind
 from apps.climate.domain.schedule import ScheduleTransition
-from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, ZoneOverview, ZoneRegime
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, PlugOverview, ZoneOverview, ZoneRegime
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 
@@ -38,6 +38,30 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
                     mode=ScheduleMode.NIGHT,
                     at=datetime(2026, 10, 29, 23, 30, tzinfo=ZoneInfo('Europe/Moscow')),
                 ),
+            ),
+        ),
+        plugs=(
+            PlugOverview(
+                slug='plug-boiler-1f',
+                name='Бойлер 1 этаж',
+                available=True,
+                error_code=None,
+                error=None,
+                on=True,
+                power_watts=Decimal('1305.4'),
+                current_amps=Decimal('6.02'),
+                voltage_volts=Decimal('216.8'),
+            ),
+            PlugOverview(
+                slug='plug-boiler-2f',
+                name='Бойлер 2 этаж',
+                available=False,
+                error_code='device_protocol_error',
+                error='unexpected plug payload: {}',
+                on=None,
+                power_watts=None,
+                current_amps=None,
+                voltage_volts=None,
             ),
         ),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized'),

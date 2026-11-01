@@ -23,9 +23,11 @@ class FloorThermostat(Protocol):
     def set_setpoint(self, setpoint: Decimal) -> None: ...
 
 
-class SwitchablePlug(Protocol):
+class MeteredPlug(Protocol):
     def read_state(self) -> PlugState: ...
 
+
+class SwitchablePlug(MeteredPlug, Protocol):
     def set_on(self, on: bool) -> None: ...
 
 
@@ -51,3 +53,7 @@ class EvCharger(Protocol):
 
 class ThermostatProvider(Protocol):
     def thermostat(self, slug: str) -> FloorThermostat: ...
+
+
+class PlugProvider(Protocol):
+    def plug(self, slug: str) -> MeteredPlug: ...

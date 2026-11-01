@@ -10,8 +10,9 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from apps.climate.models import ComfortPeriod, Zone
-from apps.devices.domain.readings import ThermostatMode, ThermostatState
-from apps.devices.services.state_store import thermostat_state_store
+from apps.devices.domain.readings import PlugState, ThermostatMode, ThermostatState
+from apps.devices.models import Device
+from apps.devices.services.state_store import plug_state_store, thermostat_state_store
 from apps.telemetry.models import JournalEntry
 
 ENGLISH_NAMES = {
@@ -20,6 +21,10 @@ ENGLISH_NAMES = {
     'hallway': 'Hallway',
     'bathroom-1f': 'Washroom',
     'bathroom-2f': 'Bathroom',
+}
+ENGLISH_PLUG_NAMES = {
+    'plug-boiler-1f': 'Water heater 1F',
+    'plug-boiler-2f': 'Water heater 2F',
 }
 COMFORT_STARTS = {
     'living-room': time(6, 30),
@@ -32,6 +37,10 @@ READINGS = {
     'thermostat-kitchen': ('28.0', '25.9'),
     'thermostat-hallway': ('22.0', '21.4'),
     'thermostat-bathroom-2f': ('30.0', '29.2'),
+}
+PLUG_READINGS = {
+    'plug-boiler-1f': ('1305.4', '6.02', '216.8'),
+    'plug-boiler-2f': ('0.0', '0.0', '223.1'),
 }
 OFFLINE_THERMOSTAT = 'thermostat-bathroom-1f'
 OFFLINE_DETAIL = 'Network Error: Device Unreachable'
@@ -46,6 +55,8 @@ def main() -> None:
     if os.environ.get('DEMO_LANGUAGE') == 'en':
         for slug, name in ENGLISH_NAMES.items():
             Zone.objects.filter(slug=slug).update(name=name)
+        for slug, name in ENGLISH_PLUG_NAMES.items():
+            Device.objects.filter(slug=slug).update(name=name)
     _seed_zones(now)
     _seed_journal(now)
     threading.Thread(target=_keep_readings_fresh, daemon=True).start()
@@ -77,6 +88,12 @@ def _seed_journal(now: datetime) -> None:
             'device_availability_changed',
             'thermostat-kitchen',
             {'slug': 'thermostat-kitchen', 'available': True, 'reason': 'reading received', 'error_code': None},
+        ),
+        (
+            at(21, 16, days_ago=1),
+            'device_availability_changed',
+            'plug-boiler-1f',
+            {'slug': 'plug-boiler-1f', 'available': True, 'reason': 'reading received', 'error_code': None},
         ),
         (at(23, 30, days_ago=1), 'zone_command_issued', 'living-room', setpoint('living-room', '22.0')),
         (at(23, 30, days_ago=1), 'zone_command_issued', 'kitchen', setpoint('kitchen', '22.0')),
@@ -132,4 +149,15 @@ def _keep_readings_fresh() -> None:
                 ),
             )
         thermostat_state_store.record_failure(OFFLINE_THERMOSTAT, error_code=OFFLINE_CODE, error=OFFLINE_DETAIL)
+        for slug, (power, current, voltage) in PLUG_READINGS.items():
+            plug_state_store.record_state(
+                slug,
+                PlugState(
+                    on=True,
+                    power_watts=Decimal(power),
+                    current_amps=Decimal(current),
+                    voltage_volts=Decimal(voltage),
+                    read_at=read_at,
+                ),
+            )
         clock.sleep(REFRESH_SECONDS)

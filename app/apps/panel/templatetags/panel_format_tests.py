@@ -59,6 +59,20 @@ def test_failure_note_names_the_cause_by_error_code(error: DomainError, expected
     assert failure_note(error.error_code, error.detail) == expected
 
 
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (DeviceUnavailableError('timed out'), 'Нет связи с розеткой'),
+        (DeviceProtocolError('payload without dps'), 'Розетка прислала неожиданный ответ'),
+        (DriverNotImplementedError('unsupported'), 'teplo пока не умеет управлять этим устройством'),
+        (SecretMissingError('plug-boiler-1f'), 'В файле секретов нет адреса и ключа этой розетки'),
+    ],
+)
+def test_failure_note_names_the_plug_for_a_plug(error: DomainError, expected: str) -> None:
+    assert failure_note(error.error_code, error.detail, device='plug') == expected
+
+
 def test_failure_note_leaves_out_what_the_headline_says() -> None:
     assert failure_note('device_unavailable', 'timed out', omit='device_unavailable') == ''
 
