@@ -6,7 +6,7 @@ from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.notifications.domain.alerts import AlertKey, AlertTransition
 from apps.notifications.domain.events import AlertCleared, AlertEvent, AlertRaised, TeploResumed
-from apps.notifications.domain.outage import Outage, detect_outage
+from apps.notifications.domain.outage import Outage, detect_outage, started_before_last_activity
 from apps.notifications.domain.policy import AlertChange, Condition, device_condition, evaluate_alerts, zone_condition
 from apps.notifications.domain.ports import DeviceSource, ZoneSource
 from apps.notifications.services.alert_book import AlertBook, alert_book
@@ -80,6 +80,9 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
     def _report_outage(self, input_dto: EvaluateAlertsInputDTO, clock_trusted: bool) -> Outage | None:
         note = self._book.startup()
         if note is None or not clock_trusted:
+            return None
+
+        if started_before_last_activity(note, input_dto.now, input_dto.monotonic):
             return None
 
         self._book.forget_startup()

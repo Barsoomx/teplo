@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from apps.notifications.domain.outage import Outage, StartupNote, detect_outage
+from apps.notifications.domain.outage import Outage, StartupNote, detect_outage, started_before_last_activity
 
 STARTED_AT = datetime(2026, 10, 31, 17, 33, tzinfo=UTC)
 STARTED = 50.0
@@ -40,3 +40,21 @@ def test_activity_after_the_start_is_no_outage() -> None:
     note = StartupNote(last_activity=STARTED_AT + timedelta(hours=1), monotonic=STARTED)
 
     assert detect_outage(note, STARTED_AT, STARTED) is None
+
+
+@pytest.mark.parametrize(
+    ('last_activity', 'behind'),
+    [
+        (None, False),
+        (STARTED_AT - timedelta(minutes=9), False),
+        (STARTED_AT, False),
+        (STARTED_AT + timedelta(seconds=1), True),
+    ],
+)
+def test_start_precedes_the_last_activity_only_on_a_clock_not_yet_set(
+    last_activity: datetime | None,
+    behind: bool,
+) -> None:
+    note = StartupNote(last_activity=last_activity, monotonic=STARTED)
+
+    assert started_before_last_activity(note, STARTED_AT + timedelta(minutes=7), STARTED + 420) is behind

@@ -198,6 +198,14 @@ def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatc
 
 
 @pytest.fixture
+def f_restarted_before_clock_set_use_case(f_restarted_use_case: EvaluateAlertsUseCase) -> EvaluateAlertsUseCase:
+    f_restarted_use_case.execute(
+        EvaluateAlertsInputDTO(now=NOW - CLOCK_STEP + timedelta(minutes=6), monotonic=NOTICED + 360),
+    )
+    return f_restarted_use_case
+
+
+@pytest.fixture
 def f_untrusted_restarted_use_case(
     f_restarted_book: AlertBook,
     f_zones: ZoneSourceStub,
@@ -361,4 +369,17 @@ def test_outage_waits_for_a_trusted_clock(
         [],
         RESTART_NOTE,
         [False],
+    )
+
+
+def test_outage_outlives_a_time_taken_before_the_clock_was_set(
+    f_restarted_before_clock_set_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_restarted_before_clock_set_use_case.execute(_input(timedelta(minutes=7)))
+
+    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW)
+    assert (output.outage, f_events) == (
+        outage,
+        [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
     )
