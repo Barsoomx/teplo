@@ -59,4 +59,4 @@ def evaluate_alerts() -> object:
 
 
 def deliver_alerts() -> object:
-    return DeliverAlertsUseCase.init().execute(DeliverAlertsInputDTO())
+    return DeliverAlertsUseCase.init().execute(DeliverAlertsInputDTO(now=timezone.now()))

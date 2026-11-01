@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from django.utils import timezone
@@ -29,6 +30,33 @@ UNDATED_ZONE_OFF = gettext_lazy('%(name)s: the thermostat is off although the sc
 ZONE_FOLLOWS_SCHEDULE = gettext_lazy('%(name)s: the thermostat follows the schedule again')
 TEPLO_RESUMED = gettext_lazy('teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)')
 DELIVERY_CHECK = gettext_lazy('teplo: test message. Alerts will arrive in this chat')
+
+
+@dataclass(frozen=True, kw_only=True)
+class AlertContent:
+    kind: AlertKind
+    transition: AlertTransition
+    name: str
+    device_kind: DeviceKind
+    since: datetime | None
+
+    def text(self, at: datetime) -> str:
+        return alert_text(
+            kind=self.kind,
+            transition=self.transition,
+            name=self.name,
+            device_kind=self.device_kind,
+            since=self.since,
+            at=at,
+        )
+
+
+@dataclass(frozen=True, kw_only=True)
+class OutageContent:
+    outage: Outage
+
+    def text(self, at: datetime) -> str:  # noqa: ARG002
+        return outage_text(self.outage)
 
 
 def alert_text(

@@ -8,6 +8,8 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertKind, AlertTransition
 from apps.notifications.domain.outage import Outage
 from apps.notifications.services.messages import (
+    AlertContent,
+    OutageContent,
     alert_text,
     alert_text_from_payload,
     delivery_check_text,
@@ -35,6 +37,27 @@ def russian() -> Iterator[None]:
 def english() -> Iterator[None]:
     with translation.override('en'):
         yield
+
+
+@pytest.fixture
+def f_boiler_lost() -> AlertContent:
+    return AlertContent(
+        kind=AlertKind.DEVICE_LOST,
+        transition=AlertTransition.RAISED,
+        name='Бойлер 1 этаж',
+        device_kind=DeviceKind.PLUG,
+        since=datetime(2026, 11, 1, 18, 15, tzinfo=UTC),
+    )
+
+
+@pytest.fixture
+def f_late_evening_outage() -> OutageContent:
+    return OutageContent(
+        outage=Outage(
+            began_at=datetime(2026, 10, 31, 20, 10, tzinfo=UTC),
+            ended_at=datetime(2026, 10, 31, 20, 40, tzinfo=UTC),
+        ),
+    )
 
 
 @pytest.mark.usefixtures('russian')
@@ -138,6 +161,29 @@ def test_alert_follows_the_active_language() -> None:
 )
 def test_outage_reads_as_a_local_interval(began_at: datetime, ended_at: datetime, expected: str) -> None:
     assert outage_text(Outage(began_at=began_at, ended_at=ended_at)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('at', 'expected'),
+    [
+        (datetime(2026, 11, 1, 18, 28, tzinfo=UTC), 'Бойлер 1 этаж: нет связи с розеткой с 21:15'),
+        (datetime(2026, 11, 3, 19, 0, tzinfo=UTC), 'Бойлер 1 этаж: нет связи с розеткой с 1 ноября 21:15'),
+    ],
+)
+def test_alert_content_is_dated_against_the_moment_it_is_written(
+    f_boiler_lost: AlertContent,
+    at: datetime,
+    expected: str,
+) -> None:
+    assert f_boiler_lost.text(at) == expected
+
+
+@pytest.mark.usefixtures('russian')
+def test_outage_content_dates_the_interval_by_its_end(f_late_evening_outage: OutageContent) -> None:
+    text = f_late_evening_outage.text(datetime(2026, 10, 31, 21, 20, tzinfo=UTC))
+
+    assert text == 'teplo снова работает. Перерыв 23:10–23:40 (30 мин)'
 
 
 @pytest.mark.usefixtures('russian')

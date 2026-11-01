@@ -1,15 +1,31 @@
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from apps.core.stubs import MonotonicClockStub
+from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition
+from apps.notifications.domain.outage import Outage
+from apps.notifications.services.messages import AlertContent, OutageContent
 from apps.notifications.services.outbox import AlertOutbox, OutgoingMessage
 
+SINCE = datetime(2026, 10, 31, 17, 24, tzinfo=UTC)
 KITCHEN_LOST = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
-LOST = 'Кухня: нет связи с термостатом с 20:24'
-FOUND = 'Кухня: термостат снова на связи'
-RESUMED = 'teplo снова работает. Перерыв 20:24–20:33 (9 мин)'
+LOST = AlertContent(
+    kind=AlertKind.DEVICE_LOST,
+    transition=AlertTransition.RAISED,
+    name='Кухня',
+    device_kind=DeviceKind.THERMOSTAT,
+    since=SINCE,
+)
+FOUND = AlertContent(
+    kind=AlertKind.DEVICE_LOST,
+    transition=AlertTransition.CLEARED,
+    name='Кухня',
+    device_kind=DeviceKind.THERMOSTAT,
+    since=SINCE,
+)
+RESUMED = OutageContent(outage=Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC)))
 HOUR = 3600.0
 
 
@@ -74,12 +90,12 @@ def test_messages_wait_in_order(f_outbox: AlertOutbox) -> None:
     assert f_outbox.pending() == (
         OutgoingMessage(
             number=1,
-            text=LOST,
+            content=LOST,
             queued_at=100.0,
             alert=KITCHEN_LOST,
             transition=AlertTransition.RAISED,
         ),
-        OutgoingMessage(number=2, text=RESUMED, queued_at=160.0),
+        OutgoingMessage(number=2, content=RESUMED, queued_at=160.0),
     )
 
 

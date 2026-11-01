@@ -2,17 +2,22 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Protocol
 
 from apps.notifications.domain.alerts import AlertKey, AlertTransition
 
 MESSAGE_LIFETIME = timedelta(hours=1)
 
 
+class MessageContent(Protocol):
+    def text(self, at: datetime) -> str: ...
+
+
 @dataclass(frozen=True, kw_only=True)
 class OutgoingMessage:
     number: int
-    text: str
+    content: MessageContent
     queued_at: float
     alert: AlertKey | None = None
     transition: AlertTransition | None = None
@@ -30,13 +35,19 @@ class AlertOutbox:
     def init(cls) -> 'AlertOutbox':
         return cls(clock=time.monotonic, lifetime=MESSAGE_LIFETIME)
 
-    def put(self, text: str, *, alert: AlertKey | None = None, transition: AlertTransition | None = None) -> None:
+    def put(
+        self,
+        content: MessageContent,
+        *,
+        alert: AlertKey | None = None,
+        transition: AlertTransition | None = None,
+    ) -> None:
         with self._lock:
             self._last_number += 1
             self._messages.append(
                 OutgoingMessage(
                     number=self._last_number,
-                    text=text,
+                    content=content,
                     queued_at=self._clock(),
                     alert=alert,
                     transition=transition,
