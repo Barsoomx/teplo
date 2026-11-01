@@ -5,7 +5,7 @@ import pytest
 from pytest_django import Settings
 
 from apps.devices.domain.kinds import DeviceKind
-from apps.notifications.domain.alerts import AlertKind
+from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition
 from apps.notifications.domain.events import AlertCleared, AlertRaised, TeploResumed
 from apps.notifications.domain.outage import Outage
 from apps.notifications.event_handlers import queue_alert_cleared, queue_alert_raised, queue_teplo_resumed
@@ -110,3 +110,20 @@ def test_alert_language_comes_from_settings(f_outbox: AlertOutbox, f_raised: Ale
     queue_alert_raised(f_raised)
 
     assert _texts(f_outbox) == ['Кухня: no connection to the thermostat since 20:24']
+
+
+def test_alerts_are_queued_under_their_keys(
+    f_outbox: AlertOutbox,
+    f_raised: AlertRaised,
+    f_cleared: AlertCleared,
+    f_resumed: TeploResumed,
+) -> None:
+    queue_alert_raised(f_raised)
+    queue_alert_cleared(f_cleared)
+    queue_teplo_resumed(f_resumed)
+
+    assert [(message.alert, message.transition) for message in f_outbox.pending()] == [
+        (AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen'), AlertTransition.RAISED),
+        (AlertKey(kind=AlertKind.ZONE_OFF, subject='kitchen'), AlertTransition.CLEARED),
+        (None, None),
+    ]
