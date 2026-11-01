@@ -68,7 +68,7 @@ class PollPlugsUseCase(BaseUseCase[PollPlugsInputDTO, PollPlugsOutputDTO]):
         return True
 
     def _report_availability(self, slug: str, now: datetime) -> None:
-        snapshot = self._store.snapshot(slug, now)
+        snapshot = self._store.snapshot(slug)
         if self._store.last_reported(slug) == snapshot.available:
             return
 

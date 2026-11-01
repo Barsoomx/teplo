@@ -18,7 +18,8 @@ from apps.system.stubs import ClockStub
 
 NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 NOTICED = 1000.0
-LAST_READING = NOW - timedelta(minutes=11)
+READING_AGE = timedelta(minutes=11)
+LAST_READING = NOW - READING_AGE
 THERMOSTAT_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
 PLUG_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='plug-boiler-1f')
 ZONE_KEY = AlertKey(kind=AlertKind.ZONE_OFF, subject='hallway')
@@ -27,28 +28,28 @@ LOST_THERMOSTAT = MonitoredDevice(
     name='Кухня',
     kind=DeviceKind.THERMOSTAT,
     available=False,
-    last_seen_at=LAST_READING,
+    last_seen_age=READING_AGE,
 )
 FOUND_THERMOSTAT = MonitoredDevice(
     slug='thermostat-kitchen',
     name='Кухня',
     kind=DeviceKind.THERMOSTAT,
     available=True,
-    last_seen_at=NOW,
+    last_seen_age=timedelta(0),
 )
 SILENT_THERMOSTAT = MonitoredDevice(
     slug='thermostat-kitchen',
     name='Кухня',
     kind=DeviceKind.THERMOSTAT,
     available=False,
-    last_seen_at=None,
+    last_seen_age=None,
 )
 LOST_PLUG = MonitoredDevice(
     slug='plug-boiler-1f',
     name='Бойлер 1 этаж',
     kind=DeviceKind.PLUG,
     available=False,
-    last_seen_at=LAST_READING,
+    last_seen_age=READING_AGE,
 )
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
 CLOCK_STEP = timedelta(hours=3)

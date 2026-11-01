@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from apps.climate.repositories.zone import ZoneRepository
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
@@ -17,16 +15,16 @@ class ThermostatSource:
     def init(cls) -> 'ThermostatSource':
         return cls(devices=DeviceRepository(), zones=ZoneRepository(), store=thermostat_state_store)
 
-    def devices(self, now: datetime) -> list[MonitoredDevice]:
+    def devices(self) -> list[MonitoredDevice]:
         names = {zone.thermostat_slug: zone.name for zone in self._zones.all_settings()}
-        return [self._device(slug, names.get(slug, slug), now) for slug in self._devices.thermostat_slugs()]
+        return [self._device(slug, names.get(slug, slug)) for slug in self._devices.thermostat_slugs()]
 
-    def _device(self, slug: str, name: str, now: datetime) -> MonitoredDevice:
-        snapshot = self._store.snapshot(slug, now)
+    def _device(self, slug: str, name: str) -> MonitoredDevice:
+        snapshot = self._store.snapshot(slug)
         return MonitoredDevice(
             slug=slug,
             name=name,
             kind=DeviceKind.THERMOSTAT,
             available=snapshot.available,
-            last_seen_at=snapshot.state.read_at if snapshot.state else None,
+            last_seen_age=snapshot.age,
         )

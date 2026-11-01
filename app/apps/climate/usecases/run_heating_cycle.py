@@ -79,7 +79,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         )
 
     def _run_zone(self, zone: ZoneSettings, now: datetime, clock_trusted: bool) -> ZoneCycleOutcome:
-        snapshot = self._store.snapshot(zone.thermostat_slug, now)
+        snapshot = self._store.snapshot(zone.thermostat_slug)
         if not snapshot.available or snapshot.state is None:
             return ZoneCycleOutcome.DEVICE_UNAVAILABLE
 

@@ -2,9 +2,9 @@ from datetime import timedelta
 
 import pytest
 
+from apps.core.stubs import MonotonicClockStub
 from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition
 from apps.notifications.services.outbox import AlertOutbox, OutgoingMessage
-from apps.notifications.stubs import MonotonicClockStub
 
 KITCHEN_LOST = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
 LOST = 'Кухня: нет связи с термостатом с 20:24'

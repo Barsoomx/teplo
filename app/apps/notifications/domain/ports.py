@@ -5,7 +5,7 @@ from apps.notifications.domain.alerts import MonitoredDevice, ZoneHeating
 
 
 class DeviceSource(Protocol):
-    def devices(self, now: datetime) -> list[MonitoredDevice]: ...
+    def devices(self) -> list[MonitoredDevice]: ...
 
 
 class ZoneSource(Protocol):

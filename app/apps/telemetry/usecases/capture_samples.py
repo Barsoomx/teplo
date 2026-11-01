@@ -56,7 +56,7 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
     def _thermostat_samples(self, now: datetime) -> list[SampleValue]:
         samples: list[SampleValue] = []
         for slug in self._devices.thermostat_slugs():
-            snapshot = self._thermostat_store.snapshot(slug, now)
+            snapshot = self._thermostat_store.snapshot(slug)
             if snapshot.available and snapshot.state is not None:
                 samples.extend(_thermostat_values(slug, snapshot.state, now))
         return samples
@@ -64,7 +64,7 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
     def _plug_samples(self, now: datetime) -> list[SampleValue]:
         samples: list[SampleValue] = []
         for slug in self._devices.plug_slugs():
-            snapshot = self._plug_store.snapshot(slug, now)
+            snapshot = self._plug_store.snapshot(slug)
             if snapshot.available and snapshot.state is not None:
                 samples.extend(_plug_values(slug, snapshot.state, now))
         return samples

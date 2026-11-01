@@ -61,7 +61,7 @@ The domain talks to devices through capability ports. A driver implements one or
 v1 drivers: Tuya thermostat, Tuya plug, ESPHome temperature sensor, ESPHome phase meter.
 `ClimateUnit` and `EvCharger` ship as stub drivers: a device can be configured with them and the panel shows it as "driver not implemented".
 
-Every reading carries a timestamp. A device is **unavailable** after 10 minutes without a reading; the phase meter is **stale** after 10 seconds.
+Every reading carries a timestamp. A device is **unavailable** after 10 minutes without a reading, counted on the monotonic clock from the moment teplo stored the reading, so setting the system clock neither hides a lost device nor makes a live one look lost; the phase meter is **stale** after 10 seconds.
 
 ### Tuya thermostats (Warmfloor ET-44W)
 
@@ -306,7 +306,7 @@ The `notifications` context sends alerts to one Telegram chat. A pure policy dec
 | teplo resumed | teplo starts more than 3 minutes after its last activity | — |
 
 - A job checks the alerts every minute. An alert is sent once and its recovery once. The state lives in memory: after a restart a device that is still lost alerts again 10 minutes later.
-- Durations are measured on the monotonic clock, so a clock step after a reboot neither raises nor hides an alert. Right after a step every reading looks 10 minutes old until the next poll; the 2 minutes of confirmation outlast that.
+- Durations are measured on the monotonic clock, so a clock step after a reboot neither raises nor hides an alert; a reading taken before the step keeps its true age, so a device that goes silent right after NTP sets the clock alerts about 12 minutes after its last reading, as any other.
 - The moment a message names is kept on the monotonic clock as well: when teplo first notices the condition it records the last reading's age, or the notice itself for a device that has not answered since the start and for a zone that is off. The moment becomes local time only when the message is made, so a clock set in between does not shift it; a message made while the clock is untrusted names no time, e.g. «Кухня: нет связи с термостатом», and is not held back.
 - The monitored devices come from a list of sources: the thermostats, named by their zone, and the metered plugs, named by their device name. The text names the kind of device that went silent, e.g. «Кухня: нет связи с термостатом с 20:24» and «Бойлер 1 этаж: нет связи с розеткой с 20:24», and its recovery «Бойлер 1 этаж: розетка снова на связи».
 - Zone off takes the floor target from the climate policy (`resolve_mode`, `decide_floor_target`). 35 minutes exceed the 30-minute write budget, so a correction teplo is about to make never alerts. While the thermostat is unavailable its power is unknown and the zone-off timer stops; it starts over once the power is known again, as teplo can correct the thermostat only after it answers. The message still names the moment teplo first saw the thermostat off.

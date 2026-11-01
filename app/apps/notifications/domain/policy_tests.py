@@ -15,7 +15,8 @@ from apps.notifications.domain.policy import (
 )
 
 NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
-LAST_READING = NOW - timedelta(minutes=11)
+READING_AGE = timedelta(minutes=11)
+LAST_READING = NOW - READING_AGE
 NOTICED = 1000.0
 LAST_READING_MONOTONIC = NOTICED - 11 * 60
 CLOCK_STEP = timedelta(hours=3)
@@ -30,29 +31,29 @@ def _evaluate(conditions: list[Condition], tracks: Tracks, after: timedelta) -> 
     return evaluate_alerts(conditions, tracks, NOW + after, NOTICED + after.total_seconds(), clock_trusted=True)
 
 
-def _thermostat(*, available: bool, last_seen_at: datetime | None) -> MonitoredDevice:
+def _thermostat(*, available: bool, last_seen_age: timedelta | None) -> MonitoredDevice:
     return MonitoredDevice(
         slug='thermostat-kitchen',
         name='Кухня',
         kind=DeviceKind.THERMOSTAT,
         available=available,
-        last_seen_at=last_seen_at,
+        last_seen_age=last_seen_age,
     )
 
 
 @pytest.fixture
 def f_lost_thermostat() -> MonitoredDevice:
-    return _thermostat(available=False, last_seen_at=LAST_READING)
+    return _thermostat(available=False, last_seen_age=READING_AGE)
 
 
 @pytest.fixture
 def f_found_thermostat() -> MonitoredDevice:
-    return _thermostat(available=True, last_seen_at=NOW)
+    return _thermostat(available=True, last_seen_age=timedelta(0))
 
 
 @pytest.fixture
 def f_silent_thermostat() -> MonitoredDevice:
-    return _thermostat(available=False, last_seen_at=None)
+    return _thermostat(available=False, last_seen_age=None)
 
 
 @pytest.fixture
@@ -78,6 +79,17 @@ def f_noticed_loss(f_lost_thermostat: MonitoredDevice) -> Tracks:
 @pytest.fixture
 def f_raised_loss(f_lost_thermostat: MonitoredDevice, f_noticed_loss: Tracks) -> Tracks:
     return _evaluate([device_condition(f_lost_thermostat)], f_noticed_loss, timedelta(minutes=2)).tracks
+
+
+@pytest.fixture
+def f_loss_noticed_after_a_clock_step(f_lost_thermostat: MonitoredDevice) -> Tracks:
+    return evaluate_alerts(
+        [device_condition(f_lost_thermostat)],
+        {},
+        NOW + CLOCK_STEP,
+        NOTICED,
+        clock_trusted=True,
+    ).tracks
 
 
 @pytest.fixture
@@ -190,6 +202,26 @@ def test_alert_dates_the_last_reading_by_the_monotonic_clock_across_a_clock_step
     evaluation = evaluate_alerts(
         [device_condition(f_lost_thermostat)],
         f_noticed_loss,
+        NOW + CLOCK_STEP + timedelta(minutes=2),
+        NOTICED + 120,
+        clock_trusted=True,
+    )
+
+    change = AlertChange(
+        condition=device_condition(f_lost_thermostat),
+        transition=AlertTransition.RAISED,
+        since=LAST_READING + CLOCK_STEP,
+    )
+    assert evaluation.changes == (change,)
+
+
+def test_loss_noticed_after_a_clock_step_is_dated_by_the_set_clock(
+    f_lost_thermostat: MonitoredDevice,
+    f_loss_noticed_after_a_clock_step: Tracks,
+) -> None:
+    evaluation = evaluate_alerts(
+        [device_condition(f_lost_thermostat)],
+        f_loss_noticed_after_a_clock_step,
         NOW + CLOCK_STEP + timedelta(minutes=2),
         NOTICED + 120,
         clock_trusted=True,

@@ -5,6 +5,7 @@ import pytest
 
 from apps.climate.factories import ZoneFactory
 from apps.climate.repositories.zone import ZoneRepository
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
 from apps.devices.factories import DeviceFactory
@@ -16,6 +17,7 @@ from apps.notifications.services.thermostat_source import ThermostatSource
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
+CLOCK_STEP = timedelta(hours=5)
 
 
 def _state(read_at: datetime) -> ThermostatState:
@@ -34,33 +36,38 @@ def f_source() -> ThermostatSource:
     ZoneFactory.create(slug='hallway', name='Прихожая', thermostat__slug='thermostat-hallway')
     DeviceFactory.create(slug='thermostat-spare')
     DeviceFactory.create(slug='plug-boiler', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG)
-    store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
-    store.record_state('thermostat-kitchen', _state(NOW - timedelta(minutes=1)))
+    clock = MonotonicClockStub(now=0.0)
+    store = ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
     store.record_state('thermostat-hallway', _state(NOW - timedelta(minutes=11)))
+    clock.advance(10 * 60)
+    store.record_state('thermostat-kitchen', _state(NOW - CLOCK_STEP - timedelta(minutes=1)))
+    clock.advance(60)
     return ThermostatSource(devices=DeviceRepository(), zones=ZoneRepository(), store=store)
 
 
-def test_thermostats_are_watched_under_their_zone_names(f_source: ThermostatSource) -> None:
-    assert f_source.devices(NOW) == [
+def test_thermostats_are_watched_under_their_zone_names_by_the_age_of_their_last_reading(
+    f_source: ThermostatSource,
+) -> None:
+    assert f_source.devices() == [
         MonitoredDevice(
             slug='thermostat-hallway',
             name='Прихожая',
             kind=DeviceKind.THERMOSTAT,
             available=False,
-            last_seen_at=NOW - timedelta(minutes=11),
+            last_seen_age=timedelta(minutes=11),
         ),
         MonitoredDevice(
             slug='thermostat-kitchen',
             name='Кухня',
             kind=DeviceKind.THERMOSTAT,
             available=True,
-            last_seen_at=NOW - timedelta(minutes=1),
+            last_seen_age=timedelta(minutes=1),
         ),
         MonitoredDevice(
             slug='thermostat-spare',
             name='thermostat-spare',
             kind=DeviceKind.THERMOSTAT,
             available=False,
-            last_seen_at=None,
+            last_seen_age=None,
         ),
     ]

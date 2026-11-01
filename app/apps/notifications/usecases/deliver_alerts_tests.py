@@ -3,10 +3,11 @@ from datetime import timedelta
 import pytest
 from structlog.testing import capture_logs
 
+from apps.core.stubs import MonotonicClockStub
 from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition
 from apps.notifications.domain.errors import AlertDeliveryError, AlertRejectedError
 from apps.notifications.services.outbox import AlertOutbox
-from apps.notifications.stubs import AlertSenderStub, MonotonicClockStub
+from apps.notifications.stubs import AlertSenderStub
 from apps.notifications.usecases.deliver_alerts import (
     DeliverAlertsInputDTO,
     DeliverAlertsOutputDTO,

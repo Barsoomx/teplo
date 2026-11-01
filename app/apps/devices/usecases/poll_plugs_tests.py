@@ -1,10 +1,10 @@
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from apps.core.domain.events import DomainEvent, EventDispatcher
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
@@ -32,15 +32,21 @@ def f_state() -> PlugState:
 
 
 @pytest.fixture
-def f_store() -> PlugStateStore:
-    return PlugStateStore(unavailable_after=timedelta(minutes=10))
+def clock() -> MonotonicClockStub:
+    return MonotonicClockStub(now=0.0)
 
 
 @pytest.fixture
-def stale_store(f_state: PlugState) -> PlugStateStore:
-    store = PlugStateStore(unavailable_after=timedelta(minutes=10))
-    store.record_state('plug-boiler-2f', replace(f_state, read_at=NOW - timedelta(minutes=11)))
+def f_store(clock: MonotonicClockStub) -> PlugStateStore:
+    return PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+
+
+@pytest.fixture
+def stale_store(f_state: PlugState, clock: MonotonicClockStub) -> PlugStateStore:
+    store = PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record_state('plug-boiler-2f', f_state)
     store.mark_reported('plug-boiler-2f', True)
+    clock.advance(11 * 60)
     store.record_state('plug-boiler-1f', f_state)
     store.mark_reported('plug-boiler-1f', True)
     return store
@@ -103,12 +109,20 @@ def test_poll_reads_only_plugs_and_records_states_and_failures(
 ) -> None:
     output = f_use_case.execute(PollPlugsInputDTO(now=NOW))
 
-    assert (output, f_store.snapshot('plug-boiler-1f', NOW), f_store.snapshot('plug-boiler-2f', NOW)) == (
+    assert (output, f_store.snapshot('plug-boiler-1f'), f_store.snapshot('plug-boiler-2f')) == (
         PollPlugsOutputDTO(polled=('plug-boiler-1f',), failed=('plug-boiler-2f',)),
-        PlugSnapshot(slug='plug-boiler-1f', state=f_state, available=True, error_code=None, error=None),
+        PlugSnapshot(
+            slug='plug-boiler-1f',
+            state=f_state,
+            age=timedelta(0),
+            available=True,
+            error_code=None,
+            error=None,
+        ),
         PlugSnapshot(
             slug='plug-boiler-2f',
             state=None,
+            age=None,
             available=False,
             error_code='device_unavailable',
             error='timeout',
@@ -162,10 +176,11 @@ def test_poll_keeps_the_code_of_any_device_error(
 ) -> None:
     f_driverless_use_case.execute(PollPlugsInputDTO(now=NOW))
 
-    assert (f_store.snapshot('plug-washer', NOW), f_received) == (
+    assert (f_store.snapshot('plug-washer'), f_received) == (
         PlugSnapshot(
             slug='plug-washer',
             state=None,
+            age=None,
             available=False,
             error_code='driver_not_implemented',
             error='driver not implemented: plug-washer',

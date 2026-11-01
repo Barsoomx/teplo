@@ -26,7 +26,7 @@ class ZoneHeatingSource:
     def _zone(self, zone: ZoneSettings, now: datetime, clock_trusted: bool) -> ZoneHeating:
         mode = resolve_mode(zone.windows, now, zone.preheat_lead)
         target = decide_floor_target(zone, mode, now, clock_trusted=clock_trusted)
-        snapshot = self._store.snapshot(zone.thermostat_slug, now)
+        snapshot = self._store.snapshot(zone.thermostat_slug)
         return ZoneHeating(
             slug=zone.slug,
             name=zone.name,

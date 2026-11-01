@@ -117,7 +117,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 for zone in sorted(self._zones.all_settings(), key=lambda zone: zone.name)
             ),
             plugs=tuple(
-                self._plug(device, now)
+                self._plug(device)
                 for device in sorted(self._devices.all_settings(), key=lambda device: device.name)
                 if device.kind == DeviceKind.PLUG
             ),
@@ -126,7 +126,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         )
 
     def _zone(self, zone: ZoneSettings, now: datetime, clock_trusted: bool) -> ZoneOverview:
-        snapshot = self._thermostat_store.snapshot(zone.thermostat_slug, now)
+        snapshot = self._thermostat_store.snapshot(zone.thermostat_slug)
         mode = resolve_mode(zone.windows, now, zone.preheat_lead)
         target = decide_floor_target(zone, mode, now, clock_trusted=clock_trusted)
         boosted = zone.is_boosted(now)
@@ -154,8 +154,8 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             ),
         )
 
-    def _plug(self, device: DeviceSettings, now: datetime) -> PlugOverview:
-        snapshot = self._plug_store.snapshot(device.slug, now)
+    def _plug(self, device: DeviceSettings) -> PlugOverview:
+        snapshot = self._plug_store.snapshot(device.slug)
         state = snapshot.state
         return PlugOverview(
             slug=device.slug,

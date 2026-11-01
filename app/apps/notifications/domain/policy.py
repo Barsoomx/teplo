@@ -16,7 +16,7 @@ class Condition:
     name: str
     device_kind: DeviceKind
     failing: bool | None
-    since: datetime | None
+    began_ago: timedelta | None
     raise_after: timedelta
 
 
@@ -46,12 +46,6 @@ class _Clock:
     monotonic: float
     trusted: bool
 
-    def monotonic_of(self, wall: datetime | None) -> float:
-        if wall is None:
-            return self.monotonic
-
-        return self.monotonic - (self.now - wall).total_seconds()
-
     def wall_of(self, moment: float) -> datetime | None:
         if not self.trusted:
             return None
@@ -65,8 +59,8 @@ def device_condition(device: MonitoredDevice) -> Condition:
         name=device.name,
         device_kind=device.kind,
         failing=not device.available,
-        since=device.last_seen_at,
-        raise_after=DEVICE_LOST_AFTER if device.last_seen_at is None else DEVICE_LOSS_CONFIRMED_AFTER,
+        began_ago=device.last_seen_age,
+        raise_after=DEVICE_LOST_AFTER if device.last_seen_age is None else DEVICE_LOSS_CONFIRMED_AFTER,
     )
 
 
@@ -76,7 +70,7 @@ def zone_condition(zone: ZoneHeating) -> Condition:
         name=zone.name,
         device_kind=DeviceKind.THERMOSTAT,
         failing=_zone_off(zone),
-        since=None,
+        began_ago=None,
         raise_after=ZONE_OFF_AFTER,
     )
 
@@ -115,7 +109,7 @@ def _step(
 
         return None, _change(condition, AlertTransition.CLEARED, track, clock)
 
-    current = _running(condition, track, clock)
+    current = _running(condition, track, clock.monotonic)
     if current.raised or not _due(current, condition.raise_after, clock.monotonic):
         return current, None
 
@@ -130,12 +124,13 @@ def _paused(track: AlertTrack | None) -> AlertTrack | None:
     return replace(track, noticed_at=None)
 
 
-def _running(condition: Condition, track: AlertTrack | None, clock: _Clock) -> AlertTrack:
+def _running(condition: Condition, track: AlertTrack | None, monotonic: float) -> AlertTrack:
     if track is None:
-        return AlertTrack(began_at=clock.monotonic_of(condition.since), noticed_at=clock.monotonic, raised=False)
+        began_ago = condition.began_ago or timedelta(0)
+        return AlertTrack(began_at=monotonic - began_ago.total_seconds(), noticed_at=monotonic, raised=False)
 
     if track.noticed_at is None:
-        return replace(track, noticed_at=clock.monotonic)
+        return replace(track, noticed_at=monotonic)
 
     return track
 

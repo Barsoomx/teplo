@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import timedelta
 from enum import StrEnum
 
 from apps.devices.domain.kinds import DeviceKind
@@ -27,7 +27,7 @@ class MonitoredDevice:
     name: str
     kind: DeviceKind
     available: bool
-    last_seen_at: datetime | None
+    last_seen_age: timedelta | None
 
 
 @dataclass(frozen=True, kw_only=True)

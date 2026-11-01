@@ -73,7 +73,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
         )
 
     def _conditions(self, now: datetime, clock_trusted: bool) -> list[Condition]:
-        conditions = [device_condition(device) for source in self._devices for device in source.devices(now)]
+        conditions = [device_condition(device) for source in self._devices for device in source.devices()]
         conditions.extend(zone_condition(zone) for zone in self._zones.zones(now, clock_trusted=clock_trusted))
         return conditions
 

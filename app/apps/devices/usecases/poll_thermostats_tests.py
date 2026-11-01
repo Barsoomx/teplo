@@ -1,10 +1,10 @@
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
 from apps.core.domain.events import DomainEvent, EventDispatcher
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
@@ -35,15 +35,21 @@ def state() -> ThermostatState:
 
 
 @pytest.fixture
-def f_store() -> ThermostatStateStore:
-    return ThermostatStateStore(unavailable_after=timedelta(minutes=10))
+def clock() -> MonotonicClockStub:
+    return MonotonicClockStub(now=0.0)
 
 
 @pytest.fixture
-def stale_store(state: ThermostatState) -> ThermostatStateStore:
-    store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
-    store.record_state('thermostat-hallway', replace(state, read_at=NOW - timedelta(minutes=11)))
+def f_store(clock: MonotonicClockStub) -> ThermostatStateStore:
+    return ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+
+
+@pytest.fixture
+def stale_store(state: ThermostatState, clock: MonotonicClockStub) -> ThermostatStateStore:
+    store = ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record_state('thermostat-hallway', state)
     store.mark_reported('thermostat-hallway', True)
+    clock.advance(11 * 60)
     store.record_state('thermostat-kitchen', state)
     store.mark_reported('thermostat-kitchen', True)
     return store
@@ -110,7 +116,7 @@ def f_driverless_use_case(f_store: ThermostatStateStore, dispatcher: EventDispat
 def test_poll_records_states_and_failures(f_use_case: PollThermostatsUseCase, f_store: ThermostatStateStore) -> None:
     output = f_use_case.execute(PollThermostatsInputDTO(now=NOW))
 
-    snapshot = f_store.snapshot('thermostat-hallway', NOW)
+    snapshot = f_store.snapshot('thermostat-hallway')
     assert (output, snapshot.error_code, snapshot.error) == (
         PollThermostatsOutputDTO(polled=('thermostat-kitchen',), failed=('thermostat-hallway',)),
         'device_unavailable',
@@ -167,10 +173,11 @@ def test_poll_keeps_the_code_of_any_device_error(
 ) -> None:
     f_driverless_use_case.execute(PollThermostatsInputDTO(now=NOW))
 
-    assert (f_store.snapshot('thermostat-attic', NOW), f_received) == (
+    assert (f_store.snapshot('thermostat-attic'), f_received) == (
         ThermostatSnapshot(
             slug='thermostat-attic',
             state=None,
+            age=None,
             available=False,
             error_code='driver_not_implemented',
             error='driver not implemented: thermostat-attic',

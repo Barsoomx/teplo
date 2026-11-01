@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
@@ -16,15 +14,15 @@ class PlugSource:
     def init(cls) -> 'PlugSource':
         return cls(devices=DeviceRepository(), store=plug_state_store)
 
-    def devices(self, now: datetime) -> list[MonitoredDevice]:
-        return [self._device(device, now) for device in self._devices.all_settings() if device.kind == DeviceKind.PLUG]
+    def devices(self) -> list[MonitoredDevice]:
+        return [self._device(device) for device in self._devices.all_settings() if device.kind == DeviceKind.PLUG]
 
-    def _device(self, device: DeviceSettings, now: datetime) -> MonitoredDevice:
-        snapshot = self._store.snapshot(device.slug, now)
+    def _device(self, device: DeviceSettings) -> MonitoredDevice:
+        snapshot = self._store.snapshot(device.slug)
         return MonitoredDevice(
             slug=device.slug,
             name=device.name,
             kind=device.kind,
             available=snapshot.available,
-            last_seen_at=snapshot.state.read_at if snapshot.state else None,
+            last_seen_age=snapshot.age,
         )

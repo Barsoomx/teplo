@@ -15,6 +15,7 @@ from apps.climate.usecases.run_heating_cycle import (
     ZoneCycleOutcome,
 )
 from apps.core.domain.events import DomainEvent, EventDispatcher
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.capabilities import FloorThermostat
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
@@ -28,6 +29,7 @@ MOSCOW = ZoneInfo('Europe/Moscow')
 MORNING = datetime(2026, 10, 29, 7, 0, tzinfo=MOSCOW)
 PREHEAT = datetime(2026, 10, 29, 4, 0, tzinfo=MOSCOW)
 NIGHT = datetime(2026, 10, 29, 1, 0, tzinfo=MOSCOW)
+FRESH = timedelta(0)
 
 
 def _state(setpoint: str, mode: ThermostatMode = ThermostatMode.HOLD, read_at: datetime = MORNING) -> ThermostatState:
@@ -48,9 +50,12 @@ def _cycle(
     *,
     dry_run: bool = False,
     clock_trusted: bool = True,
+    reading_age: timedelta = FRESH,
 ) -> RunHeatingCycleUseCase:
-    store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
+    monotonic = MonotonicClockStub(now=0.0)
+    store = ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=monotonic)
     store.record_state(zone.thermostat.slug, state)
+    monotonic.advance(reading_age.total_seconds())
     return RunHeatingCycleUseCase(
         zones=ZoneRepository(),
         store=store,
@@ -184,7 +189,7 @@ def f_stale_cycle(
     f_thermostat: FloorThermostatStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
-    return _cycle(f_zone, _state('22.0', read_at=MORNING - timedelta(minutes=11)), f_thermostat, dispatcher)
+    return _cycle(f_zone, _state('22.0'), f_thermostat, dispatcher, reading_age=timedelta(minutes=11))
 
 
 @pytest.fixture
