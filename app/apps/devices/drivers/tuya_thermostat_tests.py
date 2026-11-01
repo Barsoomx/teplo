@@ -4,7 +4,9 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+import tinytuya
 
+from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
 from apps.devices.drivers.tuya_thermostat import TuyaPayload, TuyaThermostatDriver
@@ -105,6 +107,11 @@ def f_serial_driver(f_serial_client: SerialClientStub) -> TuyaThermostatDriver:
     return TuyaThermostatDriver(client=f_serial_client, clock=_now)
 
 
+@pytest.fixture
+def f_secret() -> DeviceSecret:
+    return DeviceSecret(address='192.0.2.10', device_id='device-id', local_key='local-key', protocol='3.3')
+
+
 def test_read_state_maps_data_points(f_driver: TuyaThermostatDriver) -> None:
     assert f_driver.read_state() == ThermostatState(
         power=True,
@@ -153,3 +160,10 @@ def test_client_calls_are_serialized_across_threads(
         thread.join()
 
     assert f_serial_client.max_active == 1
+
+
+def test_init_disables_device22_detection(f_secret: DeviceSecret) -> None:
+    client = TuyaThermostatDriver.init(f_secret).client
+
+    assert isinstance(client, tinytuya.Device)
+    assert client.disabledetect is True

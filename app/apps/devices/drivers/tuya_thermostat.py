@@ -43,7 +43,12 @@ class TuyaThermostatDriver:
             connection_retry_limit=2,
             connection_retry_delay=1,
         )
+        client.disabledetect = True
         return cls(client=client, clock=timezone.now)
+
+    @property
+    def client(self) -> TuyaClient:
+        return self._client
 
     def read_state(self) -> ThermostatState:
         try:
