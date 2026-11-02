@@ -1,4 +1,9 @@
-# ESP32-C3 SuperMini. Its crystal sits next to the antenna, and the link drops at full transmit power.
+# ESP32-C3 SuperMini. Its crystal sits next to the antenna, and the link drops at full transmit power,
+# while at 8.5 dB the router barely hears a node a room or two away. A node may set wifi_output_power
+# in its own substitutions.
+substitutions:
+  wifi_output_power: 10dB
+
 packages:
   status_led: !include status_led.yaml
 
@@ -6,6 +11,8 @@ esp32:
   board: esp32-c3-devkitm-1
   framework:
     type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_ENABLED: n
 
 wifi:
-  output_power: 8.5dB
+  output_power: ${wifi_output_power}

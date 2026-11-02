@@ -7,7 +7,10 @@ mqtt:
   discovery: false
   log_topic: null
   publish_nan_as_none: false
-  reboot_timeout: 0s
+  # A SuperMini can hang with Wi-Fi still associated and nothing passing; a restart brings it back.
+  reboot_timeout: 5min
+  # A weak link loses a ping reply now and then; with the default 15 s the session drops over it.
+  keepalive: 60s
   birth_message:
     topic: teplo/${node_name}/status
     payload: online
