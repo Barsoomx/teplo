@@ -1,6 +1,14 @@
 {% load i18n l10n panel_format %}
 {% now 'H:i' as house_time %}
 <ul class="house" role="list">
+  {% with outdoor=overview.outdoor %}{% if outdoor %}
+  {% if outdoor.available %}
+  <li class="fact fact-outdoor">{% icon 'thermometer' %}{% blocktranslate with temperature=outdoor.temperature|floatformat:1 %}Outside {{ temperature }}°{% endblocktranslate %}</li>
+  {% else %}
+  {% failure_note outdoor.error_code outdoor.error omit='device_unavailable' device='temperature_sensor' as outdoor_note %}
+  <li class="fact fact-warn"{% if outdoor.error %} title="{{ outdoor.error }}"{% endif %}>{% icon 'wifi-off' %}{% translate 'Outside: no connection to the sensor' %}{% if outdoor_note %}. {{ outdoor_note }}{% endif %}</li>
+  {% endif %}
+  {% endif %}{% endwith %}
   {% if overview.dry_run %}
   <li class="fact">{% icon 'eye' %}{% translate 'Watching only: commands are not sent' %}</li>
   {% else %}
@@ -13,6 +21,21 @@
   <li class="fact fact-warn" title="{{ overview.clock.reason }}">{% icon 'triangle-alert' %}{% if reason %}{% blocktranslate %}{{ house_time }}, clock not synced ({{ reason }}): holding comfort{% endblocktranslate %}{% else %}{% blocktranslate %}{{ house_time }}, clock not synced: holding comfort{% endblocktranslate %}{% endif %}</li>
   {% endif %}
 </ul>
+{% if overview.standalone_sensors %}
+<section class="air-row" aria-labelledby="air-row-title">
+  <h2 class="visually-hidden" id="air-row-title">{% translate 'Air' %}</h2>
+  <ul class="air-sensors" role="list">
+    {% for sensor in overview.standalone_sensors %}
+    {% if sensor.available %}
+    <li class="air-sensor">{% icon 'thermometer' %}<span class="air-sensor-name">{{ sensor.name }}</span> <span class="air-sensor-value">{{ sensor.temperature|floatformat:1 }}°</span>{% if sensor.humidity is not None %} <span class="air-humidity"><span class="visually-hidden">{% translate 'humidity' %} </span>{{ sensor.humidity|floatformat:0 }}%</span>{% endif %}</li>
+    {% else %}
+    {% failure_note sensor.error_code sensor.error omit='device_unavailable' device='temperature_sensor' as sensor_note %}
+    <li class="air-sensor is-offline"{% if sensor.error %} title="{{ sensor.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% blocktranslate with name=sensor.name %}{{ name }}: no connection. Check that the sensor has power and Wi-Fi.{% endblocktranslate %}{% if sensor_note %} <span class="offline-error">{{ sensor_note }}</span>{% endif %}</span></li>
+    {% endif %}
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 <div class="tiles">
   {% for zone in overview.zones %}
   <article class="tile{% if not zone.available %} is-offline{% endif %}"{% if zone.available %} style="--t: {{ zone.floor_temperature|unlocalize }};{% if zone.target_setpoint is not None %} --target: {{ zone.target_setpoint|unlocalize }};{% endif %}"{% endif %}>
@@ -23,26 +46,35 @@
         {% if overview.dry_run or not zone.live_control %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}
       </p>
     </header>
-    {% if zone.available %}
     <div class="readout">
-      <p class="readout-value">{{ zone.floor_temperature|floatformat:1 }}<span class="readout-unit">°</span></p>
+      <div class="readings">
+        {% if zone.available %}<p class="readout-value">{{ zone.floor_temperature|floatformat:1 }}<span class="readout-unit">°</span></p>{% else %}<p class="readout-value readout-missing">—</p>{% endif %}
+        {% if zone.air %}
+        <div class="air{% if not zone.air.available %} is-offline{% endif %}">
+          {% if zone.air.available %}<p class="air-value">{{ zone.air.temperature|floatformat:1 }}<span class="readout-unit">°</span>{% if zone.air.humidity is not None %} <span class="air-humidity"><span class="visually-hidden">{% translate 'humidity' %} </span>{{ zone.air.humidity|floatformat:0 }}%</span>{% endif %}</p>{% else %}<p class="air-value readout-missing">—</p>{% endif %}
+          <p class="air-caption">{% translate 'Air' %}</p>
+        </div>
+        {% endif %}
+      </div>
+      {% if zone.available %}
       <p class="readout-caption">{% if zone.target_setpoint is None %}{% translate 'Floor, heating off' %}{% else %}{% blocktranslate with target=zone.target_setpoint|floatformat:'-1' %}Floor, target {{ target }}°{% endblocktranslate %}{% if zone.power is False %}. {% translate 'Thermostat is off' %}{% elif zone.setpoint != zone.target_setpoint %}. {% blocktranslate with setpoint=zone.setpoint|floatformat:'-1' %}Thermostat set to {{ setpoint }}°{% endblocktranslate %}{% endif %}{% endif %}</p>
       {% if zone.regime == 'boost' %}
       <p class="next next-boost">{% blocktranslate with until=zone.boost_until|time:'H:i' %}Boost until {{ until }}{% endblocktranslate %}</p>
       {% elif zone.next_change %}
       <p class="next">{% with mode=zone.next_change.mode at=zone.next_change.at|time:'H:i' day=zone.next_change.at|day_word %}{% if mode == 'night' %}{% blocktranslate %}Night from {{ at }}{% endblocktranslate %}{% elif mode == 'preheat' %}{% blocktranslate %}Warm-up from {{ at }}{% endblocktranslate %}{% else %}{% blocktranslate %}Comfort from {{ at }}{% endblocktranslate %}{% endif %}{% if day %} {{ day }}{% endif %}{% endwith %}</p>
       {% endif %}
-    </div>
-    {% if zone.regime != 'off' %}
-    <div class="tile-actions">
-      <button class="boost" type="button" hx-post="{% url 'panel:boost-zone' zone.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% icon 'flame' %}{% if zone.boosted %}{% translate 'Extend boost' %}{% else %}{% translate 'Boost for 2 hours' %}{% endif %}</button>
-    </div>
-    {% endif %}
-    {% else %}
-    <div class="readout">
-      <p class="readout-value readout-missing">—</p>
+      {% else %}
       {% failure_note zone.error_code zone.error omit='device_unavailable' as note %}
       <p class="offline-note"{% if zone.error %} title="{{ zone.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% translate 'No connection. Check that the thermostat has power and Wi-Fi.' %}{% if note %} <span class="offline-error">{{ note }}</span>{% endif %}</span></p>
+      {% endif %}
+      {% if zone.air and not zone.air.available %}
+      {% failure_note zone.air.error_code zone.air.error omit='device_unavailable' device='temperature_sensor' as air_note %}
+      <p class="offline-note"{% if zone.air.error %} title="{{ zone.air.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% translate 'No connection to the air sensor. Check that it has power and Wi-Fi.' %}{% if air_note %} <span class="offline-error">{{ air_note }}</span>{% endif %}</span></p>
+      {% endif %}
+    </div>
+    {% if zone.available and zone.regime != 'off' %}
+    <div class="tile-actions">
+      <button class="boost" type="button" hx-post="{% url 'panel:boost-zone' zone.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% icon 'flame' %}{% if zone.boosted %}{% translate 'Extend boost' %}{% else %}{% translate 'Boost for 2 hours' %}{% endif %}</button>
     </div>
     {% endif %}
     <div class="tile-floor" aria-hidden="true">

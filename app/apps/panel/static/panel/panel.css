@@ -243,6 +243,53 @@ body {
   color: var(--warn);
 }
 
+.fact-outdoor {
+  color: var(--ink);
+}
+
+/* Air sensors outside the zones: a row of readings in ink, as every reading but the floor */
+
+.air-row {
+  margin: -0.5rem 0 1rem;
+}
+
+.air-sensors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.25rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.air-sensor {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--ink-muted);
+  font-size: 0.9375rem;
+}
+
+.air-sensor-value {
+  color: var(--ink);
+  font: 500 1.0625rem/1 var(--font-readout);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.air-humidity {
+  color: var(--ink-muted);
+  font: 500 0.875rem/1 var(--font-text);
+  letter-spacing: 0;
+}
+
+.air-sensor.is-offline {
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+  background: repeating-linear-gradient(-45deg, var(--tile) 0 14px, var(--tile-quiet) 14px 15px);
+  color: var(--warn);
+}
+
 /* Rooms: floor tiles laid with thin grout */
 
 .tiles {
@@ -350,6 +397,46 @@ body {
 .readout-caption {
   margin: 0.75rem 0 0;
   font-size: 0.9375rem;
+}
+
+/* The room air sits beside the floor in ink, so colour keeps meaning floor temperature */
+
+.readings {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem 1.5rem;
+}
+
+.air {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.air-value {
+  margin: 0;
+  font: 500 clamp(1.875rem, 9vw, 2.5rem)/1 var(--font-readout);
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+
+.air-caption {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+}
+
+.air.is-offline {
+  padding: 0.45rem 0.75rem 0.5rem;
+  border-radius: 6px;
+  background: repeating-linear-gradient(-45deg, var(--tile) 0 14px, var(--tile-quiet) 14px 15px);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+@media (max-width: 22rem) {
+  .readings {
+    flex-wrap: wrap;
+  }
 }
 
 .readout-missing {

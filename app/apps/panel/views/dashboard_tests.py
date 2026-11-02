@@ -1,18 +1,22 @@
 from collections.abc import Iterator
 from dataclasses import replace
+from decimal import Decimal
 from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
 from django.test import Client
 
-from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO
+from apps.devices.domain.kinds import DeviceKind
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SensorOverview
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 pytestmark = pytest.mark.django_db
 
 RAW_DETAILS = ('Network Error: Device Unreachable', 'secret missing: thermostat-hallway', 'ndmc failed: timed out')
 PLUG_DETAIL = 'unexpected plug payload: {}'
+SENSOR_DETAIL = 'temperature: the node reported nan'
+BROKER_DETAIL = 'mqtt connection refused: not authorised'
 
 
 @pytest.fixture
@@ -37,6 +41,30 @@ def failing_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
 def m_failing_overview_use_case(failing_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = failing_overview
+        yield use_case
+
+
+@pytest.fixture
+def lost_air_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverviewOutputDTO:
+    lost_air = SensorOverview(
+        slug='air-kitchen',
+        name='Воздух: кухня',
+        kind=DeviceKind.TEMPERATURE_SENSOR,
+        available=False,
+        error_code='broker_unavailable',
+        error=BROKER_DETAIL,
+        temperature=Decimal('21.3'),
+        humidity=Decimal('45.2'),
+        age_seconds=640,
+    )
+    kitchen = replace(panel_overview.zones[0], air=lost_air)
+    return replace(panel_overview, zones=(kitchen,), outdoor=None, standalone_sensors=())
+
+
+@pytest.fixture
+def m_lost_air_overview_use_case(lost_air_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = lost_air_overview
         yield use_case
 
 
@@ -84,6 +112,42 @@ def test_dashboard_shows_loads_and_explains_a_lost_plug(
         (content.count(PLUG_DETAIL), f'title="{PLUG_DETAIL}"' in content),
         m_overview_use_case.init.call_count,
     ) == (True, True, True, True, True, True, True, (1, True), 1)
+
+
+def test_dashboard_shows_the_air_beside_the_floor_and_the_outdoor_temperature(
+    f_russian_client: Client,
+    m_overview_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'На улице -3,4°' in content,
+        '21,3' in content,
+        '45%' in content,
+        'Воздух: 2 этаж: нет связи. Проверьте питание датчика и Wi-Fi.' in content,
+        'Датчик не смог снять показания' in content,
+        (content.count(SENSOR_DETAIL), f'title="{SENSOR_DETAIL}"' in content),
+        m_overview_use_case.init.call_count,
+    ) == (True, True, True, True, True, (1, True), 1)
+
+
+def test_dashboard_hatches_a_lost_air_sensor_and_says_what_to_check(
+    f_russian_client: Client,
+    m_lost_air_overview_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'class="air is-offline"' in content,
+        'Нет связи с датчиком воздуха. Проверьте его питание и Wi-Fi.' in content,
+        'teplo не может подключиться к MQTT-брокеру' in content,
+        '21,3' in content,
+        'На улице' in content,
+        (content.count(BROKER_DETAIL), f'title="{BROKER_DETAIL}"' in content),
+        m_lost_air_overview_use_case.init.call_count,
+    ) == (True, True, True, False, False, (1, True), 1)
 
 
 def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

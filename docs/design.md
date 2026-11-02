@@ -185,7 +185,7 @@ Control policies in `climate/domain` and `power/domain` import nothing from Djan
 - **Air zone:** has an air sensor; teplo switches the floor to hold the room air at the target.
 - **Floor zone:** no air sensor; teplo sets the thermostat's floor setpoint from the schedule and the thermostat regulates itself.
 - A zone has one or more heat sources ordered by priority. v1 uses floor thermostats only; a heat pump can become the first source later with the floor as backup.
-- A zone's air sensor is a `temperature_sensor` device linked to the zone. The climate settings name the outdoor sensor and the second-floor sensor. Both come from the site data and are edited in the admin; no control reads them yet.
+- A zone's air sensor is a `temperature_sensor` device linked to the zone. The climate settings name the outdoor sensor and the second-floor sensor. Both come from the site data and are edited in the admin; no control reads them yet, and the panel shows their readings (section 10).
 
 ### Schedules and targets
 
@@ -346,16 +346,18 @@ The `notifications` context sends alerts to one Telegram chat. A pure policy dec
 
 ## 10. Panel
 
-Server-rendered Django templates with HTMX; zone cards and the loads block refresh every 10 seconds (thermostats and plugs are polled every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
+Server-rendered Django templates with HTMX; zone cards, the house facts above them and the loads block refresh every 10 seconds (thermostats and plugs are polled every 30 seconds, the air sensors report every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
 
 - **Dashboard:** zone cards (air, floor, target, state: heating, waiting, shed), `+/-` and boost, a loads block, phase bars to 25 A with the EV marker, outdoor temperature, clock and device warnings.
 - **Schedules:** weekly periods per zone and mode targets.
 - **Settings:** tariffs, phase thresholds, shedding priority (drag to reorder), floor limits, water heater cheap-only switch, calibration.
 - **History:** temperatures, phase currents, zone states; the event journal.
 
-A JSON API under `api/v1` exposes the same state: `zones/` and `plugs/`. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
+A JSON API under `api/v1` exposes the same state: `zones/`, `plugs/` and `sensors/`. `sensors/` lists every temperature sensor by name with its slug, kind, temperature, humidity, availability and the age of its reading in whole seconds, `age_seconds`; a sensor keeps its last reading once it is unavailable, as the store does. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
 
 The visual language is a thermal camera. An ironbow ramp maps 14 to 32 °C and is the only saturated colour, so colour always means floor temperature. Each room is a floor tile: its reading is set in large type, and its floor band glows in the ramp colour at the point of the scale where the floor reads, with the target marked on the same scale. Dark and light themes follow the device setting. Fonts (Unbounded for readings, Golos Text for text, both OFL) and the Lucide icons (ISC) are vendored with their licenses. The interface is English and Russian, picked from the browser's language; zones are listed by name.
+
+A room with an air sensor shows the air temperature beside the floor reading, in large type with the humidity small, and in ink, as colour means floor temperature. A lost air sensor is hatched and says what to check, like a lost plug, while the floor reading stays. The house facts above the tiles start with the outdoor temperature from the climate settings' outdoor sensor, and a row below them lists the other air sensors that belong to no zone, such as the second floor's, with their temperature and humidity.
 
 Below the floor tiles, the loads block lists the metered plugs by name with their relay state, power and voltage. It is drawn in ink only, so colour keeps meaning floor temperature; a lost plug is hatched and says what to check, like a lost thermostat.
 

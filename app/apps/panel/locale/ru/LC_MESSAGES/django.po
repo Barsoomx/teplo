@@ -23,6 +23,13 @@ msgstr "Буст"
 msgid "Off"
 msgstr "Выключено"
 
+#, python-format
+msgid "Outside %(temperature)s°"
+msgstr "На улице %(temperature)s°"
+
+msgid "Outside: no connection to the sensor"
+msgstr "На улице: нет связи с датчиком"
+
 msgid "Watching only: commands are not sent"
 msgstr "Режим наблюдения: команды не отправляются"
 
@@ -40,6 +47,16 @@ msgstr "%(house_time)s, время не сверено (%(reason)s): держу 
 #, python-format
 msgid "%(house_time)s, clock not synced: holding comfort"
 msgstr "%(house_time)s, время не сверено: держу комфорт"
+
+msgid "Air"
+msgstr "Воздух"
+
+msgid "humidity"
+msgstr "влажность"
+
+#, python-format
+msgid "%(name)s: no connection. Check that the sensor has power and Wi-Fi."
+msgstr "%(name)s: нет связи. Проверьте питание датчика и Wi-Fi."
 
 msgid "Watching"
 msgstr "Наблюдение"
@@ -82,6 +99,9 @@ msgstr "Буст на 2 часа"
 
 msgid "No connection. Check that the thermostat has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание термостата и Wi-Fi."
+
+msgid "No connection to the air sensor. Check that it has power and Wi-Fi."
+msgstr "Нет связи с датчиком воздуха. Проверьте его питание и Wi-Fi."
 
 msgid "Loads"
 msgstr "Нагрузки"
