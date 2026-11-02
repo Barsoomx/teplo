@@ -246,6 +246,35 @@ def test_raised_alert_is_journaled() -> None:
             'name': 'Кухня',
             'device_kind': 'thermostat',
             'since': '2026-10-29T05:48:00Z',
+            'amps': None,
+        },
+        NOW,
+    )
+
+
+def test_phase_overload_alert_is_journaled_with_its_current() -> None:
+    journal_alert_raised(
+        AlertRaised(
+            kind=AlertKind.PHASE_OVERLOAD,
+            subject='l2',
+            name='L2',
+            device_kind=DeviceKind.PHASE_METER,
+            since=NOW - timedelta(minutes=1),
+            amps=Decimal('31.27'),
+            occurred_at=NOW,
+        ),
+    )
+
+    assert _entry() == (
+        'alert_raised',
+        'l2',
+        {
+            'kind': 'phase_overload',
+            'subject': 'l2',
+            'name': 'L2',
+            'device_kind': 'phase_meter',
+            'since': '2026-10-29T05:59:00Z',
+            'amps': '31.27',
         },
         NOW,
     )
@@ -272,6 +301,7 @@ def test_cleared_alert_is_journaled() -> None:
             'name': 'Кухня',
             'device_kind': 'thermostat',
             'since': '2026-10-29T05:20:00Z',
+            'amps': None,
         },
         NOW,
     )

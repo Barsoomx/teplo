@@ -3,7 +3,7 @@ import urllib.request
 from datetime import datetime
 
 from apps.core.domain.errors import DomainError
-from apps.notifications.domain.alerts import MonitoredDevice, ZoneHeating
+from apps.notifications.domain.alerts import MonitoredDevice, PhaseAlarm, ZoneHeating
 from apps.power.domain.outage import OutageCause, OutageRecord, PowerCut
 
 
@@ -27,6 +27,14 @@ class ZoneSourceStub:
     def zones(self, now: datetime, *, clock_trusted: bool) -> list[ZoneHeating]:  # noqa: ARG002
         self._clock_trusted.append(clock_trusted)
         return self._zones
+
+
+class PhaseSourceStub:
+    def __init__(self, alarms: list[PhaseAlarm]) -> None:
+        self._alarms = alarms
+
+    def phases(self) -> list[PhaseAlarm]:
+        return self._alarms
 
 
 class AlertSenderStub:

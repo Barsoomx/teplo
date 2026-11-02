@@ -1,9 +1,17 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
 from apps.devices.domain.kinds import DeviceKind
-from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition, MonitoredDevice, ZoneHeating
+from apps.notifications.domain.alerts import (
+    AlertKey,
+    AlertKind,
+    AlertTransition,
+    MonitoredDevice,
+    PhaseAlarm,
+    ZoneHeating,
+)
 from apps.notifications.domain.policy import (
     AlertChange,
     AlertEvaluation,
@@ -11,6 +19,7 @@ from apps.notifications.domain.policy import (
     Condition,
     device_condition,
     evaluate_alerts,
+    phase_condition,
     zone_condition,
 )
 
@@ -456,3 +465,37 @@ def test_zone_and_its_thermostat_are_tracked_apart(
     )
 
     assert (evaluation.changes, set(evaluation.tracks)) == ((), {THERMOSTAT_KEY, ZONE_KEY})
+
+
+@pytest.mark.parametrize(
+    ('alarm', 'expected'),
+    [
+        (
+            PhaseAlarm(phase='l2', name='L2', alarmed=True, amps=Decimal('31.27'), began_ago=timedelta(minutes=1)),
+            Condition(
+                key=AlertKey(kind=AlertKind.PHASE_OVERLOAD, subject='l2'),
+                name='L2',
+                device_kind=DeviceKind.PHASE_METER,
+                failing=True,
+                began_ago=timedelta(minutes=1),
+                raise_after=timedelta(0),
+                amps=Decimal('31.27'),
+            ),
+        ),
+        (
+            PhaseAlarm(phase='l3', name='L3', alarmed=False, amps=None, began_ago=None),
+            Condition(
+                key=AlertKey(kind=AlertKind.PHASE_OVERLOAD, subject='l3'),
+                name='L3',
+                device_kind=DeviceKind.PHASE_METER,
+                failing=False,
+                began_ago=None,
+                raise_after=timedelta(0),
+                amps=None,
+            ),
+        ),
+    ],
+    ids=['alarmed', 'calm'],
+)
+def test_phase_alarm_held_by_the_guard_raises_at_the_first_check(alarm: PhaseAlarm, expected: Condition) -> None:
+    assert phase_condition(alarm) == expected

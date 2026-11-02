@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 from apps.core.domain.events import DomainEvent
 from apps.devices.domain.kinds import DeviceKind
@@ -14,6 +15,7 @@ class AlertEvent(DomainEvent):
     name: str
     device_kind: DeviceKind
     since: datetime | None
+    amps: Decimal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
