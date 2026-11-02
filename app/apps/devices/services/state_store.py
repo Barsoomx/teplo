@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 
-from apps.devices.domain.readings import PlugState, ThermostatState
+from apps.devices.domain.readings import PlugState, TemperatureReading, ThermostatState
 
 UNAVAILABLE_AFTER = timedelta(minutes=10)
 
@@ -34,6 +34,11 @@ class DeviceStateStore[TState]:
             self._states[slug] = state
             self._recorded_at[slug] = self._clock()
             self._failures.pop(slug, None)
+
+    def amend_state(self, slug: str, amend: Callable[[TState], TState]) -> None:
+        with self._lock:
+            if slug in self._states:
+                self._states[slug] = amend(self._states[slug])
 
     def record_failure(self, slug: str, error_code: str, error: str) -> None:
         with self._lock:
@@ -67,6 +72,9 @@ ThermostatSnapshot = DeviceSnapshot[ThermostatState]
 ThermostatStateStore = DeviceStateStore[ThermostatState]
 PlugSnapshot = DeviceSnapshot[PlugState]
 PlugStateStore = DeviceStateStore[PlugState]
+TemperatureSnapshot = DeviceSnapshot[TemperatureReading]
+TemperatureStateStore = DeviceStateStore[TemperatureReading]
 
 thermostat_state_store = ThermostatStateStore(unavailable_after=UNAVAILABLE_AFTER)
 plug_state_store = PlugStateStore(unavailable_after=UNAVAILABLE_AFTER)
+temperature_state_store = TemperatureStateStore(unavailable_after=UNAVAILABLE_AFTER)
