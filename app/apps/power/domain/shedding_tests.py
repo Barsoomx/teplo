@@ -11,6 +11,7 @@ from apps.power.domain.shedding import (
     SETTLED,
     Shed,
     UnconfirmedShed,
+    can_hand_back,
     choose_restore,
     choose_shed,
     in_view,
@@ -212,6 +213,22 @@ def test_resumed_shed_of_a_load_not_shed_is_none() -> None:
     resumed = resumed_shed(replace(SHED_BOILER_RECORD, shed=None), at=AT, now=NOW, default_amps=Decimal('6.0'))
 
     assert resumed is None
+
+
+@pytest.mark.parametrize(
+    ('shed', 'expected'),
+    [
+        (KITCHEN_SHED, True),
+        (replace(KITCHEN_SHED, stamp_lost=True, at=AT - 1799), False),
+        (replace(KITCHEN_SHED, stamp_lost=True, at=AT - 1800), True),
+    ],
+    ids=['write_stamped', 'stamp_lost_within_the_write_interval', 'stamp_lost_a_write_interval_ago'],
+)
+def test_zone_shed_whose_write_stamp_was_lost_is_handed_back_a_write_interval_after_the_shed(
+    shed: Shed,
+    expected: bool,
+) -> None:
+    assert can_hand_back(shed, AT, timedelta(minutes=30)) is expected
 
 
 @pytest.mark.parametrize(

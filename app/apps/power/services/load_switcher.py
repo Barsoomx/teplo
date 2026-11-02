@@ -17,12 +17,12 @@ class LoadSwitcher:
     def init(cls) -> 'LoadSwitcher':
         return cls(plugs=driver_registry, zones=ThermostatZoneSwitch.init())
 
-    def shed(self, load: LoadRecord, at: datetime) -> None:
+    def shed(self, load: LoadRecord, at: datetime) -> bool:
         if load.zone_slug is None:
             self._plugs.switchable_plug(load.device_slug).set_on(False)
-            return
+            return True
 
-        self._zones.switch_off(load.zone_slug, load.device_slug, at)
+        return self._zones.switch_off(load.zone_slug, load.device_slug, at)
 
     def restore(self, load: LoadRecord, *, was_on: bool | None, permit: Callable[[], bool]) -> bool:
         if load.zone_slug is not None or was_on is not True:

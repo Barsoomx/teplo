@@ -20,20 +20,24 @@ class ThermostatZoneSwitch:
     def init(cls) -> 'ThermostatZoneSwitch':
         return cls(stamps=ZoneRepository(), thermostats=driver_registry)
 
-    def switch_off(self, zone: str, thermostat: str, at: datetime) -> None:
-        self._switch(zone, thermostat, power=False, at=at)
+    def switch_off(self, zone: str, thermostat: str, at: datetime) -> bool:
+        return self._switch(zone, thermostat, power=False, at=at)
 
-    def switch_on(self, zone: str, thermostat: str, at: datetime) -> None:
-        self._switch(zone, thermostat, power=True, at=at)
+    def switch_on(self, zone: str, thermostat: str, at: datetime) -> bool:
+        return self._switch(zone, thermostat, power=True, at=at)
 
-    def _switch(self, zone: str, thermostat: str, *, power: bool, at: datetime) -> None:
+    def _switch(self, zone: str, thermostat: str, *, power: bool, at: datetime) -> bool:
         try:
             self._thermostats.thermostat(thermostat).set_power(power)
         finally:
-            self._stamp(zone, at)
+            stamped = self._stamped(zone, at)
+        return stamped
 
-    def _stamp(self, zone: str, at: datetime) -> None:
+    def _stamped(self, zone: str, at: datetime) -> bool:
         try:
             self._stamps.mark_commanded(zone, at)
         except OperationalError as error:
             logger.warning('zone_write_stamp_failed', zone=zone, at=at.isoformat(), error=str(error))
+            return False
+
+        return True

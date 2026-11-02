@@ -65,6 +65,14 @@ def f_switcher_without_plugs(f_zones: ZoneSwitchStub) -> LoadSwitcher:
 
 
 @pytest.fixture
+def f_switcher_whose_zone_stamps_fail(f_plug: SwitchablePlugStub) -> LoadSwitcher:
+    return LoadSwitcher(
+        plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': f_plug}),
+        zones=ZoneSwitchStub(error=None, stamped=False),
+    )
+
+
+@pytest.fixture
 def f_permit(request: pytest.FixtureRequest) -> PermitStub:
     return PermitStub(granted=request.param)
 
@@ -79,9 +87,9 @@ def test_shedding_a_plug_switches_it_off(
     f_plug: SwitchablePlugStub,
     f_zones: ZoneSwitchStub,
 ) -> None:
-    f_switcher.shed(BOILER, NOW)
+    stamped = f_switcher.shed(BOILER, NOW)
 
-    assert (f_plug.switches, f_zones.switched_off) == ([False], [])
+    assert (stamped, f_plug.switches, f_zones.switched_off) == (True, [False], [])
 
 
 def test_shedding_a_zone_switches_its_thermostat_off(
@@ -89,9 +97,22 @@ def test_shedding_a_zone_switches_its_thermostat_off(
     f_plug: SwitchablePlugStub,
     f_zones: ZoneSwitchStub,
 ) -> None:
-    f_switcher.shed(KITCHEN, NOW)
+    stamped = f_switcher.shed(KITCHEN, NOW)
 
-    assert (f_plug.switches, f_zones.switched_off) == ([], [('kitchen', 'thermostat-kitchen', NOW)])
+    assert (stamped, f_plug.switches, f_zones.switched_off) == (
+        True,
+        [],
+        [('kitchen', 'thermostat-kitchen', NOW)],
+    )
+
+
+@pytest.mark.parametrize(('load', 'expected'), [(BOILER, True), (KITCHEN, False)], ids=['plug', 'zone'])
+def test_shedding_says_whether_the_write_stamp_a_zone_needs_was_stored(
+    f_switcher_whose_zone_stamps_fail: LoadSwitcher,
+    load: LoadRecord,
+    expected: bool,
+) -> None:
+    assert f_switcher_whose_zone_stamps_fail.shed(load, NOW) is expected
 
 
 @pytest.mark.parametrize(

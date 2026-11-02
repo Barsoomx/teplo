@@ -34,6 +34,7 @@ from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, wit
 from apps.power.domain.ports import LoadStore
 from apps.power.domain.shedding import (
     Shed,
+    can_hand_back,
     choose_restore,
     choose_shed,
     new_shed,
@@ -306,10 +307,19 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             return shedding
 
         was_on = True if record.kind is LoadKind.PLUG else None
-        if live and not self._switched_off(record, now):
-            return self._shed_failed(shedding, record, load, phase=phase, reason=reason, amps=amps, now=now)
+        stamp_lost = False
+        if live:
+            try:
+                stamp_lost = not self._switcher.shed(record, now)
+            except DomainError as error:
+                return self._shed_failed(shedding, record, load, error, phase=phase, reason=reason, amps=amps, now=now)
 
-        shed = new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at)
+            logger.info('load_shed', load=record.slug, stamp_lost=stamp_lost)
+
+        shed = replace(
+            new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at),
+            stamp_lost=stamp_lost,
+        )
         self._event_store.add_event(
             _shed_event(LoadShed if live else LoadShedDryRun, record, shed, amps=amps, now=now),
         )
@@ -330,7 +340,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             tuple(
                 shed
                 for shed in shedding.sheds.values()
-                if shed.live == live and self._live_load(state.loads, shed.load) == live
+                if shed.live == live
+                and self._live_load(state.loads, shed.load) == live
+                and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
             ),
             view.loads,
             calm=calm_phases(state.phases.watches, at, thresholds, live=live),
@@ -409,27 +421,19 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         )
         return decision.granted
 
-    def _switched_off(self, record: LoadRecord, now: datetime) -> bool:
-        try:
-            self._switcher.shed(record, now)
-        except DomainError as error:
-            self._failed(record, LoadCommand.SHED, error, now, journaled=True)
-            return False
-
-        logger.info('load_shed', load=record.slug)
-        return True
-
     def _shed_failed(
         self,
         shedding: ShedState,
         record: LoadRecord,
         load: LoadStatus,
+        error: DomainError,
         *,
         phase: LoadPhase,
         reason: ShedReason,
         amps: Decimal | None,
         now: datetime,
     ) -> ShedState:
+        self._failed(record, LoadCommand.SHED, error, now, journaled=True)
         failed_at = self._clock()
         failed = replace(shedding, failed={**shedding.failed, record.slug: failed_at})
         if record.kind is not LoadKind.PLUG:
@@ -525,11 +529,13 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if awaits_reading(state, shedding, record.slug):
             return False
 
-        return (
-            record.kind is LoadKind.PLUG
-            or self._zone_writes_live(state.loads, record)
-            or elapsed(shed.at, at, MIN_WRITE_INTERVAL)
-        )
+        if record.kind is LoadKind.PLUG:
+            return True
+
+        if self._zone_writes_live(state.loads, record):
+            return can_hand_back(shed, at, MIN_WRITE_INTERVAL)
+
+        return elapsed(shed.at, at, MIN_WRITE_INTERVAL)
 
 
 def _reading(state: GuardState, slug: str) -> LoadReading | None:

@@ -24,6 +24,7 @@ class Shed:
     at: float
     settled_at: float
     restore_failed: bool = False
+    stamp_lost: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -111,6 +112,10 @@ def relief(sheds: Iterable[Shed], phase: LoadPhase, read_at: float) -> Decimal:
         (shed.amps for shed in sheds if shed.phase is phase and (not shed.live or read_at < shed.settled_at)),
         Decimal(0),
     )
+
+
+def can_hand_back(shed: Shed, at: float, write_interval: timedelta) -> bool:
+    return not shed.stamp_lost or elapsed(shed.at, at, write_interval)
 
 
 def switched_back_on(shed: Shed, reading: LoadReading | None) -> bool:

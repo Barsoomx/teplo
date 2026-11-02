@@ -164,6 +164,7 @@ class House:
     guard: Guard
     book: GuardBook
     plugs: PlugStateStore
+    thermostats: ThermostatStateStore
     loads: LoadStoreStub
     load_settings: LoadSettingsStoreStub
     boiler: SwitchablePlugStub
@@ -210,6 +211,7 @@ def _house(
     boiler_on: bool = True,
     boiler_error: DomainError | None = None,
     write_errors: tuple[Exception, ...] = (),
+    zone_stamped: bool = True,
 ) -> House:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
@@ -228,7 +230,7 @@ def _house(
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler})
-    zones = ZoneSwitchStub(error=None)
+    zones = ZoneSwitchStub(error=None, stamped=zone_stamped)
     book = GuardBook()
     return House(
         guard=Guard(
@@ -256,6 +258,7 @@ def _house(
         ),
         book=book,
         plugs=plugs,
+        thermostats=thermostats,
         loads=loads,
         load_settings=load_settings,
         boiler=boiler,
@@ -349,6 +352,20 @@ def _zone_load_off(house: House) -> None:
 
 def _plug_read_off(house: House, device: str, second: int) -> None:
     house.plugs.record_state(device, _plug(on=False, second=second))
+
+
+def _thermostat_read_off(house: House, device: str, second: int) -> None:
+    house.thermostats.record_state(
+        device,
+        ThermostatState(
+            power=False,
+            mode=ThermostatMode.HOLD,
+            setpoint=Decimal('28.0'),
+            floor_temperature=Decimal('24.5'),
+            heating=False,
+            read_at=_moment(second),
+        ),
+    )
 
 
 @pytest.fixture
@@ -480,6 +497,13 @@ def f_live_floors_house() -> House:
 def f_live_floors_house_after_a_shed(f_live_floors_house: House) -> House:
     _seconds(f_live_floors_house.guard, 4, '26.0')
     return f_live_floors_house
+
+
+@pytest.fixture
+def f_live_floors_house_after_a_shed_whose_stamp_was_lost() -> House:
+    house = _house(_live(KITCHEN, LIVING_ROOM), LIVE_CONTROL, LIVE_ZONES, zone_stamped=False)
+    _seconds(house.guard, 4, '26.0')
+    return house
 
 
 @pytest.fixture
@@ -1412,6 +1436,23 @@ def test_zone_shed_resumed_without_live_control_gets_its_thermostat_back_on_thir
         _restored_at(late, 599),
         f_restarted_house_with_a_zone_shed_twenty_minutes_ago.zones.switched_on,
     ) == ([], [(600, ('kitchen',))], [('kitchen', 'thermostat-kitchen', _moment(600))])
+
+
+def test_zone_shed_whose_write_stamp_was_lost_stays_held_until_thirty_minutes_after_the_shed(
+    f_live_floors_house_after_a_shed_whose_stamp_was_lost: House,
+) -> None:
+    calm = _seconds(f_live_floors_house_after_a_shed_whose_stamp_was_lost.guard, 300, '10.0')
+    held = f_live_floors_house_after_a_shed_whose_stamp_was_lost.book.held_zones()
+    _pause(f_live_floors_house_after_a_shed_whose_stamp_was_lost.guard, 1495)
+    _thermostat_read_off(f_live_floors_house_after_a_shed_whose_stamp_was_lost, 'thermostat-kitchen', 1799)
+    late = _seconds(f_live_floors_house_after_a_shed_whose_stamp_was_lost.guard, 6, '10.0')
+
+    assert (
+        _restored_at(calm, 5),
+        held,
+        _restored_at(late, 1800),
+        f_live_floors_house_after_a_shed_whose_stamp_was_lost.book.held_zones(),
+    ) == ([], frozenset({'kitchen'}), [(1804, ('kitchen',))], frozenset())
 
 
 def test_live_shed_the_database_fails_to_store_is_kept_and_stored_a_minute_later(

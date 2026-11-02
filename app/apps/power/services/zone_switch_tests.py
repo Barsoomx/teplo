@@ -69,13 +69,13 @@ def test_switch_powers_the_thermostat_within_the_write_budget_and_stamps_the_wri
     f_switch: ThermostatZoneSwitch,
     f_kitchen: Zone,
     f_thermostat: FloorThermostatStub,
-    switch: Callable[[ThermostatZoneSwitch, str, str, datetime], None],
+    switch: Callable[[ThermostatZoneSwitch, str, str, datetime], bool],
     commands: list[tuple[str, object]],
 ) -> None:
-    switch(f_switch, 'kitchen', 'thermostat-kitchen', NOW)
+    stamped = switch(f_switch, 'kitchen', 'thermostat-kitchen', NOW)
 
     f_kitchen.refresh_from_db()
-    assert (f_thermostat.commands, f_kitchen.last_command_at) == (commands, NOW)
+    assert (stamped, f_thermostat.commands, f_kitchen.last_command_at) == (True, commands, NOW)
 
 
 def test_failed_switch_still_spends_the_write_budget(
@@ -89,10 +89,10 @@ def test_failed_switch_still_spends_the_write_budget(
     assert f_kitchen.last_command_at == NOW
 
 
-def test_switch_reaches_the_thermostat_when_the_database_cannot_stamp_the_write(
+def test_switch_reaches_the_thermostat_and_says_so_when_the_database_cannot_stamp_the_write(
     f_switch_without_a_database: ThermostatZoneSwitch,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    f_switch_without_a_database.switch_off('kitchen', 'thermostat-kitchen', NOW)
+    stamped = f_switch_without_a_database.switch_off('kitchen', 'thermostat-kitchen', NOW)
 
-    assert f_thermostat.commands == [('power', False)]
+    assert (stamped, f_thermostat.commands) == (False, [('power', False)])
