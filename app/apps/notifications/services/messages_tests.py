@@ -56,6 +56,7 @@ def f_late_evening_outage() -> OutageContent:
         outage=Outage(
             began_at=datetime(2026, 10, 31, 20, 10, tzinfo=UTC),
             ended_at=datetime(2026, 10, 31, 20, 40, tzinfo=UTC),
+            power_cut=False,
         ),
     )
 
@@ -184,7 +185,7 @@ def test_alert_follows_the_active_language() -> None:
     ],
 )
 def test_outage_reads_as_a_local_interval(began_at: datetime, ended_at: datetime, at: datetime, expected: str) -> None:
-    assert outage_text(Outage(began_at=began_at, ended_at=ended_at), at) == expected
+    assert outage_text(Outage(began_at=began_at, ended_at=ended_at, power_cut=False), at) == expected
 
 
 @pytest.mark.usefixtures('russian')

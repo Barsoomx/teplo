@@ -13,7 +13,7 @@ from apps.notifications.services.outbox import AlertOutbox, MessageContent, aler
 
 SINCE = datetime(2026, 10, 31, 17, 24, tzinfo=UTC)
 AT = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
-OUTAGE = Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC))
+OUTAGE = Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC), power_cut=True)
 
 
 def _drain(outbox: AlertOutbox) -> None:

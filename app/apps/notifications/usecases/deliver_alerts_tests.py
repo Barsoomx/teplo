@@ -21,7 +21,9 @@ NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 SINCE = datetime(2026, 10, 31, 17, 24, tzinfo=UTC)
 KITCHEN_LOST = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
 BOILER_LOST = AlertKey(kind=AlertKind.DEVICE_LOST, subject='plug-boiler-1f')
-OUTAGE_CONTENT = OutageContent(outage=Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC)))
+OUTAGE_CONTENT = OutageContent(
+    outage=Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC), power_cut=False),
+)
 LOST_CONTENT = AlertContent(
     kind=AlertKind.DEVICE_LOST,
     transition=AlertTransition.RAISED,
