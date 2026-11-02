@@ -236,6 +236,16 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 2. Set `TEPLO_DRY_RUN=false` in `/opt/etc/teplo/teplo.env` and restart.
 3. In the admin (`/admin/climate/zone/`), tick `live control` one zone at a time and confirm on the dashboard that the thermostat setpoint follows the target.
 
+## Enable air control
+
+Air control, optimal start and the second-floor guard ship in dry-run (`docs/design.md`, section 6): an air zone with its sensor reads «По воздуху: наблюдение» on the dashboard while floor mode keeps driving its thermostat.
+
+1. Watch the journal through a few mornings: «Кухня: в режиме по воздуху включил бы обогрев …», «Кухня: в режиме по воздуху начал бы разогрев в 04:10, а не в 03:30» and «Санузел 2 этаж: защита второго этажа включила бы комфорт …» say what they would do.
+2. In the admin (`/admin/climate/zone/`), tick `air control live` one air zone at a time, on a zone that already has `live control`, and confirm that its card reads «По воздуху» and that the thermostat setpoint follows the floor limit while the room heats and the idle floor setpoint while it waits.
+3. Tick `second floor guard live` in `/admin/climate/climatesettings/`.
+
+`/admin/climate/zonelearning/` lists what each zone has learned, read-only: the early-stop offset, the dead time, the heat-up rate of each 5 °C outdoor bucket and the learned mornings. Optimal start replaces the fixed lead once a zone has 3 learned mornings. Unticking `air control live` hands the thermostat back to floor mode at the zone's next allowed write.
+
 ## Roll back
 
 ```sh
