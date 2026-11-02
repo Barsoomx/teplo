@@ -12,6 +12,7 @@ class Outage(models.Model):
         default=OutageCause.UNMARKED.value,
     )
     cause_marked_at = models.DateTimeField(null=True, blank=True)
+    boot_id = models.CharField(max_length=36, null=True, unique=True, editable=False)
 
     class Meta:
         ordering = ('-began_at', '-id')
