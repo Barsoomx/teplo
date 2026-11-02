@@ -107,7 +107,7 @@ def choose_restore(
     statuses = {load.slug: load for load in loads if load.available}
     ready = sorted(
         (shed for shed in sheds if shed.load in statuses and _calm_for(shed.phase, calm)),
-        key=lambda shed: statuses[shed.load].priority,
+        key=lambda shed: (not shed.restore_failed, statuses[shed.load].priority),
         reverse=True,
     )
     return next(

@@ -308,6 +308,28 @@ def test_restore_passes_over_a_load_whose_device_is_unavailable() -> None:
     assert restored == BOILER_SHED
 
 
+@pytest.mark.parametrize(
+    ('boiler_amps', 'expected'),
+    [(Decimal('6.0'), BOILER_SHED), (Decimal('10.5'), replace(LIVING_ROOM_SHED, restore_failed=True))],
+    ids=['another_shed_has_room', 'no_other_shed_has_room'],
+)
+def test_restore_returns_a_shed_whose_restore_failed_only_after_every_other_ready_shed(
+    boiler_amps: Decimal,
+    expected: Shed,
+) -> None:
+    restored = choose_restore(
+        [BOILER_SHED, replace(LIVING_ROOM_SHED, restore_failed=True)],
+        [replace(BOILER, shed=True, amps=boiler_amps), replace(LIVING_ROOM, shed=True)],
+        calm=ALL_CALM,
+        currents=CURRENTS,
+        last_restore_at=None,
+        at=AT,
+        thresholds=THRESHOLDS,
+    )
+
+    assert restored == expected
+
+
 def test_restore_skips_a_shed_whose_load_is_gone() -> None:
     restored = choose_restore(
         [LIVING_ROOM_SHED],

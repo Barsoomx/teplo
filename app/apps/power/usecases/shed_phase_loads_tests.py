@@ -134,6 +134,7 @@ POWER_EVENTS = (
     EvChargingStopped,
 )
 NOTHING = ShedPhaseLoadsOutputDTO(shed=(), restored=())
+PLUG_POLL_SECONDS = 30
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -257,6 +258,18 @@ def _seconds(guard: Guard, count: int, l2: str | None) -> list[ShedPhaseLoadsOut
                 guard.meter.record_current(METER, phase, Decimal(amps), now)
         guard.watch.execute(WatchPhasesInputDTO(now=now))
         outputs.append(guard.shed.execute(ShedPhaseLoadsInputDTO(now=now)))
+    return outputs
+
+
+def _polled_seconds(house: House, count: int, l2: str) -> list[ShedPhaseLoadsOutputDTO]:
+    outputs: list[ShedPhaseLoadsOutputDTO] = []
+    for _ in range(count):
+        second = int(house.guard.clock() - START) + 1
+        if second % PLUG_POLL_SECONDS == 0:
+            for record in house.loads.records:
+                if record.kind is LoadKind.PLUG:
+                    _plug_read_off(house, record.device_slug, second)
+        outputs.extend(_seconds(house.guard, 1, l2))
     return outputs
 
 
@@ -1069,7 +1082,7 @@ def test_live_shed_relieves_its_phase_until_the_meter_reads_the_phase_once_it_se
 def test_restore_that_fails_is_journaled_and_the_next_shed_goes_back_a_minute_later(
     f_house_with_an_unswitchable_shed_plug: House,
 ) -> None:
-    outputs = _seconds(f_house_with_an_unswitchable_shed_plug.guard, 181, '10.0')
+    outputs = _polled_seconds(f_house_with_an_unswitchable_shed_plug, 181, '10.0')
 
     assert (
         _restored_at(outputs, 1),
