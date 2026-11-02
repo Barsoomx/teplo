@@ -107,9 +107,10 @@ class DeviceDirectoryStub:
 
 
 class ZoneSwitchStub:
-    def __init__(self, error: DomainError | None, stamped: bool = True) -> None:
+    def __init__(self, error: DomainError | None, stamped: bool = True, on_error: DomainError | None = None) -> None:
         self._error = error
         self._stamped = stamped
+        self._on_error = on_error
         self._switched_off: list[tuple[str, str, datetime]] = []
         self._switched_on: list[tuple[str, str, datetime]] = []
 
@@ -131,6 +132,9 @@ class ZoneSwitchStub:
     def switch_on(self, zone: str, thermostat: str, at: datetime) -> bool:
         if self._error is not None:
             raise self._error
+
+        if self._on_error is not None:
+            raise self._on_error
 
         self._switched_on.append((zone, thermostat, at))
         return self._stamped

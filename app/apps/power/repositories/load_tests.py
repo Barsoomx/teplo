@@ -80,6 +80,12 @@ def kitchen_shed_while_the_meter_was_lost(f_kitchen: Load) -> Load:
 
 
 @pytest.fixture
+def kitchen_written_by_teplo(f_kitchen: Load) -> Load:
+    Zone.objects.filter(slug='kitchen').update(last_command_at=SHED_AT)
+    return f_kitchen
+
+
+@pytest.fixture
 def f_hallway_zone() -> Zone:
     return ZoneFactory.create(slug='hallway')
 
@@ -102,6 +108,11 @@ def test_all_records_list_loads_by_priority_with_the_device_each_controls() -> N
 @pytest.mark.usefixtures('f_kitchen', 'boiler', 'hallway_under_live_control', 'zone_under_live_control_without_a_load')
 def test_live_zone_slugs_are_the_zones_of_loads_under_live_control() -> None:
     assert LoadRepository.live_zone_slugs() == frozenset({'hallway'})
+
+
+@pytest.mark.usefixtures('kitchen_written_by_teplo')
+def test_record_of_a_zone_carries_the_last_write_stamp_of_its_zone() -> None:
+    assert LoadRepository.all_records() == [replace(KITCHEN, last_command_at=SHED_AT)]
 
 
 @pytest.mark.usefixtures('boiler')

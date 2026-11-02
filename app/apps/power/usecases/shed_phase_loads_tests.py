@@ -214,6 +214,7 @@ def _house(
     lookup_errors: dict[str, Exception] | None = None,
     write_errors: tuple[Exception, ...] = (),
     zone_stamped: bool = True,
+    zone_on_error: DomainError | None = None,
 ) -> House:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
@@ -232,7 +233,7 @@ def _house(
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
-    zones = ZoneSwitchStub(error=None, stamped=zone_stamped)
+    zones = ZoneSwitchStub(error=None, stamped=zone_stamped, on_error=zone_on_error)
     book = GuardBook()
     return House(
         guard=Guard(
@@ -473,6 +474,38 @@ def f_restarted_house_with_a_live_zone_shed_ten_minutes_ago() -> House:
         [replace(KITCHEN, live=True, shed=replace(STORED_SHED, at=NOW - timedelta(minutes=10), was_on=None))],
         LIVE_CONTROL,
         LIVE_ZONES,
+    )
+
+
+@pytest.fixture
+def f_zone_release_that_failed() -> House:
+    house = _house(
+        _live(KITCHEN, LIVING_ROOM),
+        LIVE_CONTROL,
+        LIVE_ZONES,
+        zone_on_error=DeviceUnavailableError('timed out'),
+    )
+    _seconds(house.guard, 4, '26.0')
+    _zone_live_control_off(house)
+    _seconds(house.guard, 57, '15.0')
+    _pause(house.guard, 1740)
+    _seconds(house.guard, 3, '15.0')
+    return house
+
+
+@pytest.fixture
+def f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago() -> House:
+    return _house(
+        [
+            replace(
+                KITCHEN,
+                live=True,
+                shed=replace(STORED_SHED, at=NOW - timedelta(minutes=40), was_on=None),
+                last_command_at=NOW - timedelta(minutes=10),
+            ),
+        ],
+        LIVE_CONTROL,
+        frozenset(),
     )
 
 
@@ -1595,6 +1628,56 @@ def test_zone_shed_resumed_without_live_control_gets_its_thermostat_back_on_thir
         _restored_at(late, 599),
         f_restarted_house_with_a_zone_shed_twenty_minutes_ago.zones.switched_on,
     ) == ([], [(600, ('kitchen',))], [('kitchen', 'thermostat-kitchen', _moment(600))])
+
+
+def test_zone_release_that_failed_is_tried_again_only_thirty_minutes_after_the_attempt(
+    f_zone_release_that_failed: House,
+) -> None:
+    _pause(f_zone_release_that_failed.guard, 29)
+    _thermostat_read_off(f_zone_release_that_failed, 'thermostat-kitchen', 1833)
+    soon = _seconds(f_zone_release_that_failed.guard, 60, '15.0')
+    failed_soon = _failed_commands(f_zone_release_that_failed)
+    _pause(f_zone_release_that_failed.guard, 1700)
+    _thermostat_read_off(f_zone_release_that_failed, 'thermostat-kitchen', 3593)
+    late = _seconds(f_zone_release_that_failed.guard, 15, '15.0')
+
+    assert (
+        _restored_at(soon, 1834),
+        failed_soon,
+        _restored_at(late, 3594),
+        _failed_commands(f_zone_release_that_failed),
+        f_zone_release_that_failed.events[2:],
+    ) == (
+        [],
+        {'kitchen': START + 1804},
+        [],
+        {'kitchen': START + 3604},
+        [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('15.0'), occurred_at=_moment(1802)),
+            LoadCommandFailed(
+                load='kitchen',
+                name='Кухня',
+                command=LoadCommand.RESTORE,
+                error='timed out',
+                error_code='device_unavailable',
+                occurred_at=_moment(1804),
+            ),
+        ],
+    )
+
+
+def test_zone_release_after_a_restart_waits_thirty_minutes_after_the_zones_last_write_stamp(
+    f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago: House,
+) -> None:
+    early = _seconds(f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.guard, 1, '10.0')
+    _pause(f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.guard, 1197)
+    late = _seconds(f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.guard, 3, '10.0')
+
+    assert (
+        _restored_at(early, 1),
+        _restored_at(late, 1199),
+        f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.zones.switched_on,
+    ) == ([], [(1200, ('kitchen',))], [('kitchen', 'thermostat-kitchen', _moment(1200))])
 
 
 def test_zone_shed_whose_write_stamp_was_lost_stays_held_until_thirty_minutes_after_the_shed(

@@ -8,7 +8,7 @@ import structlog
 from django.conf import settings
 from django.db import OperationalError
 
-from apps.climate.domain.write_guard import MIN_WRITE_INTERVAL
+from apps.climate.domain.write_guard import MIN_WRITE_INTERVAL, write_allowed
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
@@ -200,7 +200,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     ) -> ShedState:
         switched_on = False
         if shed.live:
-            if not self._release_due(state, shedding, record, shed, at):
+            if not self._release_due(state, shedding, record, shed, at, now):
                 return shedding
 
             try:
@@ -570,7 +570,15 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     def _zone_writes_live(self, loads: GuardLoads, record: LoadRecord) -> bool:
         return not self._dry_run and record.zone_slug in loads.live_zones
 
-    def _release_due(self, state: GuardState, shedding: ShedState, record: LoadRecord, shed: Shed, at: float) -> bool:
+    def _release_due(
+        self,
+        state: GuardState,
+        shedding: ShedState,
+        record: LoadRecord,
+        shed: Shed,
+        at: float,
+        now: datetime,
+    ) -> bool:
         if awaits_reading(state, shedding, record.slug):
             return False
 
@@ -580,7 +588,11 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if self._zone_writes_live(state.loads, record):
             return can_hand_back(shed, at, MIN_WRITE_INTERVAL)
 
-        return elapsed(shed.at, at, MIN_WRITE_INTERVAL)
+        return (
+            elapsed(shed.at, at, MIN_WRITE_INTERVAL)
+            and elapsed(shedding.failed.get(record.slug), at, MIN_WRITE_INTERVAL)
+            and write_allowed(record.last_command_at, now)
+        )
 
 
 def _reading(state: GuardState, slug: str) -> LoadReading | None:

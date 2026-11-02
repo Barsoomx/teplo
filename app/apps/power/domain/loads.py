@@ -68,6 +68,7 @@ class LoadRecord:
     learned: LearnedPhase | None
     live: bool
     shed: LiveShed | None
+    last_command_at: datetime | None = None
 
     @property
     def effective_phase(self) -> LoadPhase:

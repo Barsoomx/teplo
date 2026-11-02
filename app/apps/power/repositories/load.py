@@ -51,6 +51,7 @@ def _to_record(load: Load) -> LoadRecord | None:
         learned=_learned(load),
         live=load.live,
         shed=_shed(load),
+        last_command_at=None if load.zone is None else load.zone.last_command_at,
     )
 
 
