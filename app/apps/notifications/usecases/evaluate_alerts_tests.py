@@ -60,7 +60,12 @@ RESTART_NOTE = StartupNote(
 POWER_CUT_NOTE = StartupNote(
     last_activity=NOW - timedelta(minutes=2),
     monotonic=NOTICED,
-    router_uptime=timedelta(minutes=2),
+    router_uptime=timedelta(minutes=1),
+)
+RESTART_AFTER_BOOT_NOTE = StartupNote(
+    last_activity=NOW - timedelta(seconds=30),
+    monotonic=NOTICED,
+    router_uptime=timedelta(minutes=7),
 )
 
 
@@ -157,6 +162,13 @@ def f_power_cut_book() -> AlertBook:
 
 
 @pytest.fixture
+def restarted_after_boot_book() -> AlertBook:
+    book = AlertBook()
+    book.note_startup(RESTART_AFTER_BOOT_NOTE)
+    return book
+
+
+@pytest.fixture
 def f_lost_use_case(
     f_noticed_book: AlertBook,
     f_zones: ZoneSourceStub,
@@ -201,6 +213,14 @@ def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatc
 @pytest.fixture
 def f_power_cut_use_case(f_power_cut_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return _use_case([], ZoneSourceStub(zones=[]), f_power_cut_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_restarted_after_boot_use_case(
+    restarted_after_boot_book: AlertBook,
+    f_dispatcher: EventDispatcher,
+) -> EvaluateAlertsUseCase:
+    return _use_case([], ZoneSourceStub(zones=[]), restarted_after_boot_book, f_dispatcher)
 
 
 @pytest.fixture
@@ -410,3 +430,12 @@ def test_power_cut_is_reported_even_after_a_gap_under_three_minutes(
         outage,
         [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
     )
+
+
+def test_restart_soon_after_a_boot_is_no_power_cut_once_teplo_was_active_since_the_boot(
+    f_restarted_after_boot_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_restarted_after_boot_use_case.execute(_input(timedelta(minutes=1)))
+
+    assert (output.outage, f_events) == (None, [])

@@ -29,15 +29,13 @@ def test_startup_is_noted_for_the_outage_check(f_use_case: NoteStartupUseCase, f
     assert (output, f_book.startup()) == (NoteStartupOutputDTO(note=NOTE), NOTE)
 
 
-def test_startup_carries_the_router_uptime_into_the_note(f_use_case: NoteStartupUseCase) -> None:
+@pytest.mark.parametrize('router_uptime', [ROUTER_UPTIME, None], ids=['uptime_read', 'uptime_unreadable'])
+def test_startup_carries_the_router_uptime_into_the_note(
+    f_use_case: NoteStartupUseCase,
+    router_uptime: timedelta | None,
+) -> None:
     output = f_use_case.execute(
-        NoteStartupInputDTO(last_activity=LAST_ACTIVITY, monotonic=12.5, router_uptime=ROUTER_UPTIME),
+        NoteStartupInputDTO(last_activity=LAST_ACTIVITY, monotonic=12.5, router_uptime=router_uptime),
     )
 
-    assert (output.note.router_uptime, output.note.follows_power_cut) == (ROUTER_UPTIME, True)
-
-
-def test_startup_without_a_readable_uptime_follows_no_power_cut(f_use_case: NoteStartupUseCase) -> None:
-    output = f_use_case.execute(NoteStartupInputDTO(last_activity=LAST_ACTIVITY, monotonic=12.5, router_uptime=None))
-
-    assert (output.note.router_uptime, output.note.follows_power_cut) == (None, False)
+    assert output.note == StartupNote(last_activity=LAST_ACTIVITY, monotonic=12.5, router_uptime=router_uptime)

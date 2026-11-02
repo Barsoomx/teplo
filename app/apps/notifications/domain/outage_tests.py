@@ -7,7 +7,9 @@ from apps.notifications.domain.outage import Outage, StartupNote, detect_outage,
 STARTED_AT = datetime(2026, 10, 31, 17, 33, tzinfo=UTC)
 STARTED = 50.0
 ROUTER_UP_FOR_DAYS = timedelta(days=3)
-ROUTER_JUST_BOOTED = timedelta(minutes=2)
+ROUTER_JUST_BOOTED = timedelta(minutes=1)
+ROUTER_UP_FOR_SEVEN_MINUTES = timedelta(minutes=7)
+ROUTER_CAME_UP_AT = STARTED_AT - ROUTER_UP_FOR_SEVEN_MINUTES
 
 
 @pytest.mark.parametrize(
@@ -70,9 +72,53 @@ def test_start_follows_a_power_cut_only_when_the_router_came_up_under_ten_minute
     router_uptime: timedelta | None,
     power_cut: bool,
 ) -> None:
-    note = StartupNote(last_activity=STARTED_AT, monotonic=STARTED, router_uptime=router_uptime)
+    note = StartupNote(
+        last_activity=STARTED_AT - timedelta(minutes=30),
+        monotonic=STARTED,
+        router_uptime=router_uptime,
+    )
 
-    assert note.follows_power_cut is power_cut
+    outage = detect_outage(note, STARTED_AT, STARTED)
+
+    assert outage == Outage(began_at=STARTED_AT - timedelta(minutes=30), ended_at=STARTED_AT, power_cut=power_cut)
+
+
+@pytest.mark.parametrize(
+    ('last_activity', 'outage'),
+    [
+        (
+            ROUTER_CAME_UP_AT - timedelta(minutes=13),
+            Outage(began_at=ROUTER_CAME_UP_AT - timedelta(minutes=13), ended_at=STARTED_AT, power_cut=True),
+        ),
+        (
+            ROUTER_CAME_UP_AT - timedelta(seconds=1),
+            Outage(began_at=ROUTER_CAME_UP_AT - timedelta(seconds=1), ended_at=STARTED_AT, power_cut=True),
+        ),
+        (
+            ROUTER_CAME_UP_AT,
+            Outage(began_at=ROUTER_CAME_UP_AT, ended_at=STARTED_AT, power_cut=False),
+        ),
+        (
+            STARTED_AT - timedelta(minutes=4),
+            Outage(began_at=STARTED_AT - timedelta(minutes=4), ended_at=STARTED_AT, power_cut=False),
+        ),
+        (STARTED_AT - timedelta(seconds=30), None),
+    ],
+    ids=[
+        'last_active_before_the_boot',
+        'last_active_just_before_the_boot',
+        'last_active_as_the_router_came_up',
+        'restart_after_a_long_gap',
+        'restart_after_a_short_gap',
+    ],
+)
+def test_start_soon_after_a_boot_follows_a_power_cut_only_when_teplo_was_last_active_before_the_boot(
+    last_activity: datetime,
+    outage: Outage | None,
+) -> None:
+    note = StartupNote(last_activity=last_activity, monotonic=STARTED, router_uptime=ROUTER_UP_FOR_SEVEN_MINUTES)
+
+    assert detect_outage(note, STARTED_AT + timedelta(minutes=2), STARTED + 120) == outage
 
 
 def test_power_cut_is_reported_however_short_the_gap() -> None:
