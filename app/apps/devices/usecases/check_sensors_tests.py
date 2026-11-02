@@ -72,7 +72,7 @@ def f_use_case(
 
 
 @pytest.fixture
-def f_reported_use_case(
+def reported_use_case(
     f_use_case: CheckSensorsUseCase,
     f_events: list[DomainEvent],
 ) -> CheckSensorsUseCase:
@@ -83,28 +83,28 @@ def f_reported_use_case(
 
 @pytest.fixture
 def f_silent_use_case(
-    f_reported_use_case: CheckSensorsUseCase,
+    reported_use_case: CheckSensorsUseCase,
     temperature_store: TemperatureStateStore,
     clock: MonotonicClockStub,
 ) -> CheckSensorsUseCase:
     temperature_store.record_failure('air-kitchen', error_code='device_unavailable', error='the node went offline')
     clock.advance(10 * 60 + 1)
-    return f_reported_use_case
+    return reported_use_case
 
 
 @pytest.fixture
-def f_stale_use_case(f_reported_use_case: CheckSensorsUseCase, clock: MonotonicClockStub) -> CheckSensorsUseCase:
+def f_stale_use_case(reported_use_case: CheckSensorsUseCase, clock: MonotonicClockStub) -> CheckSensorsUseCase:
     clock.advance(30)
-    return f_reported_use_case
+    return reported_use_case
 
 
 @pytest.fixture
 def f_heard_again_use_case(
-    f_reported_use_case: CheckSensorsUseCase,
+    reported_use_case: CheckSensorsUseCase,
     temperature_store: TemperatureStateStore,
 ) -> CheckSensorsUseCase:
     temperature_store.record_state('outdoor', READING)
-    return f_reported_use_case
+    return reported_use_case
 
 
 def test_first_check_reports_every_sensor_once(f_use_case: CheckSensorsUseCase, f_events: list[DomainEvent]) -> None:
