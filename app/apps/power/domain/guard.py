@@ -175,6 +175,10 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
     )
 
 
+def awaits_reading(state: GuardState, shedding: ShedState, slug: str) -> bool:
+    return slug in shedding.failed and _usable(state.readings.get(slug), shedding.failed[slug]) is None
+
+
 def _shed_in_view(shed: Shed | None, *, live: bool) -> bool:
     return shed is not None and in_view(shed, live=live)
 

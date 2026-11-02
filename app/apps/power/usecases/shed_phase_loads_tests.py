@@ -111,6 +111,7 @@ BATHROOM = replace(
     phase=LoadPhase.UNKNOWN,
     nominal_amps=None,
 )
+BOILER_2F = replace(BOILER, slug='boiler-2f', name='Бойлер 2 этаж', device_slug='plug-boiler-2f', priority=2)
 LIVE_ZONES = frozenset({'kitchen', 'living-room', 'bathroom-1f'})
 STORED_SHED = LiveShed(
     at=NOW - timedelta(hours=1),
@@ -269,6 +270,22 @@ def _overload(second: int, amps: str) -> PhaseOverloaded:
     return PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal(amps), occurred_at=_moment(second))
 
 
+def _unswitchable_restore(second: int) -> LoadCommandFailed:
+    return LoadCommandFailed(
+        load='boiler-2f',
+        name='Бойлер 2 этаж',
+        command=LoadCommand.RESTORE,
+        error='plug plug-boiler-2f cannot be switched: no switching driver',
+        error_code='plug_not_switchable',
+        occurred_at=_moment(second),
+    )
+
+
+def _failed_commands(house: House) -> dict[str, float]:
+    state = house.book.state()
+    return {} if state is None else dict(state.shedding.failed)
+
+
 def _load_off(house: House) -> None:
     house.loads.edit([replace(record, live=False) for record in house.loads.records], frozenset())
 
@@ -279,6 +296,10 @@ def _load_management_off(house: House) -> None:
 
 def _load_on(house: House) -> None:
     house.loads.edit([replace(record, live=True) for record in house.loads.records], frozenset())
+
+
+def _plug_read_off(house: House, device: str, second: int) -> None:
+    house.plugs.record_state(device, _plug(on=False, second=second))
 
 
 @pytest.fixture
@@ -384,6 +405,48 @@ def f_mixed_house_after_an_overload() -> House:
 @pytest.fixture
 def f_mixed_floors_house(request: pytest.FixtureRequest) -> House:
     return _house(request.param, LIVE_CONTROL, LIVE_ZONES)
+
+
+@pytest.fixture
+def f_house_with_an_unswitchable_shed_plug() -> House:
+    return _house(
+        [replace(BOILER, live=True, shed=STORED_SHED), replace(BOILER_2F, live=True, shed=STORED_SHED)],
+        LIVE_CONTROL,
+        frozenset(),
+        boiler_on=False,
+    )
+
+
+@pytest.fixture
+def f_house_with_an_unreachable_shed_plug() -> House:
+    return _house(
+        [replace(BOILER, live=True, shed=STORED_SHED)],
+        LIVE_CONTROL,
+        frozenset(),
+        boiler_on=False,
+        boiler_error=DeviceUnavailableError('timed out'),
+    )
+
+
+@pytest.fixture
+def unswitchable_shed_plug_house() -> House:
+    return _house([replace(BOILER_2F, live=True, shed=STORED_SHED)], LIVE_CONTROL, frozenset(), boiler_on=False)
+
+
+@pytest.fixture
+def f_unswitchable_plug_after_a_failed_restore(unswitchable_shed_plug_house: House) -> House:
+    _seconds(unswitchable_shed_plug_house.guard, 150, '10.0')
+    _plug_read_off(unswitchable_shed_plug_house, 'plug-boiler-2f', 150)
+    return unswitchable_shed_plug_house
+
+
+@pytest.fixture
+def f_unswitchable_plug_after_a_failed_release(unswitchable_shed_plug_house: House) -> House:
+    _seconds(unswitchable_shed_plug_house.guard, 1, '10.0')
+    _load_off(unswitchable_shed_plug_house)
+    _seconds(unswitchable_shed_plug_house.guard, 119, '10.0')
+    _plug_read_off(unswitchable_shed_plug_house, 'plug-boiler-2f', 120)
+    return unswitchable_shed_plug_house
 
 
 @pytest.fixture
@@ -970,6 +1033,85 @@ def test_live_shed_relieves_its_phase_until_the_meter_reads_the_phase_once_it_se
         [],
         [('kitchen', 'thermostat-kitchen', _moment(5))],
     )
+
+
+def test_restore_that_fails_is_journaled_and_the_next_shed_goes_back_a_minute_later(
+    f_house_with_an_unswitchable_shed_plug: House,
+) -> None:
+    outputs = _seconds(f_house_with_an_unswitchable_shed_plug.guard, 181, '10.0')
+
+    assert (
+        _restored_at(outputs, 1),
+        f_house_with_an_unswitchable_shed_plug.boiler.switches,
+        f_house_with_an_unswitchable_shed_plug.book.last_permit_at(),
+        f_house_with_an_unswitchable_shed_plug.events,
+    ) == (
+        [(181, ('boiler-1f',))],
+        [True],
+        START + 181,
+        [
+            _unswitchable_restore(121),
+            LoadRestored(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('10.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                occurred_at=_moment(181),
+            ),
+        ],
+    )
+
+
+def test_restore_of_an_unreachable_plug_is_tried_once_until_the_plug_is_read_again(
+    f_house_with_an_unreachable_shed_plug: House,
+) -> None:
+    _seconds(f_house_with_an_unreachable_shed_plug.guard, 300, '10.0')
+
+    assert (
+        f_house_with_an_unreachable_shed_plug.events,
+        f_house_with_an_unreachable_shed_plug.book.last_permit_at(),
+        _failed_commands(f_house_with_an_unreachable_shed_plug),
+    ) == (
+        [
+            LoadCommandFailed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                command=LoadCommand.RESTORE,
+                error='timed out',
+                error_code='device_unavailable',
+                occurred_at=_moment(121),
+            ),
+        ],
+        START + 121,
+        {'boiler-1f': START + 121},
+    )
+
+
+def test_restore_that_keeps_failing_is_tried_after_each_reading_and_journaled_once_a_shed(
+    f_unswitchable_plug_after_a_failed_restore: House,
+) -> None:
+    _seconds(f_unswitchable_plug_after_a_failed_restore.guard, 40, '10.0')
+
+    assert (
+        f_unswitchable_plug_after_a_failed_restore.events,
+        _failed_commands(f_unswitchable_plug_after_a_failed_restore),
+        f_unswitchable_plug_after_a_failed_restore.book.last_permit_at(),
+    ) == ([_unswitchable_restore(121)], {'boiler-2f': START + 181}, None)
+
+
+def test_release_that_fails_is_tried_again_only_once_the_plug_is_read_again(
+    f_unswitchable_plug_after_a_failed_release: House,
+) -> None:
+    _seconds(f_unswitchable_plug_after_a_failed_release.guard, 10, '10.0')
+
+    assert (
+        f_unswitchable_plug_after_a_failed_release.events,
+        _failed_commands(f_unswitchable_plug_after_a_failed_release),
+    ) == ([_unswitchable_restore(61)], {'boiler-2f': START + 121})
 
 
 @pytest.mark.django_db

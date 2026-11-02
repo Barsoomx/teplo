@@ -10,6 +10,7 @@ from apps.power.domain.guard import (
     GuardState,
     SeenReading,
     ShedState,
+    awaits_reading,
     follow_samples,
     guard_view,
     load_statuses,
@@ -205,6 +206,19 @@ def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it() -> No
         LoadPhase.L2: PhaseAmps(measured=Decimal('26.0'), live=Decimal('18.0'), dry_run=Decimal('12.0')),
         LoadPhase.L3: PhaseAmps(measured=Decimal('4.0'), live=Decimal('4.0'), dry_run=Decimal('4.0')),
     }
+
+
+@pytest.mark.parametrize(
+    ('failed', 'expected'),
+    [({}, False), ({'boiler-1f': AT - 20}, True), ({'boiler-1f': AT - 30}, False)],
+    ids=['no_failed_command', 'no_reading_since_the_failed_command', 'read_again_after_the_failed_command'],
+)
+def test_load_awaits_a_reading_after_a_failed_command(
+    f_state_with_a_live_and_a_dry_run_shed: GuardState,
+    failed: dict[str, float],
+    expected: bool,
+) -> None:
+    assert awaits_reading(f_state_with_a_live_and_a_dry_run_shed, ShedState(failed=failed), 'boiler-1f') is expected
 
 
 @pytest.mark.parametrize(

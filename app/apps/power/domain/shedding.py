@@ -23,6 +23,7 @@ class Shed:
     was_on: bool | None
     at: float
     settled_at: float
+    restore_failed: bool = False
 
 
 def new_shed(
@@ -103,7 +104,7 @@ def choose_restore(
     if not elapsed(last_restore_at, at, thresholds.restore_interval):
         return None
 
-    statuses = {load.slug: load for load in loads}
+    statuses = {load.slug: load for load in loads if load.available}
     ready = sorted(
         (shed for shed in sheds if shed.load in statuses and _calm_for(shed.phase, calm)),
         key=lambda shed: statuses[shed.load].priority,

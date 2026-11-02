@@ -294,6 +294,20 @@ def test_restore_of_a_load_of_unknown_phase_needs_room_on_every_phase(amps: Deci
     assert restored == expected
 
 
+def test_restore_passes_over_a_load_whose_device_is_unavailable() -> None:
+    restored = choose_restore(
+        [BOILER_SHED, LIVING_ROOM_SHED],
+        [replace(BOILER, shed=True), replace(LIVING_ROOM, shed=True, available=False, drawing=False)],
+        calm=ALL_CALM,
+        currents=CURRENTS,
+        last_restore_at=None,
+        at=AT,
+        thresholds=THRESHOLDS,
+    )
+
+    assert restored == BOILER_SHED
+
+
 def test_restore_skips_a_shed_whose_load_is_gone() -> None:
     restored = choose_restore(
         [LIVING_ROOM_SHED],

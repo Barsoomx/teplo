@@ -106,3 +106,17 @@ class ZoneShutoffStub:
             raise self._error
 
         self._switched_off.append((zone, thermostat, at))
+
+
+class PermitStub:
+    def __init__(self, granted: bool) -> None:
+        self._granted = granted
+        self._asked = 0
+
+    @property
+    def asked(self) -> int:
+        return self._asked
+
+    def __call__(self) -> bool:
+        self._asked += 1
+        return self._granted

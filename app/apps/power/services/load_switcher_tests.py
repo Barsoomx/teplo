@@ -9,7 +9,7 @@ from apps.devices.domain.readings import PlugState
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
 from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord
 from apps.power.services.load_switcher import LoadSwitcher
-from apps.power.stubs import ZoneShutoffStub
+from apps.power.stubs import PermitStub, ZoneShutoffStub
 
 NOW = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 BOILER = LoadRecord(
@@ -59,6 +59,21 @@ def f_switcher(f_plug: SwitchablePlugStub, f_zones: ZoneShutoffStub) -> LoadSwit
     return LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': f_plug}), zones=f_zones)
 
 
+@pytest.fixture
+def f_switcher_without_plugs(f_zones: ZoneShutoffStub) -> LoadSwitcher:
+    return LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=f_zones)
+
+
+@pytest.fixture
+def f_permit(request: pytest.FixtureRequest) -> PermitStub:
+    return PermitStub(granted=request.param)
+
+
+@pytest.fixture
+def f_granted_permit() -> PermitStub:
+    return PermitStub(granted=True)
+
+
 def test_shedding_a_plug_switches_it_off(
     f_switcher: LoadSwitcher,
     f_plug: SwitchablePlugStub,
@@ -80,11 +95,52 @@ def test_shedding_a_zone_switches_its_thermostat_off(
 
 
 @pytest.mark.parametrize(
+    ('f_permit', 'restored', 'switches'),
+    [(True, True, [True]), (False, False, [])],
+    ids=['permit_granted', 'permit_refused'],
+    indirect=['f_permit'],
+)
+def test_restoring_a_plug_teplo_switched_off_switches_it_on_with_a_permit(
+    f_switcher: LoadSwitcher,
+    f_plug: SwitchablePlugStub,
+    f_permit: PermitStub,
+    restored: bool,
+    switches: list[bool],
+) -> None:
+    outcome = f_switcher.restore(BOILER, was_on=True, permit=f_permit)
+
+    assert (outcome, f_plug.switches, f_permit.asked) == (restored, switches, 1)
+
+
+@pytest.mark.parametrize('load', [BOILER, KITCHEN], ids=['plug_teplo_did_not_switch_off', 'zone'])
+def test_restoring_switches_nothing_and_asks_no_permit_but_for_a_plug_teplo_switched_off(
+    f_switcher: LoadSwitcher,
+    f_plug: SwitchablePlugStub,
+    f_zones: ZoneShutoffStub,
+    f_granted_permit: PermitStub,
+    load: LoadRecord,
+) -> None:
+    outcome = f_switcher.restore(load, was_on=None, permit=f_granted_permit)
+
+    assert (outcome, f_plug.switches, f_zones.switched_off, f_granted_permit.asked) == (True, [], [], 0)
+
+
+def test_restoring_a_plug_without_a_switching_driver_fails_before_asking_a_permit(
+    f_switcher_without_plugs: LoadSwitcher,
+    f_granted_permit: PermitStub,
+) -> None:
+    with pytest.raises(PlugNotSwitchableError):
+        f_switcher_without_plugs.restore(BOILER, was_on=True, permit=f_granted_permit)
+
+    assert f_granted_permit.asked == 0
+
+
+@pytest.mark.parametrize(
     ('load', 'was_on', 'switches'),
     [(BOILER, True, [True]), (BOILER, None, []), (KITCHEN, None, [])],
     ids=['plug_teplo_switched_off', 'plug_teplo_did_not_switch_off', 'zone'],
 )
-def test_restoring_switches_on_only_a_plug_teplo_switched_off(
+def test_releasing_switches_on_only_a_plug_teplo_switched_off(
     f_switcher: LoadSwitcher,
     f_plug: SwitchablePlugStub,
     f_zones: ZoneShutoffStub,
@@ -92,13 +148,11 @@ def test_restoring_switches_on_only_a_plug_teplo_switched_off(
     was_on: bool | None,
     switches: list[bool],
 ) -> None:
-    f_switcher.restore(load, was_on=was_on)
+    f_switcher.release(load, was_on=was_on)
 
     assert (f_plug.switches, f_zones.switched_off) == (switches, [])
 
 
-def test_plug_without_a_switching_driver_fails_the_shed(f_zones: ZoneShutoffStub) -> None:
-    switcher = LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=f_zones)
-
+def test_plug_without_a_switching_driver_fails_the_shed(f_switcher_without_plugs: LoadSwitcher) -> None:
     with pytest.raises(PlugNotSwitchableError):
-        switcher.shed(BOILER, NOW)
+        f_switcher_without_plugs.shed(BOILER, NOW)

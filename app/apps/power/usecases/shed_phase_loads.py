@@ -23,7 +23,7 @@ from apps.power.domain.events import (
     LoadShedOverridden,
     RestoreCause,
 )
-from apps.power.domain.guard import GuardLoads, GuardState, ShedState, guard_view
+from apps.power.domain.guard import GuardLoads, GuardState, ShedState, awaits_reading, guard_view
 from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition, limp_sheds, meter_condition
@@ -160,12 +160,15 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         now: datetime,
     ) -> ShedState:
         if shed.live:
-            if not elapsed(shedding.failed.get(record.slug), at, state.loads.control.thresholds.restore_interval):
+            if awaits_reading(state, shedding, record.slug):
                 return shedding
 
-            if not self._switched_on(record, shed, now):
-                return replace(shedding, failed={**shedding.failed, record.slug: at})
+            try:
+                self._switcher.release(record, was_on=shed.was_on)
+            except DomainError as error:
+                return self._restore_failed(shedding, record, shed, error, at, now)
 
+            logger.info('load_released', load=record.slug)
             self._loads.clear_shed(record.slug)
         self._event_store.add_event(
             _restore_event(
@@ -296,15 +299,23 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             return shedding
 
         load = next(status for status in view.loads if status.slug == record.slug)
-        if record.kind is LoadKind.PLUG and not self._may_start(load, view, live, at, thresholds):
+        restored = shedding.with_times(replace(times, last_restore_at=at), live=live)
+        if live:
+            try:
+                if not self._switcher.restore(
+                    record,
+                    was_on=shed.was_on,
+                    permit=lambda: self._permitted(load, view, at, thresholds),
+                ):
+                    return shedding
+            except DomainError as error:
+                return self._restore_failed(restored, record, shed, error, at, now)
+
+            logger.info('load_restored', load=record.slug)
+            self._loads.clear_shed(record.slug)
+        elif record.kind is LoadKind.PLUG and not self._would_start(load, view, at, thresholds):
             return shedding
 
-        restored = shedding.with_times(replace(times, last_restore_at=at), live=live)
-        if live and not self._switched_on(record, shed, now):
-            return restored
-
-        if live:
-            self._loads.clear_shed(record.slug)
         self._event_store.add_event(
             _restore_event(
                 LoadRestored if live else LoadRestoredDryRun,
@@ -331,24 +342,17 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             if status.slug not in shedding.overridden and self._live_load(state.loads, status.slug) == live
         ]
 
-    def _may_start(
-        self,
-        load: LoadStatus,
-        view: GuardView,
-        live: bool,
-        at: float,
-        thresholds: PhaseThresholds,
-    ) -> bool:
-        if live:
-            decision = self._book.permit_start(
-                load,
-                meter=MeterCondition.FRESH,
-                view=view,
-                at=at,
-                thresholds=thresholds,
-            )
-            return decision.granted
+    def _permitted(self, load: LoadStatus, view: GuardView, at: float, thresholds: PhaseThresholds) -> bool:
+        decision = self._book.permit_start(
+            load,
+            meter=MeterCondition.FRESH,
+            view=view,
+            at=at,
+            thresholds=thresholds,
+        )
+        return decision.granted
 
+    def _would_start(self, load: LoadStatus, view: GuardView, at: float, thresholds: PhaseThresholds) -> bool:
         decision = decide_start(
             load,
             meter=MeterCondition.FRESH,
@@ -363,23 +367,37 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         try:
             self._switcher.shed(record, now)
         except DomainError as error:
-            self._failed(record, LoadCommand.SHED, error, now)
+            self._failed(record, LoadCommand.SHED, error, now, journaled=True)
             return False
 
         logger.info('load_shed', load=record.slug)
         return True
 
-    def _switched_on(self, record: LoadRecord, shed: Shed, now: datetime) -> bool:
-        try:
-            self._switcher.restore(record, was_on=shed.was_on)
-        except DomainError as error:
-            self._failed(record, LoadCommand.RESTORE, error, now)
-            return False
+    def _restore_failed(
+        self,
+        shedding: ShedState,
+        record: LoadRecord,
+        shed: Shed,
+        error: DomainError,
+        at: float,
+        now: datetime,
+    ) -> ShedState:
+        self._failed(record, LoadCommand.RESTORE, error, now, journaled=not shed.restore_failed)
+        return replace(
+            shedding,
+            sheds={**shedding.sheds, record.slug: replace(shed, restore_failed=True)},
+            failed={**shedding.failed, record.slug: at},
+        )
 
-        logger.info('load_restored', load=record.slug)
-        return True
-
-    def _failed(self, record: LoadRecord, command: LoadCommand, error: DomainError, now: datetime) -> None:
+    def _failed(
+        self,
+        record: LoadRecord,
+        command: LoadCommand,
+        error: DomainError,
+        now: datetime,
+        *,
+        journaled: bool,
+    ) -> None:
         logger.warning(
             'load_command_failed',
             load=record.slug,
@@ -388,6 +406,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             error_code=error.error_code,
             detail=error.detail,
         )
+        if not journaled:
+            return
+
         self._event_store.add_event(
             LoadCommandFailed(
                 load=record.slug,

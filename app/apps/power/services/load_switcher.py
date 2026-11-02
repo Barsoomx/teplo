@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime
 
 from apps.devices.domain.capabilities import SwitchablePlugProvider
@@ -23,6 +24,17 @@ class LoadSwitcher:
 
         self._zones.switch_off(load.zone_slug, load.device_slug, at)
 
-    def restore(self, load: LoadRecord, *, was_on: bool | None) -> None:
+    def restore(self, load: LoadRecord, *, was_on: bool | None, permit: Callable[[], bool]) -> bool:
+        if load.zone_slug is not None or was_on is not True:
+            return True
+
+        plug = self._plugs.switchable_plug(load.device_slug)
+        if not permit():
+            return False
+
+        plug.set_on(True)
+        return True
+
+    def release(self, load: LoadRecord, *, was_on: bool | None) -> None:
         if load.zone_slug is None and was_on is True:
             self._plugs.switchable_plug(load.device_slug).set_on(True)
