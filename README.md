@@ -197,7 +197,7 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 - [x] **Water heater monitoring:** relay state, power, current and voltage of the water heater plugs, read-only.
 - [x] **Sensor monitoring:** air temperature and humidity, outdoor temperature and per-phase current from ESPHome nodes over MQTT, on the dashboard and in the history, read-only.
 - [ ] **Phase meter:** a configurable shedding priority and staggered starts on the measured phase currents.
-- [ ] **Air sensors:** air-temperature regulation and a learned optimal start.
+- [ ] **Air sensors:** air-temperature regulation, a learned optimal start and a guard for the unheated second floor. Shipped in dry-run: the journal and the room tiles show what they would do until they are switched on in the admin, air control zone by zone.
 - [ ] **Smart plugs:** water heaters as sheddable loads, washing machine monitoring.
 - [ ] Schedule and settings pages in the panel.
 

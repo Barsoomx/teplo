@@ -482,7 +482,7 @@ password = '...'
 
 1. Thermostats in floor mode: schedules, night setback, timed pre-heat, boost, dry-run, dashboard and journal.
 2. Phase meter and load management (the meter is already read and alerts when stale).
-3. Air sensors, air regulation, learned optimal start (the sensors are already read and alert when lost).
+3. Air sensors, air regulation, learned optimal start and the second-floor guard (the sensors are already read and alert when lost). Ships in dry-run: the zones learn their mornings and the journal shows what air control, optimal start and the guard would do, until the owner switches them on in the admin, air control zone by zone and the guard in the climate settings (section 6).
 4. Smart plugs: water heaters as sheddable loads (their plugs are already read and alert when lost), washing machine monitoring.
 
 Later: heat pump driver, EV charger driver, away and frost modes.
