@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
+from pytest_django import Settings
 
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition
@@ -14,6 +15,7 @@ from apps.notifications.services.outbox import AlertOutbox, MessageContent, aler
 SINCE = datetime(2026, 10, 31, 17, 24, tzinfo=UTC)
 AT = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 OUTAGE = Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC), power_cut=True)
+PANEL_URL = 'http://192.0.2.1:8088/'
 
 
 def _drain(outbox: AlertOutbox) -> None:
@@ -73,6 +75,12 @@ def f_resumed() -> TeploResumed:
     return TeploResumed(outage=OUTAGE, occurred_at=AT)
 
 
+@pytest.fixture
+def panel_url_settings(settings: Settings) -> Settings:
+    settings.TEPLO_PANEL_URL = PANEL_URL
+    return settings
+
+
 def test_raised_alert_is_queued_to_be_written_when_sent(f_outbox: AlertOutbox, f_raised: AlertRaised) -> None:
     queue_alert_raised(f_raised)
 
@@ -118,7 +126,17 @@ def test_cleared_alert_is_queued_to_be_written_when_sent(f_outbox: AlertOutbox, 
 def test_outage_is_queued_to_be_written_when_sent(f_outbox: AlertOutbox, f_resumed: TeploResumed) -> None:
     queue_teplo_resumed(f_resumed)
 
-    assert _contents(f_outbox) == [OutageContent(outage=OUTAGE)]
+    assert _contents(f_outbox) == [OutageContent(outage=OUTAGE, panel_url='')]
+
+
+@pytest.mark.usefixtures('panel_url_settings')
+def test_outage_is_queued_with_the_panel_url_from_the_settings(
+    f_outbox: AlertOutbox,
+    f_resumed: TeploResumed,
+) -> None:
+    queue_teplo_resumed(f_resumed)
+
+    assert _contents(f_outbox) == [OutageContent(outage=OUTAGE, panel_url=PANEL_URL)]
 
 
 def test_alerts_are_queued_under_their_keys(

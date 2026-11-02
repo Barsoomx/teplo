@@ -29,6 +29,8 @@ ZONE_OFF = gettext_lazy('%(name)s: the thermostat has been off since %(since)s a
 UNDATED_ZONE_OFF = gettext_lazy('%(name)s: the thermostat is off although the schedule wants heat')
 ZONE_FOLLOWS_SCHEDULE = gettext_lazy('%(name)s: the thermostat follows the schedule again')
 TEPLO_RESUMED = gettext_lazy('teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)')
+MARK_CAUSE = gettext_lazy('Mark the cause in the panel: %(url)s')
+MARK_CAUSE_WITHOUT_LINK = gettext_lazy('Mark the cause in the panel.')
 DELIVERY_CHECK = gettext_lazy('teplo: test message. Alerts will arrive in this chat')
 
 
@@ -54,9 +56,10 @@ class AlertContent:
 @dataclass(frozen=True, kw_only=True)
 class OutageContent:
     outage: Outage
+    panel_url: str
 
     def text(self, at: datetime) -> str:
-        return outage_text(self.outage, at)
+        return outage_text(self.outage, at, self.panel_url)
 
 
 def alert_text(
@@ -85,8 +88,12 @@ def alert_text_from_payload(transition: AlertTransition, payload: Mapping[str, o
         return None
 
 
-def outage_text(outage: Outage, at: datetime) -> str:
-    return str(TEPLO_RESUMED) % interval_parts(outage.began_at, outage.ended_at, at)
+def outage_text(outage: Outage, at: datetime, panel_url: str) -> str:
+    text = str(TEPLO_RESUMED) % interval_parts(outage.began_at, outage.ended_at, at)
+    if not outage.power_cut:
+        return text
+
+    return f'{text}\n{_mark_cause(panel_url)}'
 
 
 def interval_parts(began_at: datetime, ended_at: datetime, at: datetime) -> dict[str, str]:
@@ -117,6 +124,13 @@ def _template(kind: AlertKind, transition: AlertTransition, device_kind: DeviceK
         return str(DEVICE_LOST.get(device_kind, ANY_DEVICE_LOST))
 
     return str(UNDATED_DEVICE_LOST.get(device_kind, ANY_UNDATED_DEVICE_LOST))
+
+
+def _mark_cause(panel_url: str) -> str:
+    if not panel_url:
+        return str(MARK_CAUSE_WITHOUT_LINK)
+
+    return str(MARK_CAUSE) % {'url': panel_url}
 
 
 def _since(value: object) -> datetime | None:
