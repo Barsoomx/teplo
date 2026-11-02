@@ -27,7 +27,7 @@ async def _serve(node: str, port: int) -> None:
             return_exceptions=True,
         )
 
-    server = await asyncio.start_server(forward, '0.0.0.0', port)
+    server = await asyncio.start_server(forward, '0.0.0.0', port)  # noqa: S104
     async with server:
         await server.serve_forever()
 
