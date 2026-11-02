@@ -130,12 +130,28 @@ msgid "%(name)s: plug is online"
 msgstr "%(name)s: розетка на связи"
 
 #, python-format
+msgid "%(name)s: sensor is online"
+msgstr "%(name)s: датчик на связи"
+
+#, python-format
+msgid "%(name)s: online"
+msgstr "%(name)s: на связи"
+
+#, python-format
 msgid "%(name)s: no connection to the thermostat"
 msgstr "%(name)s: нет связи с термостатом"
 
 #, python-format
 msgid "%(name)s: no connection to the plug"
 msgstr "%(name)s: нет связи с розеткой"
+
+#, python-format
+msgid "%(name)s: no connection to the sensor"
+msgstr "%(name)s: нет связи с датчиком"
+
+#, python-format
+msgid "%(name)s: no connection"
+msgstr "%(name)s: нет связи"
 
 msgid "Not sent: watching only"
 msgstr "Не отправлено: режим наблюдения"
@@ -196,6 +212,27 @@ msgstr "В файле секретов нет адреса и ключа это�
 
 msgid "The secrets file gives this plug a wrong address or protocol"
 msgstr "В файле секретов у этой розетки неверный адрес или протокол"
+
+msgid "No connection to the sensor"
+msgstr "Нет связи с датчиком"
+
+msgid "The sensor sent an unexpected reply"
+msgstr "Датчик прислал неожиданный ответ"
+
+msgid "The sensor could not take a reading"
+msgstr "Датчик не смог снять показания"
+
+msgid "teplo cannot connect to the MQTT broker"
+msgstr "teplo не может подключиться к MQTT-брокеру"
+
+msgid "No connection to the phase meter"
+msgstr "Нет связи с фазометром"
+
+msgid "The phase meter sent an unexpected reply"
+msgstr "Фазометр прислал неожиданный ответ"
+
+msgid "The phase meter could not measure a phase"
+msgstr "Фазометр не смог измерить ток фазы"
 
 msgid "Unknown error"
 msgstr "Неизвестная ошибка"

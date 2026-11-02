@@ -32,6 +32,24 @@ PLUG_FAILURE_NOTES = {
     'secret_missing': gettext_lazy('The secrets file has no address and key for this plug'),
     'device_config_invalid': gettext_lazy('The secrets file gives this plug a wrong address or protocol'),
 }
+SENSOR_FAILURE_NOTES = {
+    **FAILURE_NOTES,
+    'device_unavailable': gettext_lazy('No connection to the sensor'),
+    'device_protocol_error': gettext_lazy('The sensor sent an unexpected reply'),
+    'sensor_reading_failed': gettext_lazy('The sensor could not take a reading'),
+    'broker_unavailable': gettext_lazy('teplo cannot connect to the MQTT broker'),
+}
+PHASE_METER_FAILURE_NOTES = {
+    **SENSOR_FAILURE_NOTES,
+    'device_unavailable': gettext_lazy('No connection to the phase meter'),
+    'device_protocol_error': gettext_lazy('The phase meter sent an unexpected reply'),
+    'sensor_reading_failed': gettext_lazy('The phase meter could not measure a phase'),
+}
+DEVICE_FAILURE_NOTES = {
+    DeviceKind.PLUG.value: PLUG_FAILURE_NOTES,
+    DeviceKind.TEMPERATURE_SENSOR.value: SENSOR_FAILURE_NOTES,
+    DeviceKind.PHASE_METER.value: PHASE_METER_FAILURE_NOTES,
+}
 UNKNOWN_FAILURE = gettext_lazy('Unknown error')
 CLOCK_NOTES = {
     ClockStatusCode.NTP_STATUS_MISSING: gettext_lazy('the router reports no NTP status'),
@@ -72,7 +90,7 @@ def failure_note(error_code: str | None, error: str | None, omit: str = '', devi
     if error_code == omit:
         return ''
 
-    notes = PLUG_FAILURE_NOTES if device == DeviceKind.PLUG else FAILURE_NOTES
+    notes = FAILURE_NOTES if device is None else DEVICE_FAILURE_NOTES.get(device, FAILURE_NOTES)
     return str(notes.get(error_code, UNKNOWN_FAILURE))
 
 
