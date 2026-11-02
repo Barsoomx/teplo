@@ -1,7 +1,9 @@
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 from apps.climate.domain.change import ThermostatChange
+from apps.climate.domain.modes import AirState, ScheduleMode
 from apps.core.domain.events import DomainEvent
 
 
@@ -24,3 +26,32 @@ class ZoneCommandFailed(DomainEvent):
 class ZoneBoosted(DomainEvent):
     zone: str
     until: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class AirControlDryRun(DomainEvent):
+    zone: str
+    air: Decimal
+    target: Decimal
+    mode: ScheduleMode
+    state: AirState
+    power: bool
+    setpoint: Decimal | None
+    early_stop_offset: Decimal
+    lead_minutes: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class OptimalStartDryRun(DomainEvent):
+    zone: str
+    lead_minutes: int
+    start: datetime
+    fixed_start: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class SecondFloorGuardDryRun(DomainEvent):
+    zone: str
+    active: bool
+    air: Decimal | None
+    setpoint: Decimal
