@@ -7,7 +7,7 @@ from django.db import OperationalError
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
-from apps.devices.domain.errors import DeviceUnavailableError
+from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
 from apps.power.services.zone_switch import ThermostatZoneSwitch
 from apps.power.stubs import ZoneWriteStampsStub
@@ -53,6 +53,11 @@ def f_unreachable_switch(unreachable_thermostat: FloorThermostatStub) -> Thermos
 
 
 @pytest.fixture
+def f_switch_without_the_thermostat() -> ThermostatZoneSwitch:
+    return ThermostatZoneSwitch(stamps=ZoneRepository(), thermostats=ThermostatProviderStub(thermostats={}))
+
+
+@pytest.fixture
 def f_switch_without_a_database(f_thermostat: FloorThermostatStub) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneWriteStampsStub(error=OperationalError('database is locked')),
@@ -87,6 +92,17 @@ def test_failed_switch_still_spends_the_write_budget(
 
     f_kitchen.refresh_from_db()
     assert f_kitchen.last_command_at == NOW
+
+
+def test_switch_that_cannot_find_its_thermostat_writes_nothing_and_spends_no_write_budget(
+    f_switch_without_the_thermostat: ThermostatZoneSwitch,
+    f_kitchen: Zone,
+) -> None:
+    with pytest.raises(DriverNotImplementedError):
+        f_switch_without_the_thermostat.switch_off('kitchen', 'thermostat-kitchen', NOW)
+
+    f_kitchen.refresh_from_db()
+    assert f_kitchen.last_command_at == NOW - timedelta(minutes=5)
 
 
 def test_switch_reaches_the_thermostat_and_says_so_when_the_database_cannot_stamp_the_write(

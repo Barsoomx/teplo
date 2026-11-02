@@ -212,6 +212,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 )
             except DomainError as error:
                 return self._restore_failed(shedding, record, shed, error, now)
+            except OperationalError as error:
+                return self._lookup_failed(shedding, record, LoadCommand.RESTORE, error)
 
             logger.info('load_released', load=record.slug, switched_on=switched_on)
             shedding = _stored(shedding, record.slug, None)
@@ -315,6 +317,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 stamp_lost = not self._switcher.shed(record, now)
             except DomainError as error:
                 return self._shed_failed(shedding, record, load, error, phase=phase, reason=reason, amps=amps, now=now)
+            except OperationalError as error:
+                return self._lookup_failed(shedding, record, LoadCommand.SHED, error)
 
             logger.info('load_shed', load=record.slug, stamp_lost=stamp_lost)
 
@@ -359,6 +363,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                     return shedding
             except DomainError as error:
                 return self._restore_failed(restored, record, shed, error, now)
+            except OperationalError as error:
+                return self._lookup_failed(restored, record, LoadCommand.RESTORE, error)
 
             logger.info('load_restored', load=record.slug)
             restored = _stored(restored, record.slug, None)
@@ -478,6 +484,22 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             sheds={**shedding.sheds, record.slug: replace(shed, restore_failed=True)},
             failed={**shedding.failed, record.slug: self._clock()},
         )
+
+    def _lookup_failed(
+        self,
+        shedding: ShedState,
+        record: LoadRecord,
+        command: LoadCommand,
+        error: OperationalError,
+    ) -> ShedState:
+        logger.warning(
+            'load_command_failed',
+            load=record.slug,
+            device=record.device_slug,
+            command=command,
+            error=str(error),
+        )
+        return replace(shedding, failed={**shedding.failed, record.slug: self._clock()})
 
     def _failed(
         self,

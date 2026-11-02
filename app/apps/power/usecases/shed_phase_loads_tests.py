@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 from django.db import OperationalError
 from pytest_django import DjangoAssertNumQueries
+from structlog.testing import capture_logs
 
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import DomainEvent, EventDispatcher
@@ -210,6 +211,7 @@ def _house(
     dry_run: bool = False,
     boiler_on: bool = True,
     boiler_error: DomainError | None = None,
+    lookup_errors: dict[str, Exception] | None = None,
     write_errors: tuple[Exception, ...] = (),
     zone_stamped: bool = True,
 ) -> House:
@@ -229,7 +231,7 @@ def _house(
     loads = LoadStoreStub(records=records, live_zones=live_zones, write_errors=write_errors)
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
-    plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler})
+    plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
     zones = ZoneSwitchStub(error=None, stamped=zone_stamped)
     book = GuardBook()
     return House(
@@ -268,13 +270,13 @@ def _house(
     )
 
 
-def _seconds(guard: Guard, count: int, l2: str | None) -> list[ShedPhaseLoadsOutputDTO]:
+def _seconds(guard: Guard, count: int, l2: str | None, l1: str = '8.0') -> list[ShedPhaseLoadsOutputDTO]:
     outputs: list[ShedPhaseLoadsOutputDTO] = []
     for _ in range(count):
         guard.clock.advance(1)
         now = _moment(int(guard.clock() - START))
         if l2 is not None:
-            for phase, amps in ((Phase.A, '8.0'), (Phase.B, l2), (Phase.C, '4.0')):
+            for phase, amps in ((Phase.A, l1), (Phase.B, l2), (Phase.C, '4.0')):
                 guard.meter.record_current(METER, phase, Decimal(amps), now)
         guard.watch.execute(WatchPhasesInputDTO(now=now))
         outputs.append(guard.shed.execute(ShedPhaseLoadsInputDTO(now=now)))
@@ -576,6 +578,27 @@ def f_unswitchable_plug_after_a_failed_release(unswitchable_shed_plug_house: Hou
     _seconds(unswitchable_shed_plug_house.guard, 119, '10.0')
     _plug_read_off(unswitchable_shed_plug_house, 'plug-boiler-2f', 120)
     return unswitchable_shed_plug_house
+
+
+@pytest.fixture
+def f_locked_lookup_house() -> House:
+    return _house(
+        [replace(BOILER, live=True, phase=LoadPhase.L1), replace(BOILER_2F, live=True)],
+        LIVE_CONTROL,
+        frozenset(),
+        lookup_errors={'plug-boiler-2f': OperationalError('database is locked')},
+    )
+
+
+@pytest.fixture
+def f_locked_lookup_restarted_house() -> House:
+    return _house(
+        [replace(BOILER, live=True, shed=STORED_SHED)],
+        LIVE_CONTROL,
+        frozenset(),
+        boiler_on=False,
+        lookup_errors={'plug-boiler-1f': OperationalError('database is locked')},
+    )
 
 
 @pytest.fixture
@@ -1605,6 +1628,71 @@ def test_live_shed_the_database_fails_to_store_is_kept_and_stored_a_minute_later
             ),
         ],
     )
+
+
+def test_plug_the_database_cannot_find_leaves_the_sheds_already_made_and_the_next_load_to_shed(
+    f_locked_lookup_house: House,
+) -> None:
+    with capture_logs() as logs:
+        outputs = _seconds(f_locked_lookup_house.guard, 4, '26.0', l1='26.0')
+
+    assert (
+        outputs[-1],
+        f_locked_lookup_house.boiler.switches,
+        f_locked_lookup_house.loads.writes,
+        f_locked_lookup_house.events,
+        _failed_commands(f_locked_lookup_house),
+        [log for log in logs if log['event'] == 'load_command_failed'],
+    ) == (
+        ShedPhaseLoadsOutputDTO(shed=('boiler-1f',), restored=()),
+        [False],
+        [
+            (
+                'mark_shed',
+                'boiler-1f',
+                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L1, was_on=True),
+            ),
+        ],
+        [
+            PhaseOverloaded(phase=LoadPhase.L1, amps=Decimal('26.0'), occurred_at=_moment(4)),
+            _overload(4, '26.0'),
+            LoadShed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L1,
+                amps=Decimal('26.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(4),
+            ),
+        ],
+        {'boiler-2f': START + 4},
+        [
+            {
+                'event': 'load_command_failed',
+                'log_level': 'warning',
+                'load': 'boiler-2f',
+                'device': 'plug-boiler-2f',
+                'command': LoadCommand.SHED,
+                'error': 'database is locked',
+            },
+        ],
+    )
+
+
+def test_restore_of_a_plug_the_database_cannot_find_waits_for_its_next_reading_without_a_permit(
+    f_locked_lookup_restarted_house: House,
+) -> None:
+    outputs = _seconds(f_locked_lookup_restarted_house.guard, 130, '10.0')
+
+    assert (
+        _restored_at(outputs, 1),
+        f_locked_lookup_restarted_house.boiler.switches,
+        f_locked_lookup_restarted_house.book.last_permit_at(),
+        f_locked_lookup_restarted_house.events,
+        _failed_commands(f_locked_lookup_restarted_house),
+    ) == ([], [], None, [], {'boiler-1f': START + 121})
 
 
 @pytest.mark.django_db

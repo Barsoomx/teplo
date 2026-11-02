@@ -27,8 +27,9 @@ class ThermostatZoneSwitch:
         return self._switch(zone, thermostat, power=True, at=at)
 
     def _switch(self, zone: str, thermostat: str, *, power: bool, at: datetime) -> bool:
+        device = self._thermostats.thermostat(thermostat)
         try:
-            self._thermostats.thermostat(thermostat).set_power(power)
+            device.set_power(power)
         finally:
             stamped = self._stamped(zone, at)
         return stamped
