@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -5,6 +7,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.change import ThermostatChange
+from apps.climate.domain.drive import ZoneStart
 from apps.climate.domain.events import (
     AirControlDryRun,
     OptimalStartDryRun,
@@ -14,12 +17,14 @@ from apps.climate.domain.events import (
 )
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
+from apps.climate.domain.ports import LoadGate
 from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, ZoneFactory, ZoneLearningFactory
 from apps.climate.models import ClimateSettings, Zone, ZoneLearning
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
+from apps.climate.stubs import LoadGateStub
 from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
@@ -31,6 +36,15 @@ from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.services.state_store import TemperatureStateStore, ThermostatStateStore
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
+from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.events import StartWouldWaitDryRun
+from apps.power.domain.guard import GuardLoads, GuardState, SeenReading
+from apps.power.domain.load_status import thermostat_reading
+from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord
+from apps.power.domain.meter_watch import MeterWatch
+from apps.power.domain.start_gate import StartRefusal
+from apps.power.services.guard_book import GuardBook
+from apps.power.services.guard_load_gate import GuardLoadGate
 
 pytestmark = pytest.mark.django_db
 
@@ -47,6 +61,8 @@ UNAVAILABLE_AFTER = timedelta(minutes=10)
 STALE = timedelta(minutes=11)
 KITCHEN = 'thermostat-kitchen'
 BATHROOM = 'thermostat-bathroom-2f'
+LIVING_ROOM = 'thermostat-living-room'
+HALF_HOUR = timedelta(minutes=30)
 HOUSE_AIR = {'air-kitchen': '20.4', 'outdoor': '-3.4', 'air-second-floor': '18.5'}
 MORNING_AIR = (
     (FIXED_START - MINUTE, '20.0'),
@@ -68,6 +84,60 @@ STOP_AIR = (
     (MORNING + timedelta(hours=1), '22.3', '18.0'),
     (MORNING + timedelta(hours=2), '22.1', '18.0'),
 )
+LOAD_THRESHOLDS = PhaseThresholds(
+    start_ceiling=Decimal('20.0'),
+    shed=Decimal('24.0'),
+    shed_hold=timedelta(seconds=3),
+    restore=Decimal('18.0'),
+    restore_hold=timedelta(minutes=2),
+    shed_interval=timedelta(seconds=1),
+    restore_interval=timedelta(minutes=1),
+    start_interval=timedelta(seconds=30),
+    meter_lost_after=timedelta(seconds=60),
+)
+KITCHEN_LOAD = LoadRecord(
+    slug='kitchen',
+    name='Кухня',
+    kind=LoadKind.ZONE,
+    zone_slug='kitchen',
+    device_slug=KITCHEN,
+    priority=5,
+    phase=LoadPhase.L2,
+    nominal_amps=Decimal('8.0'),
+    learned=None,
+    live=True,
+    shed=None,
+)
+LIVING_ROOM_LOAD = replace(
+    KITCHEN_LOAD,
+    slug='living-room',
+    name='Гостиная',
+    zone_slug='living-room',
+    device_slug=LIVING_ROOM,
+    priority=7,
+)
+HALLWAY_LOAD = replace(
+    KITCHEN_LOAD,
+    slug='hallway',
+    name='Коридор',
+    zone_slug='hallway',
+    device_slug='thermostat-hallway',
+    priority=4,
+)
+FRESH_METER = MeterWatch(seen=True, stale_since=None)
+UNSEEN_METER = MeterWatch(seen=False, stale_since=0.0)
+HALLWAY_HEATING = SeenReading(
+    polled_at=MORNING,
+    reading=thermostat_reading(
+        power=True,
+        heating=True,
+        setpoint=Decimal('28.0'),
+        floor_temperature=Decimal('24.5'),
+        read_at=-5.0,
+    ),
+)
+
+House = Callable[[ThermostatStateStore, TemperatureStateStore], None]
 
 
 def _state(
@@ -75,9 +145,10 @@ def _state(
     mode: ThermostatMode = ThermostatMode.HOLD,
     read_at: datetime = MORNING,
     heating: bool | None = None,
+    power: bool = True,
 ) -> ThermostatState:
     return ThermostatState(
-        power=True,
+        power=power,
         mode=mode,
         setpoint=Decimal(setpoint),
         floor_temperature=Decimal('21.0'),
@@ -102,6 +173,7 @@ def _use_case(
     dispatcher: EventDispatcher,
     *,
     dry_run: bool = False,
+    gate: LoadGate | None = None,
 ) -> RunHeatingCycleUseCase:
     return RunHeatingCycleUseCase(
         zones=ZoneRepository(),
@@ -111,6 +183,7 @@ def _use_case(
         temperatures=temperatures,
         provider=ThermostatProviderStub(thermostats=thermostats),
         book=book,
+        gate=LoadGateStub(held=frozenset(), answers={}) if gate is None else gate,
         dry_run=dry_run,
         dispatcher=dispatcher,
     )
@@ -204,6 +277,82 @@ def _watch_stop(
         _use_case(store, temperatures, thermostats, book, EventDispatcher(), dry_run=dry_run).execute(_at(at))
 
 
+def _floor_zone(slug: str, thermostat: str, **fields: object) -> Zone:
+    zone = ZoneFactory.create(slug=slug, thermostat__slug=thermostat, live_control=True, **fields)
+    ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
+    return zone
+
+
+def _shed_floor_zone(store: ThermostatStateStore, _temperatures: TemperatureStateStore) -> None:
+    _floor_zone('kitchen', KITCHEN, last_command_at=MORNING - HALF_HOUR)
+    store.record_state(KITCHEN, _state('22.0', power=False))
+
+
+def _shed_air_zone(store: ThermostatStateStore, temperatures: TemperatureStateStore) -> None:
+    Zone.objects.filter(pk=_air_zone(air_control_live=True).pk).update(last_command_at=MORNING - HALF_HOUR)
+    store.record_state(KITCHEN, _state('28.0', power=False))
+    temperatures.record_state('air-kitchen', _reading('21.5'))
+
+
+def _shed_boosted_zone(store: ThermostatStateStore, _temperatures: TemperatureStateStore) -> None:
+    _floor_zone('kitchen', KITCHEN, last_command_at=MORNING - HALF_HOUR, boost_until=MORNING + timedelta(hours=1))
+    store.record_state(KITCHEN, _state('22.0', power=False))
+
+
+def _shed_guarded_zone(store: ThermostatStateStore, temperatures: TemperatureStateStore) -> None:
+    _house_settings(guard_live=True)
+    Zone.objects.filter(slug='bathroom-2f').update(last_command_at=NIGHT - HALF_HOUR)
+    store.record_state(BATHROOM, _state('22.0', power=False))
+    temperatures.record_state('air-second-floor', _reading('18.9'))
+
+
+def _idle_floor_zone(store: ThermostatStateStore, _temperatures: TemperatureStateStore) -> None:
+    _floor_zone('kitchen', KITCHEN)
+    store.record_state(KITCHEN, _state('22.0', heating=False))
+
+
+def _idle_air_zone(store: ThermostatStateStore, temperatures: TemperatureStateStore) -> None:
+    _air_zone(air_control_live=True)
+    store.record_state(KITCHEN, _state('18.0', heating=False))
+    temperatures.record_state('air-kitchen', _reading('21.5'))
+
+
+def _idle_boosted_zone(store: ThermostatStateStore, _temperatures: TemperatureStateStore) -> None:
+    _floor_zone('kitchen', KITCHEN, boost_until=MORNING + timedelta(hours=1))
+    store.record_state(KITCHEN, _state('22.0', heating=False))
+
+
+def _watch(
+    book: GuardBook,
+    *,
+    management_live: bool,
+    load_live: bool = True,
+    meter: MeterWatch = FRESH_METER,
+    l2: str = '10.0',
+    readings: dict[str, SeenReading] | None = None,
+) -> None:
+    loads = GuardLoads(
+        records=tuple(replace(record, live=load_live) for record in (HALLWAY_LOAD, KITCHEN_LOAD, LIVING_ROOM_LOAD)),
+        control=LoadControl(live=management_live, thresholds=LOAD_THRESHOLDS, default_amps=Decimal('6.0')),
+        live_zones=frozenset({'hallway', 'kitchen', 'living-room'}),
+        meter='phase-meter',
+        read_at=0.0,
+    )
+    started = GuardState.started(loads, 0.0)
+    currents = (
+        {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal(l2), LoadPhase.L3: Decimal('4.0')}
+        if meter.stale_since is None
+        else {}
+    )
+    book.remember(
+        replace(
+            started,
+            phases=replace(started.phases, meter=meter, currents=currents),
+            readings={} if readings is None else readings,
+        ),
+    )
+
+
 @pytest.fixture
 def f_zone() -> Zone:
     zone = ZoneFactory.create(slug='kitchen', thermostat__slug=KITCHEN, live_control=True)
@@ -235,6 +384,7 @@ def dispatcher(f_events: list[DomainEvent]) -> EventDispatcher:
         AirControlDryRun,
         OptimalStartDryRun,
         SecondFloorGuardDryRun,
+        StartWouldWaitDryRun,
     ):
         event_dispatcher.register(event_type, f_events.append)
     return event_dispatcher
@@ -1414,3 +1564,390 @@ def test_stop_in_dry_run_teaches_nothing(f_dry_run_stop_cycle: RunHeatingCycleUs
     f_dry_run_stop_cycle.execute(_at(MORNING + timedelta(hours=2, minutes=1)))
 
     assert not ZoneLearning.objects.exists()
+
+
+@pytest.fixture
+def f_living_room_thermostat() -> FloorThermostatStub:
+    return FloorThermostatStub(state=None)
+
+
+@pytest.fixture
+def f_held_gate() -> LoadGateStub:
+    return LoadGateStub(held=frozenset({'kitchen', 'bathroom-2f'}), answers={})
+
+
+@pytest.fixture
+def f_guard_book() -> GuardBook:
+    return GuardBook()
+
+
+@pytest.fixture
+def f_gate_clock() -> MonotonicClockStub:
+    return MonotonicClockStub(now=0.0)
+
+
+@pytest.fixture
+def load_gate(f_guard_book: GuardBook, f_gate_clock: MonotonicClockStub) -> GuardLoadGate:
+    return GuardLoadGate(book=f_guard_book, clock=f_gate_clock)
+
+
+@pytest.fixture
+def f_held_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_guard_thermostat: FloorThermostatStub,
+    f_held_gate: LoadGateStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    house: House = request.param
+    house(store, temperatures)
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat, BATHROOM: f_guard_thermostat}
+    return _use_case(store, temperatures, thermostats, book, dispatcher, gate=f_held_gate)
+
+
+@pytest.fixture
+def f_restored_cycle(f_thermostat: FloorThermostatStub, dispatcher: EventDispatcher) -> RunHeatingCycleUseCase:
+    zone = _floor_zone('kitchen', KITCHEN, last_command_at=MORNING - timedelta(minutes=10))
+    return _cycle(zone, _state('22.0', power=False), f_thermostat, dispatcher)
+
+
+@pytest.fixture
+def f_load_management_off_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    load_gate: GuardLoadGate,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    house, management_live, load_live, meter, l2 = request.param
+    house(store, temperatures)
+    _watch(f_guard_book, management_live=management_live, load_live=load_live, meter=meter, l2=l2)
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, gate=load_gate)
+
+
+@pytest.fixture
+def f_live_start_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    load_gate: GuardLoadGate,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    meter, l2, readings = request.param
+    _idle_floor_zone(store, temperatures)
+    _watch(f_guard_book, management_live=True, meter=meter, l2=l2, readings=readings)
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, gate=load_gate)
+
+
+@pytest.fixture
+def f_two_starts_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    load_gate: GuardLoadGate,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _idle_floor_zone(store, temperatures)
+    _floor_zone('living-room', LIVING_ROOM)
+    store.record_state(LIVING_ROOM, _state('22.0', heating=False))
+    _watch(f_guard_book, management_live=True)
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat, LIVING_ROOM: f_living_room_thermostat}
+    return _use_case(store, temperatures, thermostats, book, dispatcher, gate=load_gate)
+
+
+@pytest.mark.parametrize(
+    ('f_held_cycle', 'now', 'zone', 'commands'),
+    [
+        (_shed_floor_zone, MORNING, 'kitchen', [('power', True), ('setpoint', Decimal('28.0'))]),
+        (_shed_air_zone, MORNING, 'kitchen', [('power', True), ('setpoint', Decimal('30.0'))]),
+        (_shed_boosted_zone, MORNING, 'kitchen', [('power', True), ('setpoint', Decimal('30.0'))]),
+        (_shed_guarded_zone, NIGHT, 'bathroom-2f', [('power', True), ('setpoint', Decimal('30.0'))]),
+    ],
+    ids=['floor_mode', 'air_mode', 'boost', 'second_floor_guard'],
+    indirect=['f_held_cycle'],
+)
+def test_shed_zone_is_held_on_every_path_and_gets_its_target_once_restored(
+    f_held_cycle: RunHeatingCycleUseCase,
+    f_held_gate: LoadGateStub,
+    f_thermostat: FloorThermostatStub,
+    f_guard_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    now: datetime,
+    zone: str,
+    commands: list[tuple[str, object]],
+) -> None:
+    held = f_held_cycle.execute(_at(now))
+    held_writes = (f_thermostat.commands + f_guard_thermostat.commands, list(f_events))
+    held_stamp = Zone.objects.get(slug=zone).last_command_at
+    f_held_gate.release(zone)
+    restored = f_held_cycle.execute(_at(now))
+
+    assert (
+        held.outcomes,
+        held_writes,
+        held_stamp,
+        restored.outcomes,
+        f_thermostat.commands + f_guard_thermostat.commands,
+        Zone.objects.get(slug=zone).last_command_at,
+        f_held_gate.asked,
+    ) == (
+        {zone: ZoneCycleOutcome.SHED},
+        ([], []),
+        now - HALF_HOUR,
+        {zone: ZoneCycleOutcome.APPLIED},
+        commands,
+        now,
+        [(), (ZoneStart(zone=zone, writes_live=True),)],
+    )
+
+
+def test_restored_zone_gets_its_target_no_sooner_than_thirty_minutes_after_its_shed(
+    f_restored_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_restored_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.THROTTLED}, [])
+
+
+@pytest.mark.parametrize(
+    ('f_load_management_off_cycle', 'setpoint'),
+    [
+        ((_idle_floor_zone, False, False, FRESH_METER, '13.0'), Decimal('28.0')),
+        ((_idle_air_zone, False, False, FRESH_METER, '13.0'), Decimal('30.0')),
+        ((_idle_boosted_zone, False, False, FRESH_METER, '13.0'), Decimal('30.0')),
+        ((_idle_floor_zone, True, False, FRESH_METER, '13.0'), Decimal('28.0')),
+        ((_idle_floor_zone, False, True, FRESH_METER, '13.0'), Decimal('28.0')),
+    ],
+    ids=['floor_mode', 'air_mode', 'boost', 'load_off', 'load_management_off'],
+    indirect=['f_load_management_off_cycle'],
+)
+def test_start_that_would_wait_with_load_management_off_is_written_as_before_and_journaled(
+    f_load_management_off_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    f_events: list[DomainEvent],
+    setpoint: Decimal,
+) -> None:
+    output = f_load_management_off_cycle.execute(_at(MORNING))
+
+    zone = Zone.objects.get(slug='kitchen')
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        zone.last_command_at,
+        zone.last_dry_run_at,
+        f_events,
+        f_guard_book.last_permit_at(),
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', setpoint)],
+        MORNING,
+        None,
+        [
+            StartWouldWaitDryRun(
+                load='kitchen',
+                name='Кухня',
+                phase=LoadPhase.L2,
+                amps=Decimal('21.0'),
+                load_amps=Decimal('8.0'),
+                reason=StartRefusal.NO_HEADROOM,
+                occurred_at=MORNING,
+            ),
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(setpoint=setpoint),
+                dry_run=False,
+                occurred_at=MORNING,
+            ),
+        ],
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_load_management_off_cycle', 'setpoint'),
+    [
+        ((_idle_floor_zone, False, False, FRESH_METER, '10.0'), Decimal('28.0')),
+        ((_idle_air_zone, False, False, FRESH_METER, '10.0'), Decimal('30.0')),
+        ((_idle_boosted_zone, False, False, FRESH_METER, '10.0'), Decimal('30.0')),
+        ((_idle_floor_zone, False, False, UNSEEN_METER, '10.0'), Decimal('28.0')),
+        ((_idle_air_zone, False, False, UNSEEN_METER, '10.0'), Decimal('30.0')),
+        ((_idle_boosted_zone, False, False, UNSEEN_METER, '10.0'), Decimal('30.0')),
+    ],
+    ids=[
+        'floor_mode_with_room',
+        'air_mode_with_room',
+        'boost_with_room',
+        'floor_mode_before_the_meter_reports',
+        'air_mode_before_the_meter_reports',
+        'boost_before_the_meter_reports',
+    ],
+    indirect=['f_load_management_off_cycle'],
+)
+def test_cycle_with_load_management_off_writes_stamps_and_journals_exactly_as_before(
+    f_load_management_off_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    f_events: list[DomainEvent],
+    setpoint: Decimal,
+) -> None:
+    output = f_load_management_off_cycle.execute(_at(MORNING))
+
+    zone = Zone.objects.get(slug='kitchen')
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        zone.last_command_at,
+        zone.last_dry_run_at,
+        zone.last_air_dry_run_at,
+        f_events,
+        f_guard_book.last_permit_at(),
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', setpoint)],
+        MORNING,
+        None,
+        None,
+        [
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(setpoint=setpoint),
+                dry_run=False,
+                occurred_at=MORNING,
+            ),
+        ],
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_live_start_cycle', 'outcome', 'commands', 'stamp', 'last_permit_at'),
+    [
+        ((FRESH_METER, '12.0', None), ZoneCycleOutcome.APPLIED, [('setpoint', Decimal('28.0'))], MORNING, 0.0),
+        ((FRESH_METER, '12.5', None), ZoneCycleOutcome.WAITING, [], None, None),
+    ],
+    ids=['permit_granted', 'permit_refused'],
+    indirect=['f_live_start_cycle'],
+)
+def test_live_start_is_written_only_with_a_permit_and_keeps_the_write_budget_while_it_waits(
+    f_live_start_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    f_events: list[DomainEvent],
+    outcome: ZoneCycleOutcome,
+    commands: list[tuple[str, Decimal]],
+    stamp: datetime | None,
+    last_permit_at: float | None,
+) -> None:
+    output = f_live_start_cycle.execute(_at(MORNING))
+
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        Zone.objects.get(slug='kitchen').last_command_at,
+        f_guard_book.last_permit_at(),
+        f_events,
+    ) == (
+        {'kitchen': outcome},
+        commands,
+        stamp,
+        last_permit_at,
+        [
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(setpoint=setpoint),
+                dry_run=False,
+                occurred_at=MORNING,
+            )
+            for _, setpoint in commands
+        ],
+    )
+
+
+@pytest.mark.parametrize('f_live_start_cycle', [(FRESH_METER, '12.5', None)], indirect=True)
+def test_waiting_start_asks_again_at_the_next_cycle(
+    f_live_start_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+) -> None:
+    waiting = f_live_start_cycle.execute(_at(MORNING))
+    _watch(f_guard_book, management_live=True, l2='12.0')
+    started = f_live_start_cycle.execute(_at(MORNING + MINUTE))
+
+    assert (waiting.outcomes, started.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.WAITING},
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+    )
+
+
+def test_live_starts_of_one_cycle_go_most_important_first_one_a_cycle(
+    f_two_starts_cycle: RunHeatingCycleUseCase,
+    f_gate_clock: MonotonicClockStub,
+    f_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+) -> None:
+    first = f_two_starts_cycle.execute(_at(MORNING))
+    f_gate_clock.advance(MINUTE.total_seconds())
+    second = f_two_starts_cycle.execute(_at(MORNING + MINUTE))
+
+    assert (first.outcomes, second.outcomes, f_living_room_thermostat.commands, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.WAITING, 'living-room': ZoneCycleOutcome.APPLIED},
+        {'kitchen': ZoneCycleOutcome.APPLIED, 'living-room': ZoneCycleOutcome.THROTTLED},
+        [('setpoint', Decimal('28.0'))],
+        [('setpoint', Decimal('28.0'))],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_live_start_cycle', 'outcome', 'commands'),
+    [
+        ((MeterWatch(seen=True, stale_since=-59.0), '10.0', None), ZoneCycleOutcome.WAITING, []),
+        ((MeterWatch(seen=False, stale_since=-59.0), '10.0', None), ZoneCycleOutcome.WAITING, []),
+        (
+            (MeterWatch(seen=True, stale_since=-60.0), '10.0', None),
+            ZoneCycleOutcome.APPLIED,
+            [('setpoint', Decimal('28.0'))],
+        ),
+        (
+            (MeterWatch(seen=False, stale_since=-60.0), '10.0', None),
+            ZoneCycleOutcome.APPLIED,
+            [('setpoint', Decimal('28.0'))],
+        ),
+        (
+            (MeterWatch(seen=True, stale_since=-60.0), '10.0', {'hallway': HALLWAY_HEATING}),
+            ZoneCycleOutcome.WAITING,
+            [],
+        ),
+    ],
+    ids=[
+        'first_minute_of_a_stale_meter',
+        'first_minute_after_the_start_without_a_meter_reading',
+        'lost_meter_with_no_floor_drawing_on_the_phase',
+        'meter_silent_since_the_start_for_a_minute',
+        'lost_meter_with_another_floor_drawing_on_the_phase',
+    ],
+    indirect=['f_live_start_cycle'],
+)
+def test_live_start_on_a_stale_meter_waits_a_minute_then_keeps_one_drawing_floor_a_phase(
+    f_live_start_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    outcome: ZoneCycleOutcome,
+    commands: list[tuple[str, object]],
+) -> None:
+    output = f_live_start_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_thermostat.commands) == ({'kitchen': outcome}, commands)

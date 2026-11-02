@@ -6,10 +6,10 @@ import structlog
 from django.conf import settings
 from django.utils import timezone
 
-from apps.climate.domain.change import ThermostatChange, plan_change
+from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.control import ClimateControl
+from apps.climate.domain.drive import StartAnswer, ZoneDrive, ZoneStart, plan_drive
 from apps.climate.domain.events import SecondFloorGuardDryRun, ZoneCommandFailed, ZoneCommandIssued
-from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import (
     Morning,
     ZoneLearningRecord,
@@ -17,15 +17,17 @@ from apps.climate.domain.learning import (
     learn_early_stop_offset,
     learn_morning,
 )
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.climate.domain.observation import StopWatch
+from apps.climate.domain.ports import LoadGate
 from apps.climate.domain.second_floor_guard import decide_second_floor_guard
-from apps.climate.domain.write_guard import write_allowed
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import (
     MINUTE,
     CycleConditions,
     ZoneConditions,
+    ZoneDecision,
     ZoneFollowUp,
     decide_zone,
     follow_zone,
@@ -45,6 +47,7 @@ from apps.devices.services.state_store import (
     temperature_state_store,
     thermostat_state_store,
 )
+from apps.power.services.guard_load_gate import GuardLoadGate
 
 logger = structlog.get_logger(__name__)
 
@@ -60,6 +63,15 @@ class RunHeatingCycleOutputDTO:
     outcomes: dict[str, ZoneCycleOutcome]
 
 
+@dataclass(frozen=True, kw_only=True)
+class ZoneRun:
+    zone: ZoneSettings
+    memory: ZoneMemory
+    conditions: ZoneConditions
+    decision: ZoneDecision
+    drive: ZoneDrive
+
+
 class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycleOutputDTO]):
     def __init__(
         self,
@@ -70,6 +82,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         temperatures: TemperatureStateStore,
         provider: ThermostatProvider,
         book: ControlBook,
+        gate: LoadGate,
         dry_run: bool,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
@@ -81,6 +94,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         self._temperatures = temperatures
         self._provider = provider
         self._book = book
+        self._gate = gate
         self._dry_run = dry_run
 
     @classmethod
@@ -93,6 +107,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             temperatures=temperature_state_store,
             provider=driver_registry,
             book=control_book,
+            gate=GuardLoadGate.init(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
@@ -108,10 +123,17 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             control=control,
             outdoor=self._temperature(control.sensors.outdoor_slug),
         )
+        held = self._gate.held_zones()
+        runs = [
+            self._plan(zone, self._conditions(zone, learning, guarded_zone), cycle, held=zone.slug in held)
+            for zone in zones
+        ]
+        answers = self._gate.ask_starts(
+            [ZoneStart(zone=run.zone.slug, writes_live=run.conditions.writes_live) for run in runs if run.drive.starts],
+            now,
+        )
         return RunHeatingCycleOutputDTO(
-            outcomes={
-                zone.slug: self._run_zone(zone, self._conditions(zone, learning, guarded_zone), cycle) for zone in zones
-            },
+            outcomes={run.zone.slug: self._run_zone(run, answers.get(run.zone.slug), cycle) for run in runs},
         )
 
     def _conditions(
@@ -162,32 +184,40 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             ),
         )
 
-    def _run_zone(self, zone: ZoneSettings, conditions: ZoneConditions, cycle: CycleConditions) -> ZoneCycleOutcome:
+    def _plan(self, zone: ZoneSettings, conditions: ZoneConditions, cycle: CycleConditions, *, held: bool) -> ZoneRun:
         memory = self._book.zone(zone.slug)
         decision = decide_zone(zone, memory, conditions, cycle)
-        outcome = self._drive(zone, decision.target, cycle.now, live=conditions.writes_live)
-        follow_up = follow_zone(zone, memory, decision, outcome, conditions, cycle)
-        self._journal_air_dry_run(zone, follow_up, cycle.now)
-        self._learn(zone, follow_up, conditions.learning, cycle.control)
-        self._book.remember_zone(zone.slug, follow_up.memory)
+        snapshot = self._store.snapshot(zone.thermostat_slug)
+        drive = plan_drive(
+            decision.target,
+            snapshot.state if snapshot.available else None,
+            last_write_at=zone.last_command_at if conditions.writes_live else zone.last_dry_run_at,
+            now=cycle.now,
+            held=held,
+        )
+        return ZoneRun(zone=zone, memory=memory, conditions=conditions, decision=decision, drive=drive)
+
+    def _run_zone(self, run: ZoneRun, answer: StartAnswer | None, cycle: CycleConditions) -> ZoneCycleOutcome:
+        outcome = self._drive(run, answer, cycle.now)
+        follow_up = follow_zone(run.zone, run.memory, run.decision, outcome, run.conditions, cycle)
+        self._journal_air_dry_run(run.zone, follow_up, cycle.now)
+        self._learn(run.zone, follow_up, run.conditions.learning, cycle.control)
+        self._book.remember_zone(run.zone.slug, follow_up.memory)
         return outcome
 
-    def _drive(self, zone: ZoneSettings, target: ThermostatTarget, now: datetime, *, live: bool) -> ZoneCycleOutcome:
-        snapshot = self._store.snapshot(zone.thermostat_slug)
-        if not snapshot.available or snapshot.state is None:
-            return ZoneCycleOutcome.DEVICE_UNAVAILABLE
+    def _drive(self, run: ZoneRun, answer: StartAnswer | None, now: datetime) -> ZoneCycleOutcome:
+        if run.drive.outcome is not None:
+            return run.drive.outcome
 
-        change = plan_change(target, snapshot.state)
-        if change.is_empty:
-            return ZoneCycleOutcome.UNCHANGED
+        if answer is not None and answer.note is not None:
+            self._event_store.add_event(answer.note)
+        if answer is not None and not answer.granted:
+            return ZoneCycleOutcome.WAITING
 
-        if not write_allowed(zone.last_command_at if live else zone.last_dry_run_at, now):
-            return ZoneCycleOutcome.THROTTLED
+        if not run.conditions.writes_live:
+            return self._journal_dry_run(run.zone, run.drive.change, now)
 
-        if not live:
-            return self._journal_dry_run(zone, change, now)
-
-        return self._issue(zone, change, now)
+        return self._issue(run.zone, run.drive.change, now)
 
     def _journal_dry_run(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
         self._zones.mark_dry_run(zone.slug, now)
