@@ -58,7 +58,7 @@ The domain talks to devices through capability ports. A driver implements one or
 | `ClimateUnit` | mode, target, room temperature | mode, target |
 | `EvCharger` | charging state, current | current limit |
 
-v1 drivers: Tuya thermostat, Tuya plug, ESPHome temperature sensor, ESPHome phase meter.
+v1 drivers: Tuya thermostat, Tuya plug (read-only or switchable), ESPHome temperature sensor, ESPHome phase meter.
 `ClimateUnit` and `EvCharger` ship as stub drivers: a device can be configured with them and the panel shows it as "driver not implemented".
 
 Every reading carries a timestamp. A device is **unavailable** after 10 minutes without a reading, counted on the monotonic clock from the moment teplo stored the reading, so setting the system clock neither hides a lost device nor makes a live one look lost; the phase meter is **stale** after 10 seconds.
@@ -85,7 +85,8 @@ The driver reads DP 3 into the thermostat state as heating, idle or, when DP 3 i
 ### Tuya plugs
 
 - Wi-Fi plugs with power metering (Tuya category `cz`), local protocol 3.5 on TCP 6668; their secrets set `protocol = '3.5'`.
-- The two water heater plugs are read-only until stage 4: the driver implements `MeteredPlug` and has no switching operation, so nothing in teplo can switch them. Switching will come as `SwitchablePlug` behind dry-run.
+- A plug's driver says whether teplo may switch it. `tuya_plug` implements `MeteredPlug` only and has no switching operation, so nothing in teplo can switch a plug that keeps it. Monitor-only plugs, such as the washing machine's, keep it: the database refuses a monitor-only device with a switching driver. `tuya_switchable_plug` implements `SwitchablePlug`: it reads the plug as `tuya_plug` does and switches the relay by writing DP 1 under the same lock as its reads, so a switch never overlaps a poll of the plug; a socket error or a reply carrying `Error` fails the write as `device_unavailable`, as it fails a read. Only plugs with that driver are offered as the plug of a load (section 7), and only load management switches a plug.
+- The driver registry builds one driver per plug, the one its device names when the plug is first used, and the poll reads a switchable plug through the driver that switches it. Asked for a switchable plug, the registry reads the device each time and refuses with `plug_not_switchable` when the device is monitor-only or its driver only reads. A plug given the switching driver while teplo runs is read through that driver once something first asks to switch it.
 - The driver takes its client from the shared Tuya client builder, like the thermostat driver, so the long-lived client never switches itself to "device22" mode, which queries DP 1 only (see Power loss in section 9). tinytuya 1.20 makes that switch only for protocols 3.3 and 3.4, so for the 3.5 plugs the guard is insurance.
 - A job of their own polls the plugs every 30 seconds, so a lost plug never delays the thermostats. Availability changes are journaled as for a thermostat, a plug that stays unavailable raises the device-lost alert under its own name (section 9), and the recorder samples `plug_on` (0 or 1), `plug_power` (W), `plug_current` (A) and `plug_voltage` (V) every minute.
 - Data points, from the Tuya cloud model and a local status read:

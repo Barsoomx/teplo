@@ -57,3 +57,7 @@ class ThermostatProvider(Protocol):
 
 class PlugProvider(Protocol):
     def plug(self, slug: str) -> MeteredPlug: ...
+
+
+class SwitchablePlugProvider(Protocol):
+    def switchable_plug(self, slug: str) -> SwitchablePlug: ...

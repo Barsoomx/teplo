@@ -3,12 +3,16 @@ from decimal import Decimal
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-from apps.devices.domain.kinds import DeviceKind
+from apps.devices.domain.kinds import SWITCHABLE_PLUG_DRIVERS, DeviceKind
 from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 
 AMPS_VALIDATORS = [MinValueValidator(Decimal('0.1')), MaxValueValidator(Decimal('63.0'))]
 PHASE_CHOICES = [(phase.value, phase.value) for phase in LoadPhase]
-SHEDDABLE_PLUGS = {'kind': DeviceKind.PLUG.value, 'monitor_only': False}
+SHEDDABLE_PLUGS = {
+    'kind': DeviceKind.PLUG.value,
+    'monitor_only': False,
+    'driver__in': [driver.value for driver in SWITCHABLE_PLUG_DRIVERS],
+}
 
 
 class Load(models.Model):

@@ -8,6 +8,7 @@ from apps.devices.domain.errors import (
     DeviceProtocolError,
     DeviceUnavailableError,
     DriverNotImplementedError,
+    PlugNotSwitchableError,
     SensorReadingError,
 )
 
@@ -22,6 +23,11 @@ from apps.devices.domain.errors import (
         (DeviceConfigError('no address'), 'device_config_invalid', 'no address'),
         (SensorReadingError('humidity: nan'), 'sensor_reading_failed', 'humidity: nan'),
         (BrokerUnavailableError('mqtt broker unreachable'), 'broker_unavailable', 'mqtt broker unreachable'),
+        (
+            PlugNotSwitchableError('plug-washer', 'it is monitor-only'),
+            'plug_not_switchable',
+            'plug plug-washer cannot be switched: it is monitor-only',
+        ),
     ],
 )
 def test_device_errors_carry_codes(error: DomainError, code: str, detail: str) -> None:

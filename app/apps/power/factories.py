@@ -29,7 +29,7 @@ class LoadFactory(factory.django.DjangoModelFactory):
 
 class PlugLoadFactory(LoadFactory):
     kind = LoadKind.PLUG
-    device = factory.SubFactory(DeviceFactory, kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG)
+    device = factory.SubFactory(DeviceFactory, kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_SWITCHABLE_PLUG)
 
 
 class ZoneLoadFactory(LoadFactory):
