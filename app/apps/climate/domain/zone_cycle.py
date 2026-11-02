@@ -8,7 +8,7 @@ from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.events import AirControlDryRun, OptimalStartDryRun
 from apps.climate.domain.floor_policy import ThermostatTarget, decide_floor_target
 from apps.climate.domain.learning import Morning, ZoneLearningRecord
-from apps.climate.domain.memory import AirDecision, ZoneMemory
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import FOLLOWED, AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import (
     MorningProgress,
@@ -90,7 +90,7 @@ def follow_zone(
         memory=ZoneMemory(
             path=decision.path,
             mode=decision.mode if cycle.clock_trusted else None,
-            would_be=memory.would_be,
+            would_be_target=memory.would_be_target,
             preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
             morning=morning.morning,
             last_morning_comfort_at=_last_morning_comfort_at(memory, morning),
@@ -195,28 +195,29 @@ def _follow_air_dry_run(
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
     follow_up = replace(follow_up, optimal_start=_optimal_start(zone, memory, plan, cycle.now))
-    would_be = AirDecision(state=plan.state, target=_guarded(zone, plan.thermostat, conditions))
-    if would_be == memory.would_be:
+    followed = memory.air_state_on(ControlPath.AIR_DRY_RUN)
+    target = _guarded(zone, plan.thermostat, conditions)
+    if outcome is ZoneCycleOutcome.DEVICE_UNAVAILABLE:
+        return replace(follow_up, memory=replace(follow_up.memory, air_state=followed))
+
+    if target == memory.would_be_target:
         return replace(follow_up, memory=replace(follow_up.memory, air_state=plan.state))
 
-    if outcome is ZoneCycleOutcome.DEVICE_UNAVAILABLE or not write_allowed(zone.last_air_dry_run_at, cycle.now):
-        return replace(
-            follow_up,
-            memory=replace(follow_up.memory, air_state=memory.air_state_on(ControlPath.AIR_DRY_RUN)),
-        )
+    if not write_allowed(zone.last_air_dry_run_at, cycle.now):
+        return replace(follow_up, memory=replace(follow_up.memory, air_state=followed))
 
     return replace(
         follow_up,
-        memory=replace(follow_up.memory, air_state=plan.state, would_be=would_be),
+        memory=replace(follow_up.memory, air_state=plan.state, would_be_target=target),
         air_dry_run=AirControlDryRun(
             zone=zone.slug,
             air=plan.air,
             target=plan.target,
             mode=plan.mode,
             state=plan.state,
-            previous_state=None if memory.would_be is None else memory.would_be.state,
-            power=would_be.target.power,
-            setpoint=would_be.target.setpoint,
+            previous_state=followed,
+            power=target.power,
+            setpoint=target.setpoint,
             early_stop_offset=plan.early_stop_offset,
             lead_minutes=None if plan.lead is None else plan.lead // MINUTE,
             occurred_at=cycle.now,

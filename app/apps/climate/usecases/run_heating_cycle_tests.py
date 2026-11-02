@@ -15,7 +15,7 @@ from apps.climate.domain.events import (
 )
 from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import AirSample, Morning
-from apps.climate.domain.memory import AirDecision, ZoneMemory
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.ports import ZoneLearningStore, ZoneStore
@@ -49,6 +49,7 @@ COMFORT_AT = datetime(2026, 10, 29, 6, 30, tzinfo=MOSCOW)
 FIXED_START = datetime(2026, 10, 29, 3, 30, tzinfo=MOSCOW)
 OPTIMAL_START = datetime(2026, 10, 29, 3, 50, tzinfo=MOSCOW)
 CAPPED_START = COMFORT_AT - timedelta(hours=4)
+BOOST_END = MORNING + timedelta(hours=2)
 FRESH = timedelta(0)
 MINUTE = timedelta(minutes=1)
 UNAVAILABLE_AFTER = timedelta(minutes=10)
@@ -782,6 +783,47 @@ def f_clock_doubted_preheat_cycle(
 
 
 @pytest.fixture
+def boosted_thermostats(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+) -> dict[str, FloorThermostat]:
+    Zone.objects.filter(pk=_air_zone().pk).update(boost_until=BOOST_END)
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat}
+    store.record_state(KITCHEN, _state('30.0'))
+    temperatures.record_state('air-kitchen', _reading('21.5'))
+    _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(MORNING))
+    temperatures.record_state('air-kitchen', _reading('21.8'))
+    return thermostats
+
+
+@pytest.fixture
+def f_boosted_air_cycle(
+    boosted_thermostats: dict[str, FloorThermostat],
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    return _use_case(store, temperatures, boosted_thermostats, book, dispatcher)
+
+
+@pytest.fixture
+def f_boost_ending_air_cycle(
+    boosted_thermostats: dict[str, FloorThermostat],
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _use_case(store, temperatures, boosted_thermostats, book, EventDispatcher()).execute(
+        _at(BOOST_END - timedelta(minutes=10)),
+    )
+    return _use_case(store, temperatures, boosted_thermostats, book, dispatcher)
+
+
+@pytest.fixture
 def f_guard_cycle(
     request: pytest.FixtureRequest,
     store: ThermostatStateStore,
@@ -1140,6 +1182,42 @@ def test_air_dry_run_preheats_on_start_held_before_floor_mode_warmed_room(
             occurred_at=OPTIMAL_START,
         ),
     ]
+
+
+def test_air_dry_run_follows_would_be_stop_under_boost_without_entry(
+    f_boosted_air_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_boosted_air_cycle.execute(_at(BOOST_END - timedelta(minutes=10)))
+
+    assert (f_events, Zone.objects.get(slug='kitchen').last_air_dry_run_at) == ([], MORNING)
+
+
+def test_air_dry_run_journals_idle_setpoint_when_boost_ends_as_live_air_mode_writes_it(
+    f_boost_ending_air_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_boost_ending_air_cycle.execute(_at(BOOST_END))
+
+    assert (f_events, Zone.objects.get(slug='kitchen').last_air_dry_run_at) == (
+        [
+            _issued('kitchen', '28.0', BOOST_END),
+            AirControlDryRun(
+                zone='kitchen',
+                air=Decimal('21.8'),
+                target=Decimal('22.0'),
+                mode=ScheduleMode.COMFORT,
+                state=AirState.IDLE,
+                previous_state=AirState.IDLE,
+                power=True,
+                setpoint=Decimal('18.0'),
+                early_stop_offset=Decimal('0.30'),
+                lead_minutes=None,
+                occurred_at=BOOST_END,
+            ),
+        ],
+        BOOST_END,
+    )
 
 
 @pytest.mark.parametrize(
@@ -1626,7 +1704,7 @@ def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on
             path=ControlPath.AIR_DRY_RUN,
             mode=ScheduleMode.COMFORT,
             air_state=AirState.HEAT,
-            would_be=AirDecision(state=AirState.HEAT, target=ThermostatTarget(power=True, setpoint=Decimal('30.0'))),
+            would_be_target=ThermostatTarget(power=True, setpoint=Decimal('30.0')),
         ),
     )
 

@@ -10,7 +10,7 @@ from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.events import AirControlDryRun, OptimalStartDryRun
 from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import AirSample, HeatUpModel, Morning, ZoneLearningRecord
-from apps.climate.domain.memory import AirDecision, ZoneMemory
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.optimal_start import OptimalStartSettings, PreheatStart
@@ -59,7 +59,7 @@ SLOW_LEARNED = ZoneLearningRecord(
 COMFORT = ThermostatTarget(power=True, setpoint=Decimal('28.0'))
 HEAT = ThermostatTarget(power=True, setpoint=Decimal('29.0'))
 IDLE = ThermostatTarget(power=True, setpoint=Decimal('18.0'))
-HEATING = AirDecision(state=AirState.HEAT, target=HEAT)
+BOOST = ThermostatTarget(power=True, setpoint=Decimal('30.0'))
 
 
 def _cycle(now: datetime, *, clock_trusted: bool = True) -> CycleConditions:
@@ -145,8 +145,23 @@ def f_journaled_memory() -> ZoneMemory:
         path=ControlPath.AIR_DRY_RUN,
         mode=ScheduleMode.COMFORT,
         air_state=AirState.HEAT,
-        would_be=HEATING,
+        would_be_target=HEAT,
     )
+
+
+@pytest.fixture
+def f_boost_journaled_memory(f_journaled_memory: ZoneMemory) -> ZoneMemory:
+    return replace(f_journaled_memory, would_be_target=BOOST)
+
+
+@pytest.fixture
+def f_idle_under_boost_memory(f_boost_journaled_memory: ZoneMemory) -> ZoneMemory:
+    return replace(f_boost_journaled_memory, air_state=AirState.IDLE)
+
+
+@pytest.fixture
+def f_boost_ended_zone(f_zone: ZoneSettings) -> ZoneSettings:
+    return replace(f_zone, boost_until=MORNING, last_air_dry_run_at=MORNING - timedelta(hours=2))
 
 
 @pytest.fixture
@@ -166,7 +181,7 @@ def f_latched_memory() -> ZoneMemory:
         path=ControlPath.AIR_DRY_RUN,
         mode=ScheduleMode.NIGHT,
         air_state=AirState.IDLE,
-        would_be=AirDecision(state=AirState.IDLE, target=IDLE),
+        would_be_target=IDLE,
         preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=2, minutes=40)),
     )
 
@@ -309,7 +324,7 @@ def test_stop_watch_hands_over_its_peak_two_hours_after_stop(
 def test_air_dry_run_journals_first_decision(f_zone: ZoneSettings) -> None:
     follow_up = _follow(f_zone, ZoneMemory(), _conditions('21.5'), _cycle(MORNING), ZoneCycleOutcome.UNCHANGED)
 
-    assert (follow_up.air_dry_run, follow_up.memory.would_be, follow_up.memory.air_state) == (
+    assert (follow_up.air_dry_run, follow_up.memory.would_be_target, follow_up.memory.air_state) == (
         AirControlDryRun(
             zone='kitchen',
             air=Decimal('21.5'),
@@ -323,7 +338,7 @@ def test_air_dry_run_journals_first_decision(f_zone: ZoneSettings) -> None:
             lead_minutes=None,
             occurred_at=MORNING,
         ),
-        HEATING,
+        HEAT,
         AirState.HEAT,
     )
 
@@ -367,7 +382,7 @@ def test_air_dry_run_journals_nothing_while_decision_holds(
         ZoneCycleOutcome.UNCHANGED,
     )
 
-    assert (follow_up.air_dry_run, follow_up.memory.would_be) == (None, HEATING)
+    assert (follow_up.air_dry_run, follow_up.memory.would_be_target) == (None, HEAT)
 
 
 @pytest.mark.parametrize(
@@ -401,6 +416,56 @@ def test_air_dry_run_change_waits_for_available_thermostat(
     )
 
     assert (follow_up.air_dry_run, follow_up.memory.air_state) == (None, AirState.HEAT)
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'state'),
+    [(ZoneCycleOutcome.UNCHANGED, AirState.IDLE), (ZoneCycleOutcome.DEVICE_UNAVAILABLE, AirState.HEAT)],
+    ids=['thermostat_available', 'thermostat_unavailable'],
+)
+def test_air_dry_run_state_change_that_keeps_boost_target_is_not_journaled(
+    f_boosted_zone: ZoneSettings,
+    f_boost_journaled_memory: ZoneMemory,
+    outcome: ZoneCycleOutcome,
+    state: AirState,
+) -> None:
+    follow_up = _follow(f_boosted_zone, f_boost_journaled_memory, _conditions('21.8'), _cycle(MORNING), outcome)
+
+    assert (follow_up.air_dry_run, follow_up.memory.air_state, follow_up.memory.would_be_target) == (
+        None,
+        state,
+        BOOST,
+    )
+
+
+def test_air_dry_run_journals_idle_setpoint_of_state_it_follows_once_boost_ends(
+    f_boost_ended_zone: ZoneSettings,
+    f_idle_under_boost_memory: ZoneMemory,
+) -> None:
+    follow_up = _follow(
+        f_boost_ended_zone,
+        f_idle_under_boost_memory,
+        _conditions('21.8'),
+        _cycle(MORNING),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.air_dry_run, follow_up.memory.would_be_target) == (
+        AirControlDryRun(
+            zone='kitchen',
+            air=Decimal('21.8'),
+            target=TARGET,
+            mode=ScheduleMode.COMFORT,
+            state=AirState.IDLE,
+            previous_state=AirState.IDLE,
+            power=True,
+            setpoint=Decimal('18.0'),
+            early_stop_offset=Decimal('0.3'),
+            lead_minutes=None,
+            occurred_at=MORNING,
+        ),
+        IDLE,
+    )
 
 
 def test_air_dry_run_journals_optimal_start_when_preheat_would_begin(f_zone: ZoneSettings) -> None:

@@ -10,18 +10,12 @@ from apps.climate.domain.optimal_start import PreheatStart
 
 
 @dataclass(frozen=True, kw_only=True)
-class AirDecision:
-    state: AirState
-    target: ThermostatTarget
-
-
-@dataclass(frozen=True, kw_only=True)
 class ZoneMemory:
     path: ControlPath | None = None
     mode: ScheduleMode | None = None
     air_state: AirState | None = None
     heat_target: Decimal | None = None
-    would_be: AirDecision | None = None
+    would_be_target: ThermostatTarget | None = None
     preheat: PreheatStart | None = None
     morning: Morning | None = None
     last_morning_comfort_at: datetime | None = None
