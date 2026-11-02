@@ -403,7 +403,7 @@ Learning is passive, so it works in dry-run. When a poll shows that a load chang
 
 ### EV detection
 
-A rise of 10–22 A on one phase within 15 seconds that no load change explains is watched; it grows while the charger ramps up, and held for 5 minutes it is journaled as `ev_charging_started` on that phase. `ev_charging_stopped` follows when the phase falls back to within 3 A of its level before the rise, or drops by a similar step. EV detection only journals: a charging car reduces the headroom, which the guard already sees in the measured current. Recommended car setting at home: 16 A or less.
+A rise of 10–22 A on one phase within 15 seconds is watched when the samples cover those seconds without a gap and no load switching on explains it; it grows while the charger ramps up, and held for 5 minutes it is journaled as `ev_charging_started` on that phase. `ev_charging_stopped` follows when the phase falls back to within 3 A of its level before the rise, or drops by a similar step. The guard's own live sheds do not hide a charge, though the overload they answer is often the charge itself: the effective current of a live shed made within a rise is added back to the rise, the level a stop is measured against moves down and back up by the effective currents of the live sheds made and restored on the phase since the rise, a drop within 18 seconds of a live shed on the phase is not taken for a stop, and no rise is looked for while a live shed on the phase is younger than 5 seconds, as its drop may not show yet. EV detection only journals: a charging car reduces the headroom, which the guard already sees in the measured current. Recommended car setting at home: 16 A or less.
 
 ### Journal
 

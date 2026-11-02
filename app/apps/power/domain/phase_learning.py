@@ -105,7 +105,7 @@ def vote_for_change(
         return None
 
     margin = STEP_MARGIN.total_seconds()
-    if not _covered([sample.at for sample in samples], change.since - margin, change.until + 2 * margin):
+    if not covered([sample.at for sample in samples], change.since - margin, change.until + 2 * margin):
         return None
 
     step = find_step(samples, change.since, change.until)
@@ -183,7 +183,7 @@ def _steps_at(samples: Sequence[PhaseSample], index: int) -> list[PhaseStep]:
     ]
 
 
-def _covered(moments: Sequence[float], start: float, end: float) -> bool:
+def covered(moments: Sequence[float], start: float, end: float) -> bool:
     if not moments or moments[0] > start or moments[-1] < end:
         return False
 

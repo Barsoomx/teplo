@@ -110,7 +110,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         phases, steps = self._watch(state, currents, read_at, at, input_dto.now)
         learning = follow_learning(state.learning, changes, phases.samples, at)
         learned = self._learned(loads, learning.learned, input_dto.now)
-        ev = self._follow_ev(state.ev, phases, learning.state.changes, at, input_dto.now)
+        ev = self._follow_ev(state, phases, learning.state.changes, at, input_dto.now)
         self._book.remember(
             replace(state, loads=learned, phases=phases, readings=readings, learning=learning.state, ev=ev),
         )
@@ -269,16 +269,16 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
 
     def _follow_ev(
         self,
-        watches: tuple[EvWatch, ...],
+        state: GuardState,
         phases: PhaseState,
         changes: Sequence[LoadChange],
         at: float,
         now: datetime,
     ) -> tuple[EvWatch, ...]:
         if not _fresh(phases.currents):
-            return watches
+            return state.ev
 
-        detection = detect_ev(watches, phases.samples, changes, at)
+        detection = detect_ev(state.ev, phases.samples, changes, at, sheds=tuple(state.shedding.sheds.values()))
         for watch in detection.started:
             logger.info('ev_charging_started', phase=watch.phase, amps=str(watch.step))
             self._event_store.add_event(_ev_event(EvChargingStarted, watch, now))
