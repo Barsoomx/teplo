@@ -6,7 +6,7 @@ from decimal import Decimal
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.headroom import Currents, overrun
 from apps.power.domain.load_status import LoadReading, LoadStatus
-from apps.power.domain.loads import MEASURED_PHASES, LoadPhase, LoadRecord, ShedReason
+from apps.power.domain.loads import MEASURED_PHASES, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.moments import elapsed
 
 SETTLE = timedelta(seconds=5)
@@ -100,6 +100,7 @@ def resumed_shed(record: LoadRecord, *, at: float, now: datetime, default_amps: 
         was_on=record.shed.was_on,
         at=at - max((now - record.shed.at).total_seconds(), 0.0),
         settled_at=SETTLED,
+        stamp_lost=record.kind is LoadKind.ZONE,
     )
 
 

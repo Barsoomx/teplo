@@ -468,6 +468,15 @@ def f_restarted_house_with_a_zone_shed_twenty_minutes_ago() -> House:
 
 
 @pytest.fixture
+def f_restarted_house_with_a_live_zone_shed_ten_minutes_ago() -> House:
+    return _house(
+        [replace(KITCHEN, live=True, shed=replace(STORED_SHED, at=NOW - timedelta(minutes=10), was_on=None))],
+        LIVE_CONTROL,
+        LIVE_ZONES,
+    )
+
+
+@pytest.fixture
 def f_teplo_dry_run_house() -> House:
     return _house(
         [replace(BOILER, live=True, shed=STORED_SHED), replace(KITCHEN, live=True)],
@@ -1603,6 +1612,23 @@ def test_zone_shed_whose_write_stamp_was_lost_stays_held_until_thirty_minutes_af
         _restored_at(late, 1800),
         f_live_floors_house_after_a_shed_whose_stamp_was_lost.book.held_zones(),
     ) == ([], frozenset({'kitchen'}), [(1804, ('kitchen',))], frozenset())
+
+
+def test_zone_shed_resumed_after_a_restart_is_handed_back_no_sooner_than_thirty_minutes_after_the_shed(
+    f_restarted_house_with_a_live_zone_shed_ten_minutes_ago: House,
+) -> None:
+    calm = _seconds(f_restarted_house_with_a_live_zone_shed_ten_minutes_ago.guard, 300, '10.0')
+    held = f_restarted_house_with_a_live_zone_shed_ten_minutes_ago.book.held_zones()
+    _pause(f_restarted_house_with_a_live_zone_shed_ten_minutes_ago.guard, 897)
+    _thermostat_read_off(f_restarted_house_with_a_live_zone_shed_ten_minutes_ago, 'thermostat-kitchen', 1197)
+    late = _seconds(f_restarted_house_with_a_live_zone_shed_ten_minutes_ago.guard, 4, '10.0')
+
+    assert (
+        _restored_at(calm, 1),
+        held,
+        _restored_at(late, 1198),
+        f_restarted_house_with_a_live_zone_shed_ten_minutes_ago.book.held_zones(),
+    ) == ([], frozenset({'kitchen'}), [(1200, ('kitchen',))], frozenset())
 
 
 def test_live_shed_the_database_fails_to_store_is_kept_and_stored_a_minute_later(

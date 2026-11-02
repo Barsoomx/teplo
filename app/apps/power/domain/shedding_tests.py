@@ -91,6 +91,19 @@ SHED_BOILER_RECORD = LoadRecord(
 )
 
 
+SHED_KITCHEN_RECORD = replace(
+    SHED_BOILER_RECORD,
+    slug='kitchen',
+    name='Кухня',
+    kind=LoadKind.ZONE,
+    zone_slug='kitchen',
+    device_slug='thermostat-kitchen',
+    priority=5,
+    nominal_amps=Decimal('8.0'),
+    shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+)
+
+
 @pytest.fixture
 def f_sheds() -> list[Shed]:
     return [
@@ -206,6 +219,22 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_date
             settled_at=SETTLED,
         ),
         Decimal(0),
+    )
+
+
+def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
+    resumed = resumed_shed(SHED_KITCHEN_RECORD, at=AT, now=NOW, default_amps=Decimal('6.0'))
+
+    assert resumed == Shed(
+        load='kitchen',
+        phase=LoadPhase.L2,
+        amps=Decimal('8.0'),
+        live=True,
+        reason=ShedReason.OVERLOAD,
+        was_on=None,
+        at=AT,
+        settled_at=SETTLED,
+        stamp_lost=True,
     )
 
 
