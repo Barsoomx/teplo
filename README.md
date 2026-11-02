@@ -131,6 +131,7 @@ app/
   apps/
     core/           BaseUseCase, DomainError, domain events, asyncio runtime
     climate/        zones, schedules, floor policy, heating cycle
+    power/          power cuts and their causes
     devices/        device registry, capability ports, Tuya drivers, state stores
     telemetry/      samples and the event journal
     notifications/  Telegram alerts: policy, outbox, Bot API client
