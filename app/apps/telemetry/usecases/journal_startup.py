@@ -27,8 +27,12 @@ class JournalStartupUseCase(BaseUseCase[JournalStartupInputDTO, JournalStartupOu
         return cls(journal=JournalRepository(), samples=SampleRepository())
 
     def _execute(self, input_dto: JournalStartupInputDTO) -> JournalStartupOutputDTO:
-        moments = [moment for moment in (self._journal.last_activity(), self._samples.last_recorded_at()) if moment]
-        last_activity = max(moments, default=None)
+        moments = (
+            self._journal.last_activity(),
+            self._samples.last_recorded_at(),
+            self._journal.previous_start_last_activity(),
+        )
+        last_activity = max((moment for moment in moments if moment is not None), default=None)
         self._journal.add(
             kind='teplo_started',
             subject='',

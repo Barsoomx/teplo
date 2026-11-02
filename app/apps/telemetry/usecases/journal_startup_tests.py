@@ -16,6 +16,8 @@ from apps.telemetry.usecases.journal_startup import (
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+LAGGING_BOOT = NOW - timedelta(hours=5)
+CARRIED_ACTIVITY = '2026-10-29T05:29:59.982Z'
 
 
 @pytest.fixture
@@ -26,6 +28,17 @@ def f_previous_entry() -> JournalEntry:
 @pytest.fixture
 def f_later_sample(f_previous_entry: JournalEntry) -> Sample:
     return SampleFactory.create(recorded_at=f_previous_entry.created_at + timedelta(hours=1))
+
+
+@pytest.fixture
+def start_on_a_lagging_clock() -> None:
+    JournalEntryFactory.create(
+        kind='teplo_started',
+        subject='',
+        payload={'last_activity': CARRIED_ACTIVITY},
+        created_at=LAGGING_BOOT,
+    )
+    SampleFactory.create(recorded_at=LAGGING_BOOT + timedelta(hours=1))
 
 
 @pytest.fixture
@@ -51,3 +64,16 @@ def test_startup_takes_later_sample_as_last_activity(
     output = f_use_case.execute(JournalStartupInputDTO(now=NOW))
 
     assert output == JournalStartupOutputDTO(last_activity=f_later_sample.recorded_at)
+
+
+@pytest.mark.usefixtures('f_previous_entry', 'start_on_a_lagging_clock')
+def test_startup_carries_forward_the_last_activity_a_start_on_a_lagging_clock_recorded(
+    f_use_case: JournalStartupUseCase,
+) -> None:
+    output = f_use_case.execute(JournalStartupInputDTO(now=NOW))
+
+    started = JournalEntry.objects.filter(kind='teplo_started').latest('pk')
+    assert (output, started.payload) == (
+        JournalStartupOutputDTO(last_activity=datetime(2026, 10, 29, 5, 29, 59, 982000, tzinfo=UTC)),
+        {'last_activity': CARRIED_ACTIVITY},
+    )
