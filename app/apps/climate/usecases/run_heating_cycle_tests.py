@@ -21,7 +21,6 @@ from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
 from apps.devices.services.state_store import ThermostatStateStore
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
-from apps.system.stubs import ClockStub
 
 pytestmark = pytest.mark.django_db
 
@@ -49,7 +48,6 @@ def _cycle(
     dispatcher: EventDispatcher,
     *,
     dry_run: bool = False,
-    clock_trusted: bool = True,
     reading_age: timedelta = FRESH,
 ) -> RunHeatingCycleUseCase:
     monotonic = MonotonicClockStub(now=0.0)
@@ -60,7 +58,6 @@ def _cycle(
         zones=ZoneRepository(),
         store=store,
         provider=ThermostatProviderStub(thermostats={zone.thermostat.slug: thermostat}),
-        clock=ClockStub(trusted=clock_trusted),
         dry_run=dry_run,
         dispatcher=dispatcher,
     )
@@ -116,22 +113,13 @@ def f_observed_cycle(
 
 
 @pytest.fixture
-def f_untrusted_cycle(
-    f_zone: Zone,
-    f_thermostat: FloorThermostatStub,
-    dispatcher: EventDispatcher,
-) -> RunHeatingCycleUseCase:
-    return _cycle(f_zone, _state('22.0'), f_thermostat, dispatcher, clock_trusted=False)
-
-
-@pytest.fixture
 def f_clock_behind_cycle(
     f_zone: Zone,
     f_thermostat: FloorThermostatStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     Zone.objects.filter(pk=f_zone.pk).update(last_command_at=NIGHT + timedelta(hours=2))
-    return _cycle(f_zone, _state('22.0', read_at=NIGHT), f_thermostat, dispatcher, clock_trusted=False)
+    return _cycle(f_zone, _state('22.0', read_at=NIGHT), f_thermostat, dispatcher)
 
 
 @pytest.fixture
@@ -141,7 +129,7 @@ def f_boost_ahead_of_clock_cycle(
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     Zone.objects.filter(pk=f_zone.pk).update(boost_until=NIGHT + timedelta(hours=5))
-    return _cycle(f_zone, _state('22.0', read_at=NIGHT), f_thermostat, dispatcher, clock_trusted=False)
+    return _cycle(f_zone, _state('22.0', read_at=NIGHT), f_thermostat, dispatcher)
 
 
 @pytest.fixture
@@ -204,7 +192,7 @@ def test_cycle_applies_comfort_setpoint(
     f_events: list[DomainEvent],
     f_zone: Zone,
 ) -> None:
-    output = f_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands, f_events, Zone.objects.get(pk=f_zone.pk).last_command_at) == (
         {'kitchen': ZoneCycleOutcome.APPLIED},
@@ -222,7 +210,7 @@ def test_cycle_applies_comfort_setpoint(
 
 
 def test_cycle_preheats_before_comfort(f_cycle: RunHeatingCycleUseCase, f_thermostat: FloorThermostatStub) -> None:
-    f_cycle.execute(RunHeatingCycleInputDTO(now=PREHEAT))
+    f_cycle.execute(RunHeatingCycleInputDTO(now=PREHEAT, clock_trusted=True))
 
     assert f_thermostat.commands == [('setpoint', Decimal('28.0'))]
 
@@ -231,16 +219,16 @@ def test_cycle_leaves_matching_thermostat_alone(
     f_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    output = f_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+    output = f_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.UNCHANGED}, [])
 
 
 def test_cycle_holds_comfort_when_clock_untrusted(
-    f_untrusted_cycle: RunHeatingCycleUseCase,
+    f_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    f_untrusted_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+    f_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT, clock_trusted=False))
 
     assert f_thermostat.commands == [('setpoint', Decimal('28.0'))]
 
@@ -249,7 +237,7 @@ def test_cycle_holds_comfort_when_clock_fell_behind_last_command(
     f_clock_behind_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    output = f_clock_behind_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+    output = f_clock_behind_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT, clock_trusted=False))
 
     assert (output.outcomes, f_thermostat.commands) == (
         {'kitchen': ZoneCycleOutcome.APPLIED},
@@ -261,7 +249,7 @@ def test_cycle_ignores_boost_ending_beyond_boost_duration_after_clock_moved_back
     f_boost_ahead_of_clock_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    output = f_boost_ahead_of_clock_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+    output = f_boost_ahead_of_clock_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT, clock_trusted=False))
 
     assert (output.outcomes, f_thermostat.commands) == (
         {'kitchen': ZoneCycleOutcome.APPLIED},
@@ -275,7 +263,7 @@ def test_dry_run_journals_without_writing(
     f_events: list[DomainEvent],
     f_zone: Zone,
 ) -> None:
-    output = f_dry_run_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_dry_run_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     zone = Zone.objects.get(pk=f_zone.pk)
     assert (output.outcomes, f_thermostat.commands, f_events, zone.last_dry_run_at, zone.last_command_at) == (
@@ -299,7 +287,7 @@ def test_zone_without_live_control_stays_in_dry_run(
     f_thermostat: FloorThermostatStub,
     f_events: list[DomainEvent],
 ) -> None:
-    output = f_observed_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_observed_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands, f_events) == (
         {'kitchen': ZoneCycleOutcome.DRY_RUN},
@@ -319,7 +307,7 @@ def test_cycle_switches_program_mode_to_hold(
     f_program_mode_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    f_program_mode_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT))
+    f_program_mode_cycle.execute(RunHeatingCycleInputDTO(now=NIGHT, clock_trusted=True))
 
     assert f_thermostat.commands == [('mode', ThermostatMode.HOLD), ('setpoint', Decimal('22.0'))]
 
@@ -328,7 +316,7 @@ def test_cycle_throttles_zone_commanded_recently(
     f_recent_command_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    output = f_recent_command_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_recent_command_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.THROTTLED}, [])
 
@@ -337,7 +325,7 @@ def test_cycle_writes_at_once_when_zone_goes_live_after_dry_run(
     f_promoted_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    output = f_promoted_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_promoted_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands) == (
         {'kitchen': ZoneCycleOutcome.APPLIED},
@@ -349,7 +337,7 @@ def test_dry_run_throttles_its_journal_like_live_writes(
     f_recent_dry_run_cycle: RunHeatingCycleUseCase,
     f_events: list[DomainEvent],
 ) -> None:
-    output = f_recent_dry_run_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_recent_dry_run_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_events) == ({'kitchen': ZoneCycleOutcome.THROTTLED}, [])
 
@@ -358,13 +346,13 @@ def test_cycle_skips_unavailable_thermostat(
     f_stale_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    output = f_stale_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_stale_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.DEVICE_UNAVAILABLE}, [])
 
 
 def test_cycle_reports_failed_write(f_failing_cycle: RunHeatingCycleUseCase, f_events: list[DomainEvent]) -> None:
-    output = f_failing_cycle.execute(RunHeatingCycleInputDTO(now=MORNING))
+    output = f_failing_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_events) == (
         {'kitchen': ZoneCycleOutcome.FAILED},

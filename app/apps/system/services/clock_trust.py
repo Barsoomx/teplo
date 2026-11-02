@@ -1,10 +1,13 @@
 import re
 import subprocess
+import time
 from collections.abc import Callable
+from datetime import datetime
 
 from django.conf import settings
+from django.utils import timezone
 
-from apps.system.domain.clock import ClockStatus, ClockStatusCode, ClockTrustSource
+from apps.system.domain.clock import ClockReading, ClockStatus, ClockStatusCode, ClockTrustSource
 
 NDMC_COMMAND = ('/bin/ndmc', '-c', 'show ntp status')
 SYNCHRONIZED_PATTERN = re.compile(r'synchronized:\s*(yes|no)')
@@ -48,6 +51,16 @@ def clock_trust_source() -> ClockTrustSource:
         return NdmsNtpSource.init()
 
     return SystemClockSource()
+
+
+def read_clock(
+    source: ClockTrustSource,
+    *,
+    wall_clock: Callable[[], datetime] = timezone.now,
+    monotonic_clock: Callable[[], float] = time.monotonic,
+) -> ClockReading:
+    trusted = source.status().trusted
+    return ClockReading(now=wall_clock(), monotonic=monotonic_clock(), trusted=trusted)
 
 
 def _run_command(command: tuple[str, ...]) -> str:

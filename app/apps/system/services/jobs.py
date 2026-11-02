@@ -10,6 +10,7 @@ from apps.devices.usecases.poll_thermostats import PollThermostatsInputDTO, Poll
 from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, DeliverAlertsUseCase
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
 from apps.notifications.usecases.note_startup import NoteStartupInputDTO, NoteStartupUseCase
+from apps.system.services.clock_trust import clock_trust_source, read_clock
 from apps.telemetry.usecases.capture_samples import CaptureSamplesInputDTO, CaptureSamplesUseCase
 from apps.telemetry.usecases.flush_samples import FlushSamplesInputDTO, FlushSamplesUseCase
 from apps.telemetry.usecases.journal_startup import JournalStartupInputDTO, JournalStartupUseCase
@@ -47,7 +48,10 @@ def capture_samples() -> object:
 
 
 def run_heating_cycle() -> object:
-    return RunHeatingCycleUseCase.init().execute(RunHeatingCycleInputDTO(now=timezone.now()))
+    reading = read_clock(clock_trust_source())
+    return RunHeatingCycleUseCase.init().execute(
+        RunHeatingCycleInputDTO(now=reading.now, clock_trusted=reading.trusted),
+    )
 
 
 def flush_samples() -> object:
@@ -55,7 +59,10 @@ def flush_samples() -> object:
 
 
 def evaluate_alerts() -> object:
-    return EvaluateAlertsUseCase.init().execute(EvaluateAlertsInputDTO(now=timezone.now(), monotonic=time.monotonic()))
+    reading = read_clock(clock_trust_source())
+    return EvaluateAlertsUseCase.init().execute(
+        EvaluateAlertsInputDTO(now=reading.now, monotonic=reading.monotonic, clock_trusted=reading.trusted),
+    )
 
 
 def deliver_alerts() -> object:

@@ -19,8 +19,6 @@ from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.capabilities import ThermostatProvider
 from apps.devices.services.driver_registry import driver_registry
 from apps.devices.services.state_store import ThermostatStateStore, thermostat_state_store
-from apps.system.domain.clock import ClockTrustSource
-from apps.system.services.clock_trust import clock_trust_source
 
 logger = structlog.get_logger(__name__)
 
@@ -37,6 +35,7 @@ class ZoneCycleOutcome(StrEnum):
 @dataclass(frozen=True, kw_only=True)
 class RunHeatingCycleInputDTO:
     now: datetime
+    clock_trusted: bool
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -50,7 +49,6 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         zones: ZoneRepository,
         store: ThermostatStateStore,
         provider: ThermostatProvider,
-        clock: ClockTrustSource,
         dry_run: bool,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
@@ -58,7 +56,6 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         self._zones = zones
         self._store = store
         self._provider = provider
-        self._clock = clock
         self._dry_run = dry_run
 
     @classmethod
@@ -67,15 +64,15 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             zones=ZoneRepository(),
             store=thermostat_state_store,
             provider=driver_registry,
-            clock=clock_trust_source(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
     def _execute(self, input_dto: RunHeatingCycleInputDTO) -> RunHeatingCycleOutputDTO:
         now = timezone.localtime(input_dto.now)
-        clock_trusted = self._clock.status().trusted
         return RunHeatingCycleOutputDTO(
-            outcomes={zone.slug: self._run_zone(zone, now, clock_trusted) for zone in self._zones.all_settings()},
+            outcomes={
+                zone.slug: self._run_zone(zone, now, input_dto.clock_trusted) for zone in self._zones.all_settings()
+            },
         )
 
     def _run_zone(self, zone: ZoneSettings, now: datetime, clock_trusted: bool) -> ZoneCycleOutcome:

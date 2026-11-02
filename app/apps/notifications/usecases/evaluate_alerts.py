@@ -13,14 +13,13 @@ from apps.notifications.services.alert_book import AlertBook, alert_book
 from apps.notifications.services.plug_source import PlugSource
 from apps.notifications.services.thermostat_source import ThermostatSource
 from apps.notifications.services.zone_source import ZoneHeatingSource
-from apps.system.domain.clock import ClockTrustSource
-from apps.system.services.clock_trust import clock_trust_source
 
 
 @dataclass(frozen=True, kw_only=True)
 class EvaluateAlertsInputDTO:
     now: datetime
     monotonic: float
+    clock_trusted: bool
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,14 +34,12 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
         self,
         devices: Sequence[DeviceSource],
         zones: ZoneSource,
-        clock: ClockTrustSource,
         book: AlertBook,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
         super().__init__(dispatcher=dispatcher)
         self._devices = devices
         self._zones = zones
-        self._clock = clock
         self._book = book
 
     @classmethod
@@ -50,18 +47,16 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
         return cls(
             devices=(ThermostatSource.init(), PlugSource.init()),
             zones=ZoneHeatingSource.init(),
-            clock=clock_trust_source(),
             book=alert_book,
         )
 
     def _execute(self, input_dto: EvaluateAlertsInputDTO) -> EvaluateAlertsOutputDTO:
-        clock_trusted = self._clock.status().trusted
         evaluation = evaluate_alerts(
-            self._conditions(input_dto.now, clock_trusted),
+            self._conditions(input_dto.now, input_dto.clock_trusted),
             self._book.tracks(),
             input_dto.now,
             input_dto.monotonic,
-            clock_trusted=clock_trusted,
+            clock_trusted=input_dto.clock_trusted,
         )
         self._book.replace_tracks(evaluation.tracks)
         for change in evaluation.changes:
@@ -69,7 +64,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
         return EvaluateAlertsOutputDTO(
             raised=_keys(evaluation.changes, AlertTransition.RAISED),
             cleared=_keys(evaluation.changes, AlertTransition.CLEARED),
-            outage=self._report_outage(input_dto, clock_trusted),
+            outage=self._report_outage(input_dto),
         )
 
     def _conditions(self, now: datetime, clock_trusted: bool) -> list[Condition]:
@@ -77,9 +72,9 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
         conditions.extend(zone_condition(zone) for zone in self._zones.zones(now, clock_trusted=clock_trusted))
         return conditions
 
-    def _report_outage(self, input_dto: EvaluateAlertsInputDTO, clock_trusted: bool) -> Outage | None:
+    def _report_outage(self, input_dto: EvaluateAlertsInputDTO) -> Outage | None:
         note = self._book.startup()
-        if note is None or not clock_trusted:
+        if note is None or not input_dto.clock_trusted:
             return None
 
         if started_before_last_activity(note, input_dto.now, input_dto.monotonic):

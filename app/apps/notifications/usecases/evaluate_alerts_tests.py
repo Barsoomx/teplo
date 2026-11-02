@@ -14,7 +14,6 @@ from apps.notifications.usecases.evaluate_alerts import (
     EvaluateAlertsOutputDTO,
     EvaluateAlertsUseCase,
 )
-from apps.system.stubs import ClockStub
 
 NOW = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
 NOTICED = 1000.0
@@ -61,13 +60,10 @@ def _use_case(
     zones: ZoneSourceStub,
     book: AlertBook,
     dispatcher: EventDispatcher,
-    *,
-    clock_trusted: bool = True,
 ) -> EvaluateAlertsUseCase:
     return EvaluateAlertsUseCase(
         devices=(DeviceSourceStub(devices=devices),),
         zones=zones,
-        clock=ClockStub(trusted=clock_trusted),
         book=book,
         dispatcher=dispatcher,
     )
@@ -77,14 +73,17 @@ def _thermostats_and_plugs_use_case(book: AlertBook, dispatcher: EventDispatcher
     return EvaluateAlertsUseCase(
         devices=(DeviceSourceStub(devices=[LOST_THERMOSTAT]), DeviceSourceStub(devices=[LOST_PLUG])),
         zones=ZoneSourceStub(zones=[]),
-        clock=ClockStub(trusted=True),
         book=book,
         dispatcher=dispatcher,
     )
 
 
-def _input(after: timedelta) -> EvaluateAlertsInputDTO:
-    return EvaluateAlertsInputDTO(now=NOW + after, monotonic=NOTICED + after.total_seconds())
+def _input(after: timedelta, *, clock_trusted: bool = True) -> EvaluateAlertsInputDTO:
+    return EvaluateAlertsInputDTO(
+        now=NOW + after,
+        monotonic=NOTICED + after.total_seconds(),
+        clock_trusted=clock_trusted,
+    )
 
 
 @pytest.fixture
@@ -121,8 +120,8 @@ def f_raised_book(f_noticed_book: AlertBook, f_zones: ZoneSourceStub) -> AlertBo
 @pytest.fixture
 def f_silence_noticed_book() -> AlertBook:
     book = AlertBook()
-    _use_case([SILENT_THERMOSTAT], ZoneSourceStub(zones=[]), book, EventDispatcher(), clock_trusted=False).execute(
-        _input(timedelta(0)),
+    _use_case([SILENT_THERMOSTAT], ZoneSourceStub(zones=[]), book, EventDispatcher()).execute(
+        _input(timedelta(0), clock_trusted=False),
     )
     return book
 
@@ -174,20 +173,6 @@ def f_silent_use_case(f_silence_noticed_book: AlertBook, f_dispatcher: EventDisp
 
 
 @pytest.fixture
-def f_untrusted_silent_use_case(
-    f_silence_noticed_book: AlertBook,
-    f_dispatcher: EventDispatcher,
-) -> EvaluateAlertsUseCase:
-    return _use_case(
-        [SILENT_THERMOSTAT],
-        ZoneSourceStub(zones=[]),
-        f_silence_noticed_book,
-        f_dispatcher,
-        clock_trusted=False,
-    )
-
-
-@pytest.fixture
 def f_plug_lost_use_case(f_plug_noticed_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return _thermostats_and_plugs_use_case(f_plug_noticed_book, f_dispatcher)
 
@@ -198,20 +183,24 @@ def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatc
 
 
 @pytest.fixture
-def f_restarted_before_clock_set_use_case(f_restarted_use_case: EvaluateAlertsUseCase) -> EvaluateAlertsUseCase:
+def f_restarted_held_back_use_case(f_restarted_use_case: EvaluateAlertsUseCase) -> EvaluateAlertsUseCase:
     f_restarted_use_case.execute(
-        EvaluateAlertsInputDTO(now=NOW - CLOCK_STEP + timedelta(minutes=6), monotonic=NOTICED + 360),
+        EvaluateAlertsInputDTO(
+            now=NOW - CLOCK_STEP + timedelta(minutes=6),
+            monotonic=NOTICED + 360,
+            clock_trusted=True,
+        ),
     )
     return f_restarted_use_case
 
 
 @pytest.fixture
-def f_untrusted_restarted_use_case(
+def f_restarted_with_zones_use_case(
     f_restarted_book: AlertBook,
     f_zones: ZoneSourceStub,
     f_dispatcher: EventDispatcher,
 ) -> EvaluateAlertsUseCase:
-    return _use_case([], f_zones, f_restarted_book, f_dispatcher, clock_trusted=False)
+    return _use_case([], f_zones, f_restarted_book, f_dispatcher)
 
 
 def test_confirmed_device_loss_raises_an_alert(
@@ -308,7 +297,11 @@ def test_loss_noticed_before_a_clock_step_is_dated_by_the_monotonic_clock(
     f_events: list[DomainEvent],
 ) -> None:
     f_silent_use_case.execute(
-        EvaluateAlertsInputDTO(now=NOW + CLOCK_STEP + timedelta(minutes=10), monotonic=NOTICED + 600),
+        EvaluateAlertsInputDTO(
+            now=NOW + CLOCK_STEP + timedelta(minutes=10),
+            monotonic=NOTICED + 600,
+            clock_trusted=True,
+        ),
     )
 
     assert f_events == [
@@ -324,10 +317,10 @@ def test_loss_noticed_before_a_clock_step_is_dated_by_the_monotonic_clock(
 
 
 def test_alert_raised_while_the_clock_is_untrusted_names_no_time(
-    f_untrusted_silent_use_case: EvaluateAlertsUseCase,
+    f_silent_use_case: EvaluateAlertsUseCase,
     f_events: list[DomainEvent],
 ) -> None:
-    f_untrusted_silent_use_case.execute(_input(timedelta(minutes=10)))
+    f_silent_use_case.execute(_input(timedelta(minutes=10), clock_trusted=False))
 
     assert f_events == [
         AlertRaised(
@@ -357,12 +350,12 @@ def test_outage_before_the_start_is_reported_once(
 
 
 def test_outage_waits_for_a_trusted_clock(
-    f_untrusted_restarted_use_case: EvaluateAlertsUseCase,
+    f_restarted_with_zones_use_case: EvaluateAlertsUseCase,
     f_restarted_book: AlertBook,
     f_zones: ZoneSourceStub,
     f_events: list[DomainEvent],
 ) -> None:
-    output = f_untrusted_restarted_use_case.execute(_input(timedelta(minutes=7)))
+    output = f_restarted_with_zones_use_case.execute(_input(timedelta(minutes=7), clock_trusted=False))
 
     assert (output.outage, f_events, f_restarted_book.startup(), f_zones.clock_trusted) == (
         None,
@@ -372,11 +365,11 @@ def test_outage_waits_for_a_trusted_clock(
     )
 
 
-def test_outage_outlives_a_time_taken_before_the_clock_was_set(
-    f_restarted_before_clock_set_use_case: EvaluateAlertsUseCase,
+def test_outage_is_held_back_until_the_start_no_longer_precedes_the_last_activity(
+    f_restarted_held_back_use_case: EvaluateAlertsUseCase,
     f_events: list[DomainEvent],
 ) -> None:
-    output = f_restarted_before_clock_set_use_case.execute(_input(timedelta(minutes=7)))
+    output = f_restarted_held_back_use_case.execute(_input(timedelta(minutes=7)))
 
     outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW)
     assert (output.outage, f_events) == (

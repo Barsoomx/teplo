@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Protocol
 
@@ -16,6 +17,13 @@ class ClockStatus:
     trusted: bool
     code: ClockStatusCode
     reason: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClockReading:
+    now: datetime
+    monotonic: float
+    trusted: bool
 
 
 class ClockTrustSource(Protocol):

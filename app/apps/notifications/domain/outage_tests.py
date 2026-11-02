@@ -51,7 +51,7 @@ def test_activity_after_the_start_is_no_outage() -> None:
         (STARTED_AT + timedelta(seconds=1), True),
     ],
 )
-def test_start_precedes_the_last_activity_only_on_a_clock_not_yet_set(
+def test_start_precedes_only_a_last_activity_stamped_after_it(
     last_activity: datetime | None,
     behind: bool,
 ) -> None:
