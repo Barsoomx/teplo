@@ -153,6 +153,24 @@ def test_admin_deletes_a_load_only_while_it_is_not_shed_live(
     assert f_load_admin.has_delete_permission(f_owner_request, f_load) is deletable
 
 
+@pytest.mark.parametrize(
+    ('f_load', 'locked'),
+    [(None, set()), (SHED_AT, {'slug', 'kind', 'zone', 'device'})],
+    ids=['not_shed', 'shed_live'],
+    indirect=['f_load'],
+)
+def test_load_page_keeps_the_slug_and_what_a_load_controls_read_only_while_it_is_shed_live(
+    f_load_admin: LoadAdmin,
+    f_owner_request: HttpRequest,
+    f_load: Load,
+    locked: set[str],
+) -> None:
+    readonly = set(f_load_admin.get_readonly_fields(f_owner_request, f_load))
+    form = f_load_admin.get_form(f_owner_request, f_load, change=True)
+
+    assert (readonly - GUARD_FIELDS, locked & set(form.base_fields)) == (locked, set())
+
+
 @pytest.mark.parametrize('f_load', [SHED_AT], indirect=True)
 def test_admin_refuses_to_delete_the_plug_of_a_load_shed_live(
     f_device_admin: DeviceAdmin,

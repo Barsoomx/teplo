@@ -3,6 +3,8 @@ from django.http import HttpRequest
 
 from apps.power.models import Load, LoadSettings, Outage
 
+SHED_IDENTITY_FIELDS = ('slug', 'kind', 'zone', 'device')
+
 
 @admin.register(Outage)
 class OutageAdmin(admin.ModelAdmin):
@@ -39,6 +41,13 @@ class LoadAdmin(admin.ModelAdmin):
         'shed_phase',
         'shed_was_on',
     )
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Load | None = None) -> tuple[str, ...]:
+        fields = tuple(super().get_readonly_fields(request, obj))
+        if obj is None or obj.shed_at is None:
+            return fields
+
+        return (*fields, *SHED_IDENTITY_FIELDS)
 
     def has_delete_permission(self, request: HttpRequest, obj: Load | None = None) -> bool:
         return (obj is None or obj.shed_at is None) and super().has_delete_permission(request, obj)
