@@ -242,14 +242,16 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 
 ### Load management
 
-Load management and the switchable water heater plugs ship in dry-run (`docs/design.md`, sections 4 and 7). Once the phase meter reports, the guard checks the phases every second, learns which phase each load is on and journals the sheds, restores and waiting starts it would make; nothing it decides reaches a plug or a thermostat, and the dashboard's shedding order shows every load with «Наблюдение». Until the clamps are installed the meter never reports and the guard stays quiet; the phase meter's device-lost alert covers it.
+Load management and the switchable water heater plugs ship in dry-run (`docs/design.md`, sections 4 and 7). Once the phase meter reports, the guard checks the phases every second, learns which phase each load is on and journals the sheds, restores and waiting starts it would make; nothing it decides reaches a plug or a thermostat, and the dashboard's shedding order shows every load with «Наблюдение». Until the clamps are installed the meter never reports and the dry-run guard stays quiet; the phase meter's device-lost alert covers it. Live floors need a reporting meter: once the meter has been silent for 60 seconds, from teplo's start or later, the house runs limp and switches live floors off until the meter reports again (see step 4).
 
 1. Install the clamps and calibrate them (see [ESPHome nodes](#esphome-nodes), step 6), then let the house run for a few days. Each time a water heater switches or a floor's relay turns, the guard looks for the phase whose current stepped with it; three votes for one phase and none for another among the load's last five learn it. Check the learned phases in `/admin/power/load/`, where `learned phase`, `learned amps` and `learning samples` are read-only, on the dashboard, where a load reads «Фаза L2, выучена», or in `api/v1/loads/`. The journal says «Бойлер 1 этаж: выучил фазу L2, 6,2 А» when a phase is learned or its current moves. A floor that stays at its limit never switches, so it learns nothing; a load whose phase stays unknown is shed after the loads of the overloaded phase and counts against every phase when it starts.
 2. Set `phase` on a load whose learned phase you have checked, or whose phase you know from the switchboard: the phase you set always wins over the learned one. Set `nominal amps` where you know the current a load adds at the clamp, e.g. from its plug or a kettle test: the water heaters come with 6.0 A, and a load without it counts its learned current, or else the default load current of `/admin/power/loadsettings/`, 6.0 A. Both columns can be edited in the list of loads.
 3. Watch the journal through a few evenings with the EV charging and the water heaters on. «Перегрузка фазы L2: 26,4 А», «Бойлер 1 этаж: выключил бы розетку» and «Кухня: отложил бы включение» say what load management would do; «Фаза L3: похоже, заряжается электромобиль, +16,0 А» and the badge on the phase bars show what EV detection sees. The thresholds, 20 A start ceiling, 24 A shed threshold and 18 A restore threshold by default, are edited in `/admin/power/loadsettings/`.
 4. Tick `load management live` in `/admin/power/loadsettings/`, then tick `live` in `/admin/power/load/` one load at a time, the water heaters first. A command reaches a device only while `TEPLO_DRY_RUN` is false, and a zone's load also needs `live control` on its zone. The «Наблюдение» chip leaves a load's row once its commands are live; a live shed reads «Отключена» and is journaled as «Бойлер 1 этаж: выключил розетку». A live shed of a zone switches its thermostat off at once, whatever its 30-minute write budget, and the zone returns to its schedule no sooner than 30 minutes later.
 
-Unticking a load's `live`, or `load management live`, releases its live shed within a minute: a plug teplo switched off is switched back on, and a zone returns to its schedule at its next allowed write. Switching a shed plug back on by hand also ends its shed, journaled as «Бойлер 1 этаж: розетку включили вручную, отключение снято».
+   Tick a floor `live` only while the phase meter reports. After 60 seconds without its readings the house runs limp: a live floor that heats beside a more important floor of its phase, or, while every phase is unknown, beside any more important floor, is switched off, journaled as «Кухня: выключил термостат» with «Нет данных от фазометра: по одному полу на фазу». It stays off until the meter reports again, its phases have stayed calm for 2 minutes and they have room for it; unticking its `live` hands it back to its schedule at its next allowed write.
+
+Unticking a load's `live`, or `load management live`, releases its live shed within a minute: a plug teplo switched off is switched back on, and a zone returns to its schedule at its next allowed write. Unticking a shed zone's `live control` keeps it shed until its next allowed write, when teplo switches its thermostat back on. Switching a shed plug back on by hand also ends its shed, journaled as «Бойлер 1 этаж: розетку включили вручную, отключение снято».
 
 ## Enable air control
 
@@ -262,6 +264,19 @@ Air control, optimal start and the second-floor guard ship in dry-run (`docs/des
 `/admin/climate/zonelearning/` lists what each zone has learned, read-only: the early-stop offset, the dead time, the heat-up rate of each 5 °C outdoor bucket and the learned mornings. Optimal start replaces the fixed lead once a zone has 3 learned mornings. Unticking `air control live` hands the thermostat back to floor mode at the zone's next allowed write.
 
 ## Roll back
+
+An older release does not know the migrations of a newer one, so undo them before it runs. Rolling back past load management takes two steps first:
+
+1. Untick `load management live` in `/admin/power/loadsettings/` and wait until no load on the dashboard reads «Отключена»: an older release never switches a plug back on.
+2. From the release you leave, migrate the devices back. This returns the water heater plugs to the read-only driver, which older releases know, and keeps the loads and what they learned for the next deploy:
+
+   ```sh
+   ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate devices 0001'
+   ```
+
+   A deploy that fails after its migrate step, e.g. in `collectstatic`, leaves `current` on the older release with the newer migrations applied: run the same command with `releases/<commit>` of the failed deploy in place of `current`, or deploy again.
+
+Then switch `current` back and restart:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'ls -1t /opt/share/teplo/releases'

@@ -10,7 +10,7 @@ Before changing control logic, device drivers, persistence or failure handling, 
 - **Public repository.** Secrets (device addresses, device ids, local keys, tokens, passwords) live only in the router's secrets file; code and migrations reference devices by slug.
 - **Configuration is data.** Schedules, tariffs, thresholds and priorities come from the database, seeded by `sites/<name>` data migrations and edited in the panel.
 - **Dry-run first.** A new control path ships behind dry-run and journals the commands it would send.
-- **Device safety.** Monitor-only loads expose no switching operation. A thermostat gets at most one state change per zone per 30 minutes.
+- **Device safety.** Monitor-only loads expose no switching operation. A thermostat gets at most one state change per zone per 30 minutes, except a live shed of load management, which switches it off at once and stamps the write (`docs/design.md`, sections 4 and 7).
 
 ## Architecture
 
