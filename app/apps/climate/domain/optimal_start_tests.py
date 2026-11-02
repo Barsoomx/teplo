@@ -1,15 +1,24 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from apps.climate.domain.learning import HeatUpModel
-from apps.climate.domain.optimal_start import OptimalStartSettings, heat_up_rate, optimal_lead
+from apps.climate.domain.optimal_start import (
+    OptimalStartSettings,
+    PreheatStart,
+    heat_up_rate,
+    latch_preheat,
+    optimal_lead,
+)
 
 SETTINGS = OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3)
 FIXED_LEAD = timedelta(hours=3)
 TARGET = Decimal('22.0')
 DEAD_TIME = timedelta(minutes=40)
+COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=ZoneInfo('Europe/Moscow'))
+LEAD = timedelta(hours=2, minutes=40)
 
 
 @pytest.fixture
@@ -30,6 +39,11 @@ def f_slow_learning() -> HeatUpModel:
 @pytest.fixture
 def f_unusable_rates() -> HeatUpModel:
     return HeatUpModel(dead_time=DEAD_TIME, rates={-5: Decimal('0.000')}, mornings=3)
+
+
+@pytest.fixture
+def f_latched() -> PreheatStart:
+    return PreheatStart(comfort_at=COMFORT_AT, lead=LEAD)
 
 
 @pytest.mark.parametrize(
@@ -156,3 +170,46 @@ def test_cap_bounds_fixed_lead_too(f_learning: HeatUpModel) -> None:
 
 def test_heat_up_rate_is_unknown_without_learned_buckets() -> None:
     assert heat_up_rate(HeatUpModel(dead_time=None, rates={}, mornings=0), Decimal('-3.4')) is None
+
+
+def test_preheat_starts_its_lead_before_comfort_period(f_latched: PreheatStart) -> None:
+    assert f_latched.start == datetime(2026, 11, 2, 3, 50, tzinfo=ZoneInfo('Europe/Moscow'))
+
+
+@pytest.mark.parametrize(
+    ('now', 'expected'),
+    [
+        (COMFORT_AT - LEAD - timedelta(minutes=1), None),
+        (COMFORT_AT - LEAD, PreheatStart(comfort_at=COMFORT_AT, lead=LEAD)),
+        (COMFORT_AT - timedelta(minutes=30), PreheatStart(comfort_at=COMFORT_AT, lead=LEAD)),
+    ],
+    ids=['before_start', 'at_start', 'past_start'],
+)
+def test_preheat_latches_once_lead_reaches_comfort_period(now: datetime, expected: PreheatStart | None) -> None:
+    assert latch_preheat(None, comfort_at=COMFORT_AT, lead=LEAD, now=now) == expected
+
+
+def test_latched_preheat_keeps_its_lead_while_room_warms(f_latched: PreheatStart) -> None:
+    latched = latch_preheat(
+        f_latched,
+        comfort_at=COMFORT_AT,
+        lead=timedelta(minutes=50),
+        now=COMFORT_AT - timedelta(hours=1, minutes=20),
+    )
+
+    assert latched is f_latched
+
+
+def test_preheat_latched_for_started_comfort_period_is_dropped(f_latched: PreheatStart) -> None:
+    latched = latch_preheat(
+        f_latched,
+        comfort_at=COMFORT_AT + timedelta(days=1),
+        lead=LEAD,
+        now=COMFORT_AT + timedelta(minutes=1),
+    )
+
+    assert latched is None
+
+
+def test_zone_without_comfort_period_has_no_preheat(f_latched: PreheatStart) -> None:
+    assert latch_preheat(f_latched, comfort_at=None, lead=LEAD, now=COMFORT_AT) is None
