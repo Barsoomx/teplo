@@ -56,7 +56,7 @@
         <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>
         {% elif entry.kind == 'alert_cleared' %}
-        <span class="event-mark event-mark-online">{% if entry.payload.kind == 'zone_off' %}{% icon 'power' %}{% else %}{% icon 'wifi' %}{% endif %}</span>
+        <span class="event-mark event-mark-online">{% if entry.payload.kind == 'zone_off' %}{% icon 'power' %}{% elif entry.payload.kind == 'phase_overload' %}{% icon 'zap' %}{% else %}{% icon 'wifi' %}{% endif %}</span>
         <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>
         {% elif entry.kind == 'power_outage' %}
         <span class="event-mark event-mark-warn">{% icon 'power-off' %}</span>
@@ -65,6 +65,40 @@
           {% if entry.outage.overload %}<p class="event-note" id="outage-{{ entry.outage.id }}-overload">{{ entry.outage|outage_overload_note }}</p>{% endif %}
           {% if entry.outage %}{% include 'panel/_outage_cause.html' with outage=entry.outage %}{% endif %}
         </div>
+        {% elif entry.kind == 'phase_overload' %}
+        <span class="event-mark event-mark-warn">{% icon 'zap' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|phase_event_text }}</p></div>
+        {% elif entry.kind == 'phase_calm' %}
+        <span class="event-mark event-mark-online">{% icon 'zap' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|phase_event_text }}</p></div>
+        {% elif entry.kind == 'ev_charging_started' or entry.kind == 'ev_charging_stopped' %}
+        <span class="event-mark">{% icon 'zap' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|phase_event_text }}</p></div>
+        {% elif entry.kind == 'load_shed' or entry.kind == 'load_restored' or entry.kind == 'load_shed_dry_run' or entry.kind == 'load_restored_dry_run' %}
+        <span class="event-mark{% if entry.kind == 'load_shed' or entry.kind == 'load_restored' %} event-mark-command{% endif %}">{% if entry.kind == 'load_shed' or entry.kind == 'load_shed_dry_run' %}{% icon 'power-off' %}{% else %}{% icon 'power' %}{% endif %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|load_shed_text }}</p>
+          {% with note=entry|load_shed_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
+        </div>
+        {% elif entry.kind == 'load_shed_overridden' %}
+        <span class="event-mark">{% icon 'power' %}</span>
+        <div class="event-body"><p class="event-text">{% blocktranslate with name=entry|load_name %}{{ name }}: the plug was switched on by hand, the shed is dropped{% endblocktranslate %}</p></div>
+        {% elif entry.kind == 'load_command_failed' %}
+        <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
+        {% failure_note entry.payload.error_code entry.payload.error device=entry.device_kind as note %}
+        <div class="event-body"{% if entry.payload.error %} title="{{ entry.payload.error }}"{% endif %}>
+          <p class="event-text">{{ entry|load_command_text }}</p>
+          {% if note %}<p class="event-note">{{ note }}</p>{% endif %}
+        </div>
+        {% elif entry.kind == 'start_would_wait_dry_run' %}
+        <span class="event-mark">{% icon 'clock' %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|start_wait_text }}</p>
+          {% with note=entry|start_wait_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
+        </div>
+        {% elif entry.kind == 'load_phase_learned' %}
+        <span class="event-mark">{% icon 'zap' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|load_phase_learned_text }}</p></div>
         {% else %}
         <span class="event-mark">{% icon 'scroll-text' %}</span>
         <div class="event-body" title="{{ entry.kind }}"><p class="event-text">{% if entry.subject_name %}{% blocktranslate with name=entry.subject_name %}{{ name }}: unknown event{% endblocktranslate %}{% else %}{% translate 'Unknown event' %}{% endif %}</p></div>
