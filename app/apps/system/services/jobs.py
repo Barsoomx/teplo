@@ -12,6 +12,8 @@ from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, De
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
 from apps.notifications.usecases.note_startup import NoteStartupInputDTO, NoteStartupUseCase
 from apps.notifications.usecases.report_outages import ReportOutagesInputDTO, ReportOutagesUseCase
+from apps.power.usecases.shed_phase_loads import ShedPhaseLoadsInputDTO, ShedPhaseLoadsUseCase
+from apps.power.usecases.watch_phases import WatchPhasesInputDTO, WatchPhasesUseCase
 from apps.system.services.boot_id import BootIdReader
 from apps.system.services.clock_trust import clock_trust_source, read_clock
 from apps.system.services.uptime import UptimeReader
@@ -24,6 +26,7 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
     return (
         PeriodicJob(name='poll_thermostats', interval=timedelta(seconds=30), action=poll_thermostats),
         PeriodicJob(name='poll_plugs', interval=timedelta(seconds=30), action=poll_plugs),
+        PeriodicJob(name='guard_phases', interval=timedelta(seconds=1), action=guard_phases),
         PeriodicJob(
             name='check_sensors',
             interval=timedelta(seconds=30),
@@ -61,6 +64,12 @@ def poll_thermostats() -> object:
 
 def poll_plugs() -> object:
     return PollPlugsUseCase.init().execute(PollPlugsInputDTO(now=timezone.now()))
+
+
+def guard_phases() -> object:
+    now = timezone.now()
+    WatchPhasesUseCase.init().execute(WatchPhasesInputDTO(now=now))
+    return ShedPhaseLoadsUseCase.init().execute(ShedPhaseLoadsInputDTO(now=now))
 
 
 def check_sensors() -> object:

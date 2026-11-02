@@ -145,18 +145,18 @@ One process on the router runs an asyncio runtime:
 
 - device drivers and the MQTT client feed a **state store** per device kind (latest readings and availability): jobs poll the Tuya devices, the MQTT client writes the ESPHome readings as they arrive, and a job checks the ESPHome stores for availability changes (section 4);
 - the MQTT client runs in paho's network thread from just after the start journal entry until after the last sample flush. It subscribes again on every connection and reconnects on its own, 1 second after a failure and then doubling the wait up to 30 seconds. A message that fails in handling is logged and dropped, so it never ends the thread;
-- control loops read the state stores, decide, and send commands through drivers;
+- control loops read the state stores, decide, and send commands through drivers: the heating cycle every minute (section 6) and the load guard every second (section 7);
 - a recorder samples every available device each minute and writes the history to SQLite in batches every 5 minutes. The metrics are `floor_temperature`, `floor_setpoint` and `thermostat_power` for a thermostat, `plug_on`, `plug_power`, `plug_current` and `plug_voltage` for a plug, `air_temperature` and `air_humidity` for a temperature sensor, and `phase_current_mean` and `phase_current_max` for each phase of the phase meter;
 - an alert job checks the state stores every minute and queues alerts, a report job checks every minute for an outage before the start until it is reported, and a third job sends the queue to Telegram (section 9);
 - uvicorn serves the Django ASGI app (panel and API) from the same loop;
 - use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
-- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox, the heating cycle's control book) is guarded by locks, the Tuya drivers serialize calls to each device, and the MQTT thread writes the sensor stores while jobs and the panel read them.
+- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox, the heating cycle's control book, the load guard's guard book) is guarded by locks, the Tuya drivers serialize calls to each device, and the MQTT thread writes the sensor stores while jobs and the panel read them.
 
 ```mermaid
 flowchart LR
     drivers["Tuya drivers"] -->|"readings, every 30 s"| store["State stores"]
     mqtt["MQTT client"] -->|"ESPHome readings, as they arrive"| store
-    store --> loops["Control loops<br/>every minute"]
+    store --> loops["Control loops<br/>every minute, the guard every second"]
     loops -->|commands| drivers
     store --> panel["Panel and API"]
     store --> recorder["Recorder<br/>buffers every minute"]
@@ -170,7 +170,7 @@ flowchart LR
 Bounded contexts are Django apps laid out in the altyn-backend style described in `CLAUDE.md` (domain policies, use cases, models, repositories, services, drivers, views):
 
 - **climate**: zones, schedules, regulation, optimal start.
-- **power**: power cuts and their causes; phases, limits, loads, shedding, phase map learning and EV detection come with stage 2.
+- **power**: power cuts and their causes, loads, phase limits, the load guard: shedding, phase map learning and EV detection.
 - **devices**: registry, capabilities, drivers, state store.
 - **tariffs**: tariff intervals.
 - **telemetry**: history samples, event journal, retention (planned).
@@ -260,10 +260,10 @@ In air mode a zone is in one of two air states, heat or idle, decided every minu
 | heat | on | floor limit (default 30 °C) |
 | idle | on | idle floor setpoint (default 18 °C) |
 | boost | on | boost floor setpoint, whatever the air state |
-| shed | on | 5 °C |
+| shed | off | unchanged |
 | disabled | off | unchanged |
 
-Idle is a raised floor minimum rather than off, so a dead controller leaves the house at no less than 18 °C on the floor. The idle floor setpoint, the floor limit and both air targets are set per zone, validated like the other setpoints; the reference house gives its air zones 18 °C, 30 °C, 22.0 °C and 19.5 °C.
+Idle is a raised floor minimum rather than off, so a dead controller leaves the house at no less than 18 °C on the floor. Load management, not the heating cycle, switches a shed zone off (section 7). The idle floor setpoint, the floor limit and both air targets are set per zone, validated like the other setpoints; the reference house gives its air zones 18 °C, 30 °C, 22.0 °C and 19.5 °C.
 
 ### Optimal start
 
@@ -311,24 +311,44 @@ A zone in air mode in dry-run runs the air regulation and the optimal start of a
 
 ## 7. Load management
 
+Load management ships in dry-run. A guard checks the phases every second and decides what to shed and restore; until the owner switches it on in the admin, load by load, it only journals those decisions (see Gates).
+
 ### Inputs
 
-- Current per phase every second from the phase meter.
-- For every controllable load: its phase and nominal current, learned.
+- Current per phase every second from the phase meter (section 4).
+- The latest state of each load's thermostat or plug, as the polls leave it in the state stores (section 4).
+- The loads and the load settings, seeded by the site data and edited in the admin.
+
+### Loads
+
+A load is a zone's floor or a plug that teplo may switch off to relieve a phase: in the reference house the two water heaters and the five floors. A load has a slug, a name, what it controls (its zone, or its plug by device slug), a unique priority from 1, the phase the owner set (`l1`, `l2`, `l3` or `unknown`), the nominal current the owner set, if any, and a `live` gate of its own. Passive learning adds the learned phase, the learned current and the number of votes behind them (see Phase map learning).
+
+- **Effective phase:** the owner's phase, else the learned one, else unknown.
+- **Effective current:** the nominal current, else the learned one, else the default load current of the load settings, 6.0 A.
+
+Learned values never override what the owner set. Only a plug whose driver can switch it can be a load (section 4); monitor-only plugs and the EV are never loads.
+
+A load **draws** while its plug is on and draws more than 0.5 A, or while its thermostat is powered and its relay heats; with the relay unknown, a powered thermostat set above its floor temperature draws. A load whose device is unavailable neither draws nor is chosen.
+
+### Gates
+
+A command reaches a device only when `TEPLO_DRY_RUN` is off, `load_management_live` in the load settings is on and the load's `live` is on, and, for a zone, the zone's `live_control` is on, as for every thermostat write. `load_management_live` and every load's `live` are off by default. Otherwise the guard takes the same decision and journals it as a `*_dry_run` entry (see Journal), once, when it is taken: no entry repeats every second or every minute, as each one is written to flash.
 
 ### Thresholds per phase
 
 | Threshold | Default | Meaning |
 |---|---|---|
 | start ceiling | 20 A | a load starts only if the predicted current stays at or below it |
-| shed | 24 A for 3 s | shed loads on that phase, one per second, until ≤ 20 A |
+| shed | above 24 A for 3 s | shed loads on that phase, one per second, until ≤ 20 A |
 | restore | ≤ 18 A for 2 min | return one shed load per minute |
+
+The load settings hold them with the other limits: one shed a second, one restore a minute, starts 30 seconds apart, the meter lost after 60 seconds stale, and the default load current. The database keeps the restore threshold at or below the start ceiling and the start ceiling below the shed threshold.
 
 Rationale: a C25 breaker holds 1.13 × In (28 A) for an hour and trips within an hour at 1.45 × In (36 A); real trips came from overloads around 37 A. Seconds of reaction time are enough.
 
 ### Shedding priority
 
-A configurable ordered list; loads are shed from the top and returned from the bottom. Default:
+The loads' priorities order the list; loads are shed from the top and returned from the bottom. Default, as `sites/barsoom` seeds it with every phase unknown and both water heaters at a nominal 6.0 A:
 
 1. Water heater 1F
 2. Water heater 2F
@@ -338,27 +358,60 @@ A configurable ordered list; loads are shed from the top and returned from the b
 6. Bathroom 2F
 7. Living room
 
-Only loads on the overloaded phase are shed. Monitor-only loads and the EV are never in the list.
+Loads on the overloaded phase are shed first, then loads of unknown phase. Monitor-only loads and the EV are never in the list.
+
+### The guard
+
+A job runs the guard every second, in two steps. The first watches the phases, learns phases, spots EV charging and journals what it sees; the second sheds and restores. So the overload entry is on flash before the shed it causes. Runs never overlap: a device write inside a run delays the next check.
+
+The guard keeps its state in memory: the watch of each phase, the last 2 minutes of per-second phase currents, the loads' latest readings, the sheds, the last start permit and what learning and EV detection have seen. It reads the phase meter's store and the thermostat and plug stores every second, and the loads, the load settings, the zones under live control and the phase meter's slug at most once a minute, so an edit in the admin reaches it within a minute and an ordinary second neither reads nor writes the database. It writes only when it sheds, restores or learns a phase. Hold periods run on the monotonic clock.
+
+### Overload and shedding
+
+The guard follows each phase on its measured current less the relief of its sheds. A live shed relieves its phase for the 5 seconds its drop takes to show on the meter; a dry-run shed relieves it until it is restored, as nothing really drops. A phase above the shed threshold for 3 seconds is overloaded, and `phase_overload` is journaled with the phase and its current. While the overloaded phase, less the relief, stays above the start ceiling, the guard sheds one load a second for it: the first by priority among the drawing loads not yet shed whose effective phase is that phase, then among the drawing loads of unknown phase. The overload ends once the phase, less the relief, has stayed at or below the restore threshold for 2 minutes, and `phase_calm` is journaled. A phase without a fresh current restarts both holds and keeps the overload. A phase that stays above the shed threshold for a minute also raises the phase overload alert (section 9).
+
+Shedding a plug switches it off; only a plug that is on draws, so only such a plug is shed. Shedding a zone switches its thermostat off at once, overriding the 30-minute write budget (section 4), and stamps the write like any other, so the zone's own target comes back through the heating cycle at its next allowed write, never sooner than 30 minutes after the shed. A live shed is stored on the load: when it happened, why, the phase it was shed for and, for a plug, whether the plug was on, so a restart keeps it and restores it by the same rule. A dry-run shed lives in memory only. A write that fails is journaled as `load_command_failed` with its error code, and the load counts as unavailable until its device is read again, so the next second sheds the next load.
+
+### Restoring
+
+Once a phase, less the dry-run relief, has stayed at or below the restore threshold for 2 minutes, the guard returns one shed load a minute, the most important first, each only if the phase's current less the dry-run relief, plus the load's effective current, stays at or below the start ceiling, on every phase for a load of unknown phase. A load shed for no known phase waits until every phase has calmed, and nothing is restored while the meter is stale. Restoring a plug switches it back on only if teplo switched it off, and needs a start permit (see Starting loads). Restoring a zone ends its shed; the thermostat gets the zone's target from the heating cycle at its next allowed write.
+
+- **Owner override.** An owner who switches a shed plug back on by hand wins: the first poll that reads it on drops the shed, journaled as `load_shed_overridden`, and the guard does not shed that plug again until the overload on its phase ends.
+- **Gate switched off.** Switching a load's `live`, `load_management_live` or a zone's `live_control` off releases the load's live shed through the restore path at once, when the guard next reads the loads: a plug teplo switched off is switched back on whatever its gates, as teplo hands it back as it found it, and `load_restored` names the release as its cause. Switching a load live drops its dry-run shed the same way.
+- **`TEPLO_DRY_RUN`** holds back every write, so teplo started in dry-run neither resumes nor restores a live shed stored on a load; the shed stays stored until teplo runs live again.
 
 ### Starting loads
 
-When several loads want to start, they start one at a time, 30 seconds apart, in reverse shedding order, each after checking the measured phase current.
-
-### Phase map learning
-
-Every switch of a controllable load records which phase moved and by how much within 5 seconds. A **calibration** action switches each load in turn while the house is quiet (about 10 minutes). A thermostat that is already at its floor limit produces no step; the sample is skipped and retried later.
-
-### EV detection
-
-A step of 10–22 A on one phase that no controllable load explains and that lasts over 5 minutes is reported as EV charging on that phase. It only reduces headroom. Recommended car setting at home: 16 A or less.
+A start needs a permit from the guard's start gate: a fresh phase meter, at least 30 seconds since the last permit granted, and the measured current of the load's phase plus its effective current at or below the start ceiling, on every phase for a load of unknown phase. The guard's restores of plugs ask for one; a live restore takes the permit, while a dry-run restore only checks it, so a decision that is only journaled never delays a real start. Planned: the heating cycle asks the same gate before it starts a zone, the most important first, and a denied start writes nothing and is asked again at the next cycle.
 
 ### Phase meter lost
 
-No new starts while the meter is stale. After 1 minute stale, keep at most one floor per phase running and send an alert. The alert is sent already (section 9) and the panel hatches the phase bars (section 10); the rest comes with load management.
+For the first 60 seconds a stale meter only stops new starts and restores. After 60 seconds stale the meter is lost and the house runs limp: at most one drawing floor per phase, zones of unknown phase counting as one more phase; the others are shed by priority, one a second, with the reason `meter_lost`, and no plug starts. Limp sheds are released by the restore path once the meter is fresh again and its phases have calmed. Live loads run limp from teplo's start, as a meter that has not reported since then counts as stale from the start. A dry-run limp shed is journaled only after the meter has delivered a reading since teplo started: the device-lost alert already covers a meter that never reports (section 9), so a meter whose clamps are not installed yet stays quiet. The panel hatches the phase bars of a stale meter (section 10).
+
+### Phase map learning
+
+Learning is passive, so it works in dry-run. When a poll shows that a load changed since its previous reading, as a plug switching or its current moving by 2 A or more, or a thermostat's relay turning between heating and idle, the guard waits 35 seconds, until every load has been read after the change, and looks in its 2 minutes of samples between the two readings for the strongest step: at each second, the mean of the next 3 seconds less the mean of the previous 3, on each phase. The step is a vote for its phase when it is 1.5 A or more, goes the way of the change, up for on, and the other phases moved by 0.5 A or less at that second. A window another load changed in, or one the samples do not cover without a gap of more than 3 seconds, casts no vote. Three votes for one phase and none against among the load's last five learn the phase, with the median step as the load's current: the clamp sees what the breaker sees, which on a stabilized phase is more than the load's own current. The learned phase and current are stored and journaled as `load_phase_learned` only when the phase changes or the current moves by half an ampere or more. A thermostat that stays at its floor limit produces no step and teaches nothing. A **calibration** action, which switches each load in turn while the house is quiet (about 10 minutes), comes later.
+
+### EV detection
+
+A rise of 10–22 A on one phase within 15 seconds that no load change explains is watched; it grows while the charger ramps up, and held for 5 minutes it is journaled as `ev_charging_started` on that phase. `ev_charging_stopped` follows when the phase falls back to within 3 A of its level before the rise, or drops by a similar step. EV detection only journals: a charging car reduces the headroom, which the guard already sees in the measured current. Recommended car setting at home: 16 A or less.
 
 ### Journal
 
-Overloads, sheds and restores are written to the event journal immediately, so a trip can be traced after power returns.
+Overloads, sheds and restores are written to the event journal immediately, so a trip can be traced after power returns; the overload entry is written before the shed it causes. Each entry names the load or the phase as its subject and keeps the raw values:
+
+| Entry | Written when | Payload |
+|---|---|---|
+| `phase_overload` | a phase becomes overloaded | phase, current |
+| `phase_calm` | the overload ends | phase, current |
+| `load_shed`, `load_shed_dry_run` | a load is shed, or would be | load, name, kind, the phase it was shed for, that phase's current (none while the meter is lost), the load's effective current, the reason: `overload` or `meter_lost` |
+| `load_restored`, `load_restored_dry_run` | a load is restored or released, or would be | as for a shed, and the cause: `calm` or `released` |
+| `load_shed_overridden` | the owner switched a shed plug back on | load, name, phase |
+| `load_command_failed` | the write of a shed or a restore failed | load, name, command, error, error code |
+| `load_phase_learned` | passive learning stores a phase | load, name, phase, current, votes |
+| `ev_charging_started`, `ev_charging_stopped` | EV charging starts or stops | phase, step, level before the rise |
+
+The panel's journal does not put these entries in words yet.
 
 ### Outages
 
