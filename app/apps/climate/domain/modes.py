@@ -21,3 +21,12 @@ class ControlPath(StrEnum):
     FLOOR = 'floor'
     AIR = 'air'
     AIR_DRY_RUN = 'air_dry_run'
+
+
+class ZoneCycleOutcome(StrEnum):
+    UNCHANGED = 'unchanged'
+    APPLIED = 'applied'
+    DRY_RUN = 'dry_run'
+    THROTTLED = 'throttled'
+    DEVICE_UNAVAILABLE = 'device_unavailable'
+    FAILED = 'failed'
