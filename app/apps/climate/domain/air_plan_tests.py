@@ -131,10 +131,19 @@ def test_plan_idles_at_night_air_target(f_zone: ZoneSettings) -> None:
     )
 
 
-def test_plan_holds_comfort_air_target_while_clock_untrusted(f_zone: ZoneSettings, f_latched: PreheatStart) -> None:
+def test_plan_holds_comfort_air_target_and_held_preheat_while_clock_untrusted(
+    f_zone: ZoneSettings,
+    f_latched: PreheatStart,
+) -> None:
     plan = _plan(f_zone, NIGHT, '21.0', latched=f_latched, clock_trusted=False)
 
-    assert (plan.preheat, plan.target, plan.state) == (None, Decimal('22.0'), AirState.HEAT)
+    assert (plan.preheat, plan.target, plan.state) == (f_latched, Decimal('22.0'), AirState.HEAT)
+
+
+def test_plan_holds_no_new_preheat_while_clock_untrusted(f_zone: ZoneSettings) -> None:
+    plan = _plan(f_zone, COMFORT_AT - LEARNED_LEAD, '20.4', learning=LEARNED, clock_trusted=False)
+
+    assert plan.preheat is None
 
 
 @pytest.mark.parametrize(

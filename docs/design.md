@@ -272,7 +272,7 @@ teplo starts heating early enough to reach the comfort target at the start of th
 - Optimal start drives the pre-heat only of an air zone in air mode. Floor zones, and air zones in floor mode or in air mode in dry-run, keep their fixed lead.
 - The lead is computed every minute until the pre-heat starts; from then the start is held until the comfort period begins, so a room that warms faster than planned stays in pre-heat. teplo keeps the start in memory: a cycle after a restart computes it again from the room as it is, and a sensor that drops out and returns finds it held.
 - In air mode in dry-run, floor mode pre-heats on the fixed lead and warms the air the lead is computed from, which would push a later would-be start further back every minute. So the would-be start is held from the start of floor mode's pre-heat as well, on the lead computed then, before the floor has warmed the air; the would-be pre-heat still begins at its own start.
-- An untrusted clock pauses optimal start along with the schedules.
+- An untrusted clock pauses optimal start along with the schedules: no new start is held, and a start already held stays held, so a minute of doubt about the clock in the middle of a pre-heat neither ends it nor sets a new start from the room it has warmed.
 
 ### Learning
 

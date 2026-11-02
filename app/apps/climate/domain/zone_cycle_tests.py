@@ -161,6 +161,17 @@ def f_latched_memory() -> ZoneMemory:
 
 
 @pytest.fixture
+def f_preheating_memory() -> ZoneMemory:
+    return ZoneMemory(
+        path=ControlPath.AIR,
+        mode=ScheduleMode.PREHEAT,
+        air_state=AirState.HEAT,
+        heat_target=TARGET,
+        preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=2, minutes=40)),
+    )
+
+
+@pytest.fixture
 def f_morning() -> Morning:
     return Morning(
         comfort_at=COMFORT_AT,
@@ -454,6 +465,18 @@ def test_finished_morning_is_handed_over_once(f_zone: ZoneSettings, f_morning: M
     follow_up = _follow(f_zone, memory, _conditions('21.9'), _cycle(COMFORT_AT), ZoneCycleOutcome.UNCHANGED)
 
     assert (follow_up.morning, follow_up.memory.morning) == (f_morning, None)
+
+
+def test_untrusted_clock_keeps_held_preheat(f_live_zone: ZoneSettings, f_preheating_memory: ZoneMemory) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_preheating_memory,
+        _conditions('21.5', learning=LEARNED),
+        _cycle(COMFORT_AT - timedelta(hours=1, minutes=30), clock_trusted=False),
+        ZoneCycleOutcome.UNCHANGED,
+    )
+
+    assert (follow_up.memory.preheat, follow_up.memory.air_state) == (f_preheating_memory.preheat, AirState.HEAT)
 
 
 def test_lost_air_sensor_keeps_latched_preheat_and_forgets_air_state(

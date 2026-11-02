@@ -61,7 +61,7 @@ def plan_air(
             latch_by=zone.preheat_lead if dry_run else NO_LEAD,
         )
         if clock_trusted
-        else None
+        else latched
     )
     schedule_lead = lead if preheat is None else preheat.lead
     mode = resolve_mode(zone.windows, now, schedule_lead)

@@ -733,6 +733,21 @@ def f_latched_preheat_cycle(
 
 
 @pytest.fixture
+def f_clock_doubted_preheat_cycle(
+    f_latched_preheat_cycle: RunHeatingCycleUseCase,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+) -> RunHeatingCycleUseCase:
+    temperatures.record_state('air-kitchen', _reading('21.5'))
+    _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, EventDispatcher()).execute(
+        _at(COMFORT_AT - timedelta(hours=1, minutes=30), clock_trusted=False),
+    )
+    return f_latched_preheat_cycle
+
+
+@pytest.fixture
 def f_guard_cycle(
     request: pytest.FixtureRequest,
     store: ThermostatStateStore,
@@ -1145,6 +1160,18 @@ def test_live_air_zone_keeps_preheat_started_while_room_warms(
     f_thermostat: FloorThermostatStub,
 ) -> None:
     output = f_latched_preheat_cycle.execute(_at(COMFORT_AT - timedelta(hours=1, minutes=20)))
+
+    assert (output.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.UNCHANGED},
+        [('setpoint', Decimal('30.0'))],
+    )
+
+
+def test_live_air_zone_keeps_preheat_started_through_a_minute_of_doubted_clock(
+    f_clock_doubted_preheat_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_clock_doubted_preheat_cycle.execute(_at(COMFORT_AT - timedelta(hours=1, minutes=29)))
 
     assert (output.outcomes, f_thermostat.commands) == (
         {'kitchen': ZoneCycleOutcome.UNCHANGED},
