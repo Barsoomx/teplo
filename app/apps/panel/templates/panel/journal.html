@@ -62,6 +62,7 @@
         <span class="event-mark event-mark-warn">{% icon 'power-off' %}</span>
         <div class="event-body">
           <p class="event-text">{{ entry|power_outage_text }}</p>
+          {% if entry.outage.overload %}<p class="event-note" id="outage-{{ entry.outage.id }}-overload">{{ entry.outage|outage_overload_note }}</p>{% endif %}
           {% if entry.outage %}{% include 'panel/_outage_cause.html' with outage=entry.outage %}{% endif %}
         </div>
         {% else %}

@@ -26,6 +26,7 @@
   {% for outage in overview.outages %}
   <article class="outage">
     <p class="outage-text">{% icon 'power-off' %}<span>{{ outage|outage_question }}</span></p>
+    {% if outage.overload %}<p class="outage-hint" id="outage-{{ outage.id }}-overload">{% icon 'zap' %}<span>{{ outage|outage_overload_note }}</span></p>{% endif %}
     {% url 'panel:mark-outage-cause' outage.id as action %}{% include 'panel/_outage_answers.html' with action=action target='#zones' swap='innerHTML' %}
   </article>
   {% endfor %}

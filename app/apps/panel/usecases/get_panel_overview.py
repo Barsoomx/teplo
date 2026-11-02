@@ -30,6 +30,7 @@ from apps.devices.services.state_store import (
 )
 from apps.power.domain.outage import OutageRecord
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.outage_overloads import OutageOverloads
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
 
@@ -118,6 +119,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         climate_settings: ClimateSettingsRepository,
         learning: ZoneLearningRepository,
         outages: OutageRepository,
+        overloads: OutageOverloads,
         thermostat_store: ThermostatStateStore,
         plug_store: PlugStateStore,
         temperature_store: TemperatureStateStore,
@@ -131,6 +133,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self._climate_settings = climate_settings
         self._learning = learning
         self._outages = outages
+        self._overloads = overloads
         self._thermostat_store = thermostat_store
         self._plug_store = plug_store
         self._temperature_store = temperature_store
@@ -146,6 +149,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             climate_settings=ClimateSettingsRepository(),
             learning=ZoneLearningRepository(),
             outages=OutageRepository(),
+            overloads=OutageOverloads.init(),
             thermostat_store=thermostat_state_store,
             plug_store=plug_state_store,
             temperature_store=temperature_state_store,
@@ -184,7 +188,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             sensors=tuple(sensors.values()),
             outdoor=outdoor,
             standalone_sensors=tuple(sensor for slug, sensor in sensors.items() if slug not in placed),
-            outages=tuple(self._outages.unmarked()),
+            outages=tuple(self._overloads.noted(outage) for outage in self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
         )

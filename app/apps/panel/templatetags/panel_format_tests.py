@@ -1,5 +1,7 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -29,12 +31,14 @@ from apps.panel.templatetags.panel_format import (
     icon,
     local_time,
     optimal_start_text,
+    outage_overload_note,
     outage_question,
     power_outage_text,
     second_floor_guard_text,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.domain.loads import LoadPhase
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 from apps.system.domain.clock import ClockStatusCode
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -429,3 +433,24 @@ def test_power_outage_text_reads_the_journaled_interval(
     )
 
     assert power_outage_text(entry) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('overload', 'expected'),
+    [
+        (
+            PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('31.27')),
+            'Перед отключением фаза L2 была перегружена: 31,3 А',
+        ),
+        (PrecedingOverload(phase=LoadPhase.L3, amps=None), 'Перед отключением фаза L3 была перегружена'),
+        (PrecedingOverload(phase=LoadPhase.UNKNOWN, amps=None), 'Перед отключением была перегрузка фазы'),
+        (None, ''),
+    ],
+    ids=['phase_and_current', 'without_a_current', 'unreadable_phase', 'no_overload'],
+)
+def test_outage_overload_note_says_which_phase_was_overloaded_before_the_cut(
+    overload: PrecedingOverload | None,
+    expected: str,
+) -> None:
+    assert outage_overload_note(replace(OUTAGE, overload=overload)) == expected

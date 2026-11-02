@@ -30,12 +30,16 @@ from apps.panel.usecases.get_panel_overview import (
     ZoneOverview,
     ZoneRegime,
 )
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.domain.loads import LoadPhase
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 from apps.power.factories import OutageFactory
 from apps.power.models import Outage
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.outage_overloads import OutageOverloads
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 from apps.system.stubs import ClockStub
+from apps.telemetry.factories import JournalEntryFactory
+from apps.telemetry.repositories.journal import JournalRepository
 
 pytestmark = pytest.mark.django_db
 
@@ -85,6 +89,7 @@ def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPane
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=temperatures,
@@ -116,6 +121,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -137,6 +143,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -161,6 +168,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -185,6 +193,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -204,6 +213,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -246,6 +256,7 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=plug_store,
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -313,6 +324,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=store,
@@ -336,6 +348,7 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
@@ -418,12 +431,23 @@ def f_outages_use_case() -> GetPanelOverviewUseCase:
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
+    )
+
+
+@pytest.fixture
+def overload_before_the_night_cut() -> None:
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '26.4'},
+        created_at=NIGHT_CUT - timedelta(minutes=1),
     )
 
 
@@ -741,3 +765,16 @@ def test_overview_asks_about_unmarked_outages_newest_first(
             cause_marked_at=None,
         ),
     )
+
+
+@pytest.mark.usefixtures('overload_before_the_night_cut')
+def test_overview_notes_an_overload_journaled_right_before_a_cut(
+    f_outages_use_case: GetPanelOverviewUseCase,
+    f_outages: list[Outage],
+) -> None:
+    output = f_outages_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert [(outage.id, outage.overload) for outage in output.outages] == [
+        (f_outages[2].pk, PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('26.4'))),
+        (f_outages[0].pk, None),
+    ]

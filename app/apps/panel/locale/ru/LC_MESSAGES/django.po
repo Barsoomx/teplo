@@ -166,6 +166,17 @@ msgstr "Пропало в посёлке"
 msgid "Not sure"
 msgstr "Не знаю"
 
+#, python-format
+msgid "Phase %(phase)s was overloaded right before the cut: %(amps)s A"
+msgstr "Перед отключением фаза %(phase)s была перегружена: %(amps)s А"
+
+#, python-format
+msgid "Phase %(phase)s was overloaded right before the cut"
+msgstr "Перед отключением фаза %(phase)s была перегружена"
+
+msgid "A phase was overloaded right before the cut"
+msgstr "Перед отключением была перегрузка фазы"
+
 msgid "Sections"
 msgstr "Разделы"
 

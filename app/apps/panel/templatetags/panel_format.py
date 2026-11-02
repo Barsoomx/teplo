@@ -13,6 +13,7 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
+from apps.power.domain.loads import MEASURED_PHASES
 from apps.power.domain.outage import OutageRecord
 from apps.system.domain.clock import ClockStatusCode
 
@@ -77,6 +78,10 @@ GUARD_OFF = gettext_lazy(
 GUARD_OFF_UNREAD = gettext_lazy(
     '%(name)s: the second-floor guard would return the zone to its schedule (no second-floor reading)',
 )
+PHASE_LABELS = {phase.value: phase.value.upper() for phase in MEASURED_PHASES}
+OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut: %(amps)s A')
+UNMEASURED_OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut')
+ANY_OVERLOAD_BEFORE_CUT = gettext_lazy('A phase was overloaded right before the cut')
 
 
 @register.simple_tag
@@ -227,6 +232,23 @@ def second_floor_guard_text(entry: TimelineEntry) -> str:
         return str(GUARD_OFF_UNREAD) % {'name': entry.subject_name}
 
     return _unknown_event(entry)
+
+
+@register.filter
+def outage_overload_note(outage: OutageRecord) -> str:
+    overload = outage.overload
+    if overload is None:
+        return ''
+
+    phase = PHASE_LABELS.get(overload.phase)
+    if phase is None:
+        return str(ANY_OVERLOAD_BEFORE_CUT)
+
+    amps = floatformat(overload.amps, 1)
+    if not amps:
+        return str(UNMEASURED_OVERLOAD_BEFORE_CUT) % {'phase': phase}
+
+    return str(OVERLOAD_BEFORE_CUT) % {'phase': phase, 'amps': amps}
 
 
 def _air_state_kept(entry: TimelineEntry) -> bool:

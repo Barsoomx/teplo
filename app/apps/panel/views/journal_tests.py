@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -13,7 +14,8 @@ from apps.panel.usecases.get_journal_timeline import (
     TimelineDay,
     TimelineEntry,
 )
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.domain.loads import LoadPhase
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 
 pytestmark = pytest.mark.django_db
 
@@ -345,6 +347,37 @@ def m_outage_timeline_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+@pytest.fixture
+def m_overloaded_outage_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=(
+                        TimelineEntry(
+                            kind='power_outage',
+                            subject='',
+                            subject_name='',
+                            device_kind=None,
+                            payload={'outage_id': 7, **CUT_PAYLOAD},
+                            created_at=MORNING,
+                            outage=OutageRecord(
+                                id=7,
+                                began_at=CUT,
+                                ended_at=CUT + timedelta(minutes=9),
+                                cause=OutageCause.UNMARKED,
+                                cause_marked_at=None,
+                                overload=PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('26.4')),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
 def test_journal_describes_entries_in_words(f_client: Client, m_timeline_use_case: MagicMock) -> None:
     response = f_client.get('/journal/')
 
@@ -462,6 +495,24 @@ def test_journal_shows_a_power_outage_with_its_cause_and_the_answers_to_change_i
         '/journal/outages/8/cause/' in content,
         m_outage_timeline_use_case.init.call_count,
     ) == (True, True, 3, True, True, True, False, 1)
+
+
+def test_journal_says_an_overload_preceded_a_power_outage_and_puts_its_answer_forward(
+    f_russian_client: Client,
+    m_overloaded_outage_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        'Перед отключением фаза L2 была перегружена: 26,4 А' in content,
+        'Причина не отмечена' in content,
+        content.count('class="answer answer-suggested"'),
+        'aria-describedby="outage-7-overload"' in content,
+        'id="outage-7-overload"' in content,
+        'aria-pressed' in content,
+        m_overloaded_outage_timeline_use_case.init.call_count,
+    ) == (True, True, 1, True, True, False, 1)
 
 
 def test_journal_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

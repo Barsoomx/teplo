@@ -10,6 +10,7 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
 from apps.power.domain.outage import OutageRecord
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.outage_overloads import OutageOverloads
 from apps.telemetry.models import JournalEntry
 from apps.telemetry.repositories.journal import JournalRepository
 
@@ -50,12 +51,14 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
         zones: ZoneRepository,
         devices: DeviceRepository,
         outages: OutageRepository,
+        overloads: OutageOverloads,
     ) -> None:
         super().__init__()
         self._journal = journal
         self._zones = zones
         self._devices = devices
         self._outages = outages
+        self._overloads = overloads
 
     @classmethod
     def init(cls) -> 'GetJournalTimelineUseCase':
@@ -64,6 +67,7 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
             zones=ZoneRepository(),
             devices=DeviceRepository(),
             outages=OutageRepository(),
+            overloads=OutageOverloads.init(),
         )
 
     def _execute(self, input_dto: GetJournalTimelineInputDTO) -> GetJournalTimelineOutputDTO:
@@ -71,7 +75,8 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
         names = self._subject_names(devices)
         journal = self._journal.latest(limit=input_dto.limit)
         outage_ids = [_outage_id(entry) for entry in journal]
-        outages = self._outages.by_ids([outage_id for outage_id in outage_ids if outage_id is not None])
+        recorded = self._outages.by_ids([outage_id for outage_id in outage_ids if outage_id is not None])
+        outages = {outage_id: self._overloads.noted(outage) for outage_id, outage in recorded.items()}
         days: dict[date, list[TimelineEntry]] = {}
         for entry, outage_id in zip(journal, outage_ids, strict=True):
             device = devices.get(entry.subject)
