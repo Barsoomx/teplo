@@ -1,5 +1,5 @@
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
@@ -7,7 +7,7 @@ from statistics import median
 
 from apps.power.domain.load_status import LoadReading
 from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LoadPhase
-from apps.power.domain.phase_samples import LEVEL_SAMPLES, PhaseSample, mean_amps
+from apps.power.domain.phase_samples import LEVEL_SAMPLES, SAMPLE_SPAN, PhaseSample, mean_amps
 
 PLUG_CURRENT_CHANGE = Decimal(2)
 STEP_MARGIN = timedelta(seconds=3)
@@ -44,6 +44,19 @@ class PhaseStep:
 class PhaseVote:
     phase: LoadPhase
     amps: Decimal
+
+
+@dataclass(frozen=True, kw_only=True)
+class LearningState:
+    changes: tuple[LoadChange, ...] = ()
+    pending: tuple[LoadChange, ...] = ()
+    votes: Mapping[str, tuple[PhaseVote, ...]] = field(default_factory=dict)
+
+
+@dataclass(frozen=True, kw_only=True)
+class LearningStep:
+    state: LearningState
+    learned: tuple[tuple[str, LearnedPhase], ...]
 
 
 def detect_change(load: str, previous: LoadReading, current: LoadReading) -> LoadChange | None:
@@ -123,6 +136,36 @@ def learned_changed(stored: LearnedPhase | None, learned: LearnedPhase) -> bool:
         return True
 
     return abs(stored.amps - learned.amps) >= LEARNED_AMPS_CHANGE
+
+
+def follow_learning(
+    state: LearningState,
+    changes: Sequence[LoadChange],
+    samples: Sequence[PhaseSample],
+    at: float,
+) -> LearningStep:
+    kept_since = at - SAMPLE_SPAN.total_seconds()
+    recent = tuple(change for change in (*state.changes, *changes) if change.until >= kept_since)
+    pending = (*state.pending, *changes)
+    votes = dict(state.votes)
+    learned: list[tuple[str, LearnedPhase]] = []
+    for change in (change for change in pending if change_ripe(change, at)):
+        vote = vote_for_change(change, samples, recent)
+        if vote is None:
+            continue
+
+        votes[change.load] = remember_vote(votes.get(change.load, ()), vote)
+        tallied = tally_votes(votes[change.load])
+        if tallied is not None:
+            learned.append((change.load, tallied))
+    return LearningStep(
+        state=LearningState(
+            changes=recent,
+            pending=tuple(change for change in pending if not change_ripe(change, at)),
+            votes=votes,
+        ),
+        learned=tuple(learned),
+    )
 
 
 def _steps_at(samples: Sequence[PhaseSample], index: int) -> list[PhaseStep]:

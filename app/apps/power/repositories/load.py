@@ -9,6 +9,10 @@ class LoadRepository:
         return [record for record in map(_to_record, loads) if record is not None]
 
     @staticmethod
+    def live_zone_slugs() -> frozenset[str]:
+        return frozenset(Load.objects.filter(zone__live_control=True).values_list('zone__slug', flat=True))
+
+    @staticmethod
     def mark_shed(slug: str, shed: LiveShed) -> None:
         Load.objects.filter(slug=slug).update(
             shed_at=shed.at,

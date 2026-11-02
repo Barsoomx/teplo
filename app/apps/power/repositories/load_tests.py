@@ -84,9 +84,24 @@ def f_hallway_zone() -> Zone:
     return ZoneFactory.create(slug='hallway')
 
 
+@pytest.fixture
+def hallway_under_live_control() -> Load:
+    return ZoneLoadFactory.create(slug='hallway', zone__slug='hallway', zone__live_control=True, priority=4)
+
+
+@pytest.fixture
+def zone_under_live_control_without_a_load() -> Zone:
+    return ZoneFactory.create(slug='living-room', live_control=True)
+
+
 @pytest.mark.usefixtures('f_kitchen', 'boiler')
 def test_all_records_list_loads_by_priority_with_the_device_each_controls() -> None:
     assert LoadRepository.all_records() == [BOILER, KITCHEN]
+
+
+@pytest.mark.usefixtures('f_kitchen', 'boiler', 'hallway_under_live_control', 'zone_under_live_control_without_a_load')
+def test_live_zone_slugs_are_the_zones_of_loads_under_live_control() -> None:
+    assert LoadRepository.live_zone_slugs() == frozenset({'hallway'})
 
 
 @pytest.mark.usefixtures('boiler')

@@ -1,4 +1,5 @@
 from collections.abc import Collection, Mapping
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -6,12 +7,15 @@ import pytest
 from apps.power.domain.load_status import LoadReading, plug_reading, thermostat_reading
 from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LoadPhase
 from apps.power.domain.phase_learning import (
+    LearningState,
+    LearningStep,
     LoadChange,
     PhaseStep,
     PhaseVote,
     change_ripe,
     detect_change,
     find_step,
+    follow_learning,
     learned_changed,
     remember_vote,
     tally_votes,
@@ -68,6 +72,16 @@ def f_step_on_l2() -> list[PhaseSample]:
 @pytest.fixture
 def f_samples(request: pytest.FixtureRequest) -> list[PhaseSample]:
     return request.param
+
+
+@pytest.fixture
+def f_switch_waiting() -> LearningState:
+    return LearningState(changes=(SWITCHED_ON,), pending=(SWITCHED_ON,))
+
+
+@pytest.fixture
+def f_switch_waiting_after_two_votes(f_switch_waiting: LearningState) -> LearningState:
+    return replace(f_switch_waiting, votes={'boiler-2f': tuple(_votes((LoadPhase.L2, '6.0'), (LoadPhase.L2, '6.4')))})
 
 
 @pytest.mark.parametrize(
@@ -227,3 +241,36 @@ def test_phase_is_learned_after_three_votes_for_it_and_none_against_among_the_la
 )
 def test_learned_phase_is_stored_again_only_when_it_changes(stored: LearnedPhase | None, expected: bool) -> None:
     assert learned_changed(stored, LearnedPhase(phase=LoadPhase.L2, amps=Decimal('6.0'), samples=4)) is expected
+
+
+def test_change_waits_until_every_load_has_been_read_after_it(f_step_on_l2: list[PhaseSample]) -> None:
+    step = follow_learning(LearningState(), [SWITCHED_ON], f_step_on_l2, 164.0)
+
+    assert step == LearningStep(state=LearningState(changes=(SWITCHED_ON,), pending=(SWITCHED_ON,)), learned=())
+
+
+def test_ripe_change_casts_its_vote(f_step_on_l2: list[PhaseSample], f_switch_waiting: LearningState) -> None:
+    step = follow_learning(f_switch_waiting, [], f_step_on_l2, 165.0)
+
+    assert step == LearningStep(
+        state=LearningState(
+            changes=(SWITCHED_ON,),
+            votes={'boiler-2f': (PhaseVote(phase=LoadPhase.L2, amps=Decimal('6.0')),)},
+        ),
+        learned=(),
+    )
+
+
+def test_third_vote_for_one_phase_learns_it(
+    f_step_on_l2: list[PhaseSample],
+    f_switch_waiting_after_two_votes: LearningState,
+) -> None:
+    step = follow_learning(f_switch_waiting_after_two_votes, [], f_step_on_l2, 165.0)
+
+    assert step.learned == (('boiler-2f', LearnedPhase(phase=LoadPhase.L2, amps=Decimal('6.0'), samples=3)),)
+
+
+def test_changes_older_than_the_samples_are_forgotten(f_step_on_l2: list[PhaseSample]) -> None:
+    state = LearningState(changes=(LoadChange(load='kitchen', since=10.0, until=40.0, up=True),))
+
+    assert follow_learning(state, [], f_step_on_l2, 161.0).state.changes == ()
