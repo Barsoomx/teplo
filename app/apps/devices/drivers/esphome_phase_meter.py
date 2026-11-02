@@ -1,3 +1,4 @@
+from apps.core.domain.errors import DomainError
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.readings import PhaseCurrents
 from apps.devices.services.phase_meter_store import PhaseMeterStore, phase_meter_store
@@ -14,7 +15,10 @@ class EsphomePhaseMeterDriver:
 
     def read_currents(self) -> PhaseCurrents:
         snapshot = self._store.snapshot(self._slug)
-        if snapshot.currents is None or snapshot.stale:
-            raise DeviceUnavailableError(snapshot.error or 'phase meter stale')
+        if snapshot.currents is not None and not snapshot.stale:
+            return snapshot.currents
 
-        return snapshot.currents
+        if snapshot.error_code is None or snapshot.error is None:
+            raise DeviceUnavailableError('phase meter stale')
+
+        raise DomainError(snapshot.error, error_code=snapshot.error_code)

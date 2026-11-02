@@ -3,8 +3,8 @@ from decimal import Decimal
 
 import pytest
 
+from apps.core.domain.errors import DomainError
 from apps.core.stubs import MonotonicClockStub
-from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.readings import TemperatureReading
 from apps.devices.drivers.esphome_temperature import EsphomeTemperatureDriver
 from apps.devices.services.state_store import TemperatureStateStore
@@ -22,6 +22,8 @@ def store(f_reading: TemperatureReading) -> TemperatureStateStore:
     clock = MonotonicClockStub(now=1000.0)
     store = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
     store.record_state('air-hallway', f_reading)
+    store.record_state('air-living-room', f_reading)
+    store.record_failure('air-living-room', error_code='broker_unavailable', error='mqtt broker unreachable')
     clock.advance(601)
     store.record_state('air-kitchen', f_reading)
     store.record_failure('outdoor', error_code='sensor_reading_failed', error='temperature: the node reported nan')
@@ -43,17 +45,21 @@ def test_read_gives_the_latest_reading(f_driver: EsphomeTemperatureDriver, f_rea
 
 
 @pytest.mark.parametrize(
-    ('f_unavailable_driver', 'detail'),
+    ('f_unavailable_driver', 'failure'),
     [
-        ('air-hallway', 'no recent reading'),
-        ('outdoor', 'temperature: the node reported nan'),
-        ('air-attic', 'no recent reading'),
+        ('air-hallway', ('device_unavailable', 'no recent reading')),
+        ('air-living-room', ('broker_unavailable', 'mqtt broker unreachable')),
+        ('outdoor', ('sensor_reading_failed', 'temperature: the node reported nan')),
+        ('air-attic', ('device_unavailable', 'no recent reading')),
     ],
-    ids=['older-than-10-min', 'failed-without-a-reading', 'never-heard'],
+    ids=['older-than-10-min', 'older-than-10-min-after-a-failure', 'failed-without-a-reading', 'never-heard'],
     indirect=['f_unavailable_driver'],
 )
-def test_read_without_a_recent_reading_raises(f_unavailable_driver: EsphomeTemperatureDriver, detail: str) -> None:
-    with pytest.raises(DeviceUnavailableError) as raised:
+def test_read_without_a_recent_reading_raises_the_recorded_failure_with_its_code(
+    f_unavailable_driver: EsphomeTemperatureDriver,
+    failure: tuple[str, str],
+) -> None:
+    with pytest.raises(DomainError) as raised:
         f_unavailable_driver.read_temperature()
 
-    assert (raised.value.error_code, raised.value.detail) == ('device_unavailable', detail)
+    assert (raised.value.error_code, raised.value.detail) == failure

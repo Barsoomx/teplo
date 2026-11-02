@@ -3,8 +3,8 @@ from decimal import Decimal
 
 import pytest
 
+from apps.core.domain.errors import DomainError
 from apps.core.stubs import MonotonicClockStub
-from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.readings import Phase, PhaseCurrents
 from apps.devices.drivers.esphome_phase_meter import EsphomePhaseMeterDriver
 from apps.devices.services.phase_meter_store import PhaseMeterStore
@@ -24,6 +24,13 @@ def store() -> PhaseMeterStore:
         store.record_current('phase-meter', phase, amps, NOW)
     store.record_current('phase-meter-two-clamps', Phase.A, CURRENTS[Phase.A], NOW)
     store.record_current('phase-meter-two-clamps', Phase.B, CURRENTS[Phase.B], NOW)
+    store.record_current('phase-meter-nan', Phase.A, CURRENTS[Phase.A], NOW)
+    store.record_current('phase-meter-nan', Phase.C, CURRENTS[Phase.C], NOW)
+    store.record_failure(
+        'phase-meter-nan',
+        error_code='sensor_reading_failed',
+        error='l2_current: the node reported nan',
+    )
     store.record_failure('phase-meter-failed', error_code='broker_unavailable', error='mqtt broker unreachable')
     return store
 
@@ -43,17 +50,21 @@ def test_read_gives_the_currents_of_every_phase(f_driver: EsphomePhaseMeterDrive
 
 
 @pytest.mark.parametrize(
-    ('f_stale_driver', 'detail'),
+    ('f_stale_driver', 'failure'),
     [
-        ('phase-meter-lagging', 'phase meter stale'),
-        ('phase-meter-two-clamps', 'phase meter stale'),
-        ('phase-meter-failed', 'mqtt broker unreachable'),
+        ('phase-meter-lagging', ('device_unavailable', 'phase meter stale')),
+        ('phase-meter-two-clamps', ('device_unavailable', 'phase meter stale')),
+        ('phase-meter-nan', ('sensor_reading_failed', 'l2_current: the node reported nan')),
+        ('phase-meter-failed', ('broker_unavailable', 'mqtt broker unreachable')),
     ],
-    ids=['older-than-10-s', 'phase-missing', 'failed-without-currents'],
+    ids=['older-than-10-s', 'phase-missing', 'phase-failed', 'failed-without-currents'],
     indirect=['f_stale_driver'],
 )
-def test_read_of_a_stale_meter_raises(f_stale_driver: EsphomePhaseMeterDriver, detail: str) -> None:
-    with pytest.raises(DeviceUnavailableError) as raised:
+def test_read_of_a_stale_meter_raises_the_recorded_failure_with_its_code(
+    f_stale_driver: EsphomePhaseMeterDriver,
+    failure: tuple[str, str],
+) -> None:
+    with pytest.raises(DomainError) as raised:
         f_stale_driver.read_currents()
 
-    assert (raised.value.error_code, raised.value.detail) == ('device_unavailable', detail)
+    assert (raised.value.error_code, raised.value.detail) == failure
