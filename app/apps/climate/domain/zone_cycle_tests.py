@@ -31,6 +31,7 @@ COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
 FIXED_START = datetime(2026, 11, 2, 3, 30, tzinfo=MOSCOW)
 OPTIMAL_START = datetime(2026, 11, 2, 3, 50, tzinfo=MOSCOW)
 MORNING = datetime(2026, 11, 2, 7, 0, tzinfo=MOSCOW)
+AIR_MODE_STOP = datetime(2026, 11, 2, 5, 40, tzinfo=MOSCOW)
 NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
 OUTDOOR = Decimal('-3.4')
 TARGET = Decimal('22.0')
@@ -179,6 +180,11 @@ def f_morning() -> Morning:
         outdoor=OUTDOOR,
         samples=(AirSample(at=FIXED_START, air=Decimal('20.0')),),
     )
+
+
+@pytest.fixture
+def f_preheating_morning_memory(f_preheating_memory: ZoneMemory, f_morning: Morning) -> ZoneMemory:
+    return replace(f_preheating_memory, morning=f_morning)
 
 
 def test_zone_without_air_reading_runs_floor_mode(f_live_zone: ZoneSettings) -> None:
@@ -506,6 +512,46 @@ def test_untrusted_clock_keeps_held_preheat(f_live_zone: ZoneSettings, f_preheat
     )
 
     assert (follow_up.memory.preheat, follow_up.memory.air_state) == (f_preheating_memory.preheat, AirState.HEAT)
+
+
+def test_air_mode_stop_in_preheat_finishes_morning(
+    f_live_zone: ZoneSettings,
+    f_preheating_morning_memory: ZoneMemory,
+    f_morning: Morning,
+) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_preheating_morning_memory,
+        _conditions('21.7', learning=LEARNED),
+        _cycle(AIR_MODE_STOP),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.morning, follow_up.memory.morning, follow_up.memory.air_state) == (
+        replace(f_morning, samples=(*f_morning.samples, AirSample(at=AIR_MODE_STOP, air=Decimal('21.7')))),
+        None,
+        AirState.IDLE,
+    )
+
+
+def test_air_mode_stop_waiting_its_turn_keeps_morning_going(
+    f_live_zone: ZoneSettings,
+    f_preheating_morning_memory: ZoneMemory,
+    f_morning: Morning,
+) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_preheating_morning_memory,
+        _conditions('21.7', learning=LEARNED),
+        _cycle(AIR_MODE_STOP),
+        ZoneCycleOutcome.THROTTLED,
+    )
+
+    assert (follow_up.morning, follow_up.memory.morning, follow_up.memory.air_state) == (
+        None,
+        replace(f_morning, samples=(*f_morning.samples, AirSample(at=AIR_MODE_STOP, air=Decimal('21.7')))),
+        AirState.HEAT,
+    )
 
 
 def test_lost_air_sensor_keeps_latched_preheat_and_forgets_air_state(

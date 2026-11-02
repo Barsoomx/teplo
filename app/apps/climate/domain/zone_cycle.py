@@ -149,7 +149,7 @@ def _follow_air(
 ) -> ZoneFollowUp:
     current = memory.air_state_on(ControlPath.AIR)
     heat_target = memory.heat_target_on(ControlPath.AIR)
-    state = plan.state if outcome in FOLLOWED else current
+    state = _followed_air_state(memory, decision, outcome)
     if memory.stop is None:
         idle = ThermostatTarget(power=True, setpoint=zone.setpoints.idle)
         watch = start_stop_watch(
@@ -264,5 +264,13 @@ def _observe_morning(
                 and not zone.is_boosted(cycle.now)
             ),
             outcome=outcome,
+            air_state=_followed_air_state(memory, decision, outcome),
         ),
     )
+
+
+def _followed_air_state(memory: ZoneMemory, decision: ZoneDecision, outcome: ZoneCycleOutcome) -> AirState | None:
+    if decision.path is not ControlPath.AIR or decision.plan is None:
+        return None
+
+    return decision.plan.state if outcome in FOLLOWED else memory.air_state_on(ControlPath.AIR)

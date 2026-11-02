@@ -41,6 +41,7 @@ def _reading(at: datetime, *, air: str = '20.1', mode: ScheduleMode = ScheduleMo
         outdoor=OUTDOOR,
         heating=True,
         outcome=ZoneCycleOutcome.UNCHANGED,
+        air_state=None,
     )
 
 
@@ -59,8 +60,14 @@ def f_watch() -> StopWatch:
     return StopWatch(stopped_at=STOPPED_AT, target=TARGET, peak=Decimal('21.8'))
 
 
-def test_morning_starts_when_night_turns_into_preheat(f_start_reading: MorningReading) -> None:
-    assert observe_morning(None, f_start_reading) == MorningProgress(
+@pytest.mark.parametrize('air_state', [None, AirState.HEAT], ids=['floor_heats', 'air_mode_heats'])
+def test_morning_starts_when_night_turns_into_preheat(
+    f_start_reading: MorningReading,
+    air_state: AirState | None,
+) -> None:
+    reading = replace(f_start_reading, air_state=air_state)
+
+    assert observe_morning(None, reading) == MorningProgress(
         morning=Morning(comfort_at=COMFORT_AT, target=TARGET, outdoor=OUTDOOR, samples=(FIRST_SAMPLE,)),
         finished=None,
     )
@@ -104,6 +111,7 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
         outdoor=outdoor,
         heating=heating,
         outcome=ZoneCycleOutcome.APPLIED,
+        air_state=None,
     )
 
     assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
@@ -161,9 +169,27 @@ def test_morning_is_dropped_when_its_conditions_break(
         outdoor=outdoor,
         heating=heating,
         outcome=ZoneCycleOutcome.UNCHANGED,
+        air_state=None,
     )
 
     assert observe_morning(f_morning, reading) == MorningProgress(morning=None, finished=None)
+
+
+def test_morning_does_not_start_while_air_mode_idles(f_start_reading: MorningReading) -> None:
+    reading = replace(f_start_reading, air_state=AirState.IDLE)
+
+    assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
+
+
+def test_first_idle_minute_of_air_mode_finishes_morning(f_morning: Morning) -> None:
+    at = PREHEAT_START + timedelta(hours=1, minutes=52)
+
+    progress = observe_morning(f_morning, replace(_reading(at, air='21.7'), air_state=AirState.IDLE))
+
+    assert progress == MorningProgress(
+        morning=None,
+        finished=replace(f_morning, samples=(FIRST_SAMPLE, AirSample(at=at, air=Decimal('21.7')))),
+    )
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ class MorningReading:
     outdoor: Decimal | None
     heating: bool
     outcome: ZoneCycleOutcome
+    air_state: AirState | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,7 +60,11 @@ def observe_morning(morning: Morning | None, reading: MorningReading) -> Morning
     if sample is None or reading.outdoor is None or reading.mode is not ScheduleMode.PREHEAT:
         return MorningProgress(morning=None, finished=None)
 
-    return MorningProgress(morning=replace(morning, samples=(*morning.samples, sample)), finished=None)
+    observed = replace(morning, samples=(*morning.samples, sample))
+    if reading.air_state is AirState.IDLE:
+        return MorningProgress(morning=None, finished=observed)
+
+    return MorningProgress(morning=observed, finished=None)
 
 
 def start_stop_watch(
@@ -93,7 +98,7 @@ def observe_stop(watch: StopWatch, reading: StopReading) -> StopProgress:
 
 def _start_morning(reading: MorningReading) -> Morning | None:
     sample = _sample(reading)
-    if sample is None or reading.outdoor is None or reading.outcome not in FOLLOWED:
+    if sample is None or reading.outdoor is None or not _heats_from_start(reading):
         return None
 
     if reading.previous_mode is not ScheduleMode.NIGHT or reading.mode is not ScheduleMode.PREHEAT:
@@ -104,6 +109,10 @@ def _start_morning(reading: MorningReading) -> Morning | None:
         return None
 
     return Morning(comfort_at=comfort_at, target=reading.target, outdoor=reading.outdoor, samples=(sample,))
+
+
+def _heats_from_start(reading: MorningReading) -> bool:
+    return reading.outcome in FOLLOWED and reading.air_state is not AirState.IDLE
 
 
 def _sample(reading: MorningReading) -> AirSample | None:

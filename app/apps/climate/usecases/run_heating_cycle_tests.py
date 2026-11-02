@@ -56,6 +56,13 @@ MORNING_AIR = (
     (FIXED_START + timedelta(hours=2, minutes=40), '21.7'),
     (COMFORT_AT - MINUTE, '21.9'),
 )
+AIR_MODE_MORNING_AIR = (
+    (OPTIMAL_START - MINUTE, '20.4', '18.0'),
+    (OPTIMAL_START, '20.4', '18.0'),
+    (OPTIMAL_START + timedelta(minutes=40), '20.5', '30.0'),
+    (OPTIMAL_START + timedelta(hours=1, minutes=40), '21.5', '30.0'),
+)
+AIR_MODE_STOP = OPTIMAL_START + timedelta(hours=1, minutes=52)
 STOP_AIR = (
     (MORNING, '21.8', '30.0'),
     (MORNING + timedelta(hours=1), '22.3', '18.0'),
@@ -795,6 +802,26 @@ def f_morning_cycle(
 
 
 @pytest.fixture
+def f_air_mode_morning_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _learned(_air_zone(air_control_live=True))
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor'))
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat}
+    temperatures.record_state('outdoor', _reading('-3.4'))
+    for at, air, setpoint in AIR_MODE_MORNING_AIR:
+        store.record_state(KITCHEN, _state(setpoint))
+        temperatures.record_state('air-kitchen', _reading(air))
+        _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(at))
+    temperatures.record_state('air-kitchen', _reading('21.7'))
+    return _use_case(store, temperatures, thermostats, book, dispatcher)
+
+
+@pytest.fixture
 def f_failed_preheat_cycle(
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
@@ -1295,6 +1322,21 @@ def test_floor_mode_preheat_teaches_air_zone_its_morning(f_morning_cycle: RunHea
         timedelta(minutes=40),
         {'-5': '0.777'},
         1,
+    )
+
+
+def test_air_mode_morning_learns_its_rate_until_air_mode_stops_heating(
+    f_air_mode_morning_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    f_air_mode_morning_cycle.execute(_at(AIR_MODE_STOP))
+
+    learning = ZoneLearning.objects.get(zone__slug='kitchen')
+    assert (f_thermostat.commands, learning.dead_time, learning.heat_up_rates, learning.mornings) == (
+        [('setpoint', Decimal('30.0')), ('setpoint', Decimal('18.0'))],
+        timedelta(minutes=40),
+        {'-5': '0.860'},
+        4,
     )
 
 
