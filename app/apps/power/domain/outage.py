@@ -14,6 +14,13 @@ OUTAGE_ANSWERS = (OutageCause.OVERLOAD, OutageCause.GRID, OutageCause.UNKNOWN)
 
 
 @dataclass(frozen=True, kw_only=True)
+class PowerCut:
+    began_at: datetime
+    ended_at: datetime
+    noticed_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
 class OutageRecord:
     id: int
     began_at: datetime

@@ -10,6 +10,7 @@ from apps.devices.usecases.poll_thermostats import PollThermostatsInputDTO, Poll
 from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, DeliverAlertsUseCase
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
 from apps.notifications.usecases.note_startup import NoteStartupInputDTO, NoteStartupUseCase
+from apps.power.usecases.record_outages import RecordOutagesInputDTO, RecordOutagesUseCase
 from apps.system.services.clock_trust import clock_trust_source, read_clock
 from apps.system.services.uptime import UptimeReader
 from apps.telemetry.usecases.capture_samples import CaptureSamplesInputDTO, CaptureSamplesUseCase
@@ -25,6 +26,7 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
         PeriodicJob(name='run_heating_cycle', interval=timedelta(minutes=1), action=run_heating_cycle),
         PeriodicJob(name='flush_samples', interval=timedelta(minutes=5), action=flush_samples),
         PeriodicJob(name='evaluate_alerts', interval=timedelta(minutes=1), action=evaluate_alerts),
+        PeriodicJob(name='record_outages', interval=timedelta(minutes=1), action=record_outages),
         PeriodicJob(name='deliver_alerts', interval=timedelta(minutes=1), action=deliver_alerts),
     )
 
@@ -69,6 +71,10 @@ def evaluate_alerts() -> object:
     return EvaluateAlertsUseCase.init().execute(
         EvaluateAlertsInputDTO(now=reading.now, monotonic=reading.monotonic, clock_trusted=reading.trusted),
     )
+
+
+def record_outages() -> object:
+    return RecordOutagesUseCase.init().execute(RecordOutagesInputDTO(power_cut=None))
 
 
 def deliver_alerts() -> object:
