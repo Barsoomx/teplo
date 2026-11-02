@@ -204,7 +204,7 @@ A sensor that fails when its node starts also yields `nan`. An SHT30 that does n
    sh scripts/esphome.sh upload teplo-air-kitchen 192.0.2.21
    ```
 
-   `upload` builds the node first and authenticates with `ota_password`.
+   `upload` builds the node first and authenticates with `ota_password`. Docker Desktop's containers do not reach the LAN, so with `DOCKER` set to `docker.exe` the script forwards the node's OTA port 3232 from WSL with `scripts/ota_forward.py` and uploads to `host.docker.internal`; WSL needs `python3`. A node on a weak link may drop the upload: run it again, or bring the node nearer the router for the minute it takes.
 
 6. Calibrate the phase meter with a kettle once the clamps sit on the phase conductors. The firmware starts from the clamps' nominal 50 A per volt (`multiply: 50`). The clamps sit on the input conductors, before the stabilizers, so on L1 and L2 a clamp carries the stabilizer's input current, which runs above the current of the load behind it, the more so the lower the mains voltage. Calibrate on L3, which has no stabilizer yet.
 
