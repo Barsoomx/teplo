@@ -39,7 +39,7 @@ from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.services.guard_book import GuardBook
 from apps.power.services.load_switcher import LoadSwitcher
-from apps.power.stubs import DeviceDirectoryStub, LoadSettingsStoreStub, LoadStoreStub, ZoneShutoffStub
+from apps.power.stubs import DeviceDirectoryStub, LoadSettingsStoreStub, LoadStoreStub, ZoneSwitchStub
 from apps.power.usecases.shed_phase_loads import (
     ShedPhaseLoadsInputDTO,
     ShedPhaseLoadsOutputDTO,
@@ -151,7 +151,7 @@ class House:
     loads: LoadStoreStub
     load_settings: LoadSettingsStoreStub
     boiler: SwitchablePlugStub
-    zones: ZoneShutoffStub
+    zones: ZoneSwitchStub
     events: list[DomainEvent]
 
 
@@ -209,7 +209,7 @@ def _house(
     loads = LoadStoreStub(records=records, live_zones=live_zones)
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
-    zones = ZoneShutoffStub(error=None)
+    zones = ZoneSwitchStub(error=None)
     book = GuardBook()
     return House(
         guard=Guard(
@@ -258,6 +258,10 @@ def _seconds(guard: Guard, count: int, l2: str | None) -> list[ShedPhaseLoadsOut
     return outputs
 
 
+def _pause(guard: Guard, seconds: int) -> None:
+    guard.clock.advance(seconds)
+
+
 def _shed_at(outputs: list[ShedPhaseLoadsOutputDTO], first: int) -> list[tuple[int, tuple[str, ...]]]:
     return [(second, output.shed) for second, output in enumerate(outputs, start=first) if output.shed]
 
@@ -296,6 +300,14 @@ def _load_management_off(house: House) -> None:
 
 def _load_on(house: House) -> None:
     house.loads.edit([replace(record, live=True) for record in house.loads.records], frozenset())
+
+
+def _zone_live_control_off(house: House) -> None:
+    house.loads.edit(house.loads.records, frozenset())
+
+
+def _zone_load_off(house: House) -> None:
+    house.loads.edit([replace(record, live=False) for record in house.loads.records], LIVE_ZONES)
 
 
 def _plug_read_off(house: House, device: str, second: int) -> None:
@@ -388,6 +400,12 @@ def f_unreachable_plug_house() -> House:
 @pytest.fixture
 def f_live_floors_house() -> House:
     return _house(_live(KITCHEN, LIVING_ROOM), LIVE_CONTROL, LIVE_ZONES)
+
+
+@pytest.fixture
+def f_live_floors_house_after_a_shed(f_live_floors_house: House) -> House:
+    _seconds(f_live_floors_house.guard, 4, '26.0')
+    return f_live_floors_house
 
 
 @pytest.fixture
@@ -495,7 +513,7 @@ def f_guard_after_its_first_second() -> Guard:
         ),
         shed=ShedPhaseLoadsUseCase(
             loads=LoadRepository(),
-            switcher=LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=ZoneShutoffStub(error=None)),
+            switcher=LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=ZoneSwitchStub(error=None)),
             book=book,
             clock=clock,
             dry_run=False,
@@ -1112,6 +1130,74 @@ def test_release_that_fails_is_tried_again_only_once_the_plug_is_read_again(
         f_unswitchable_plug_after_a_failed_release.events,
         _failed_commands(f_unswitchable_plug_after_a_failed_release),
     ) == ([_unswitchable_restore(61)], {'boiler-2f': START + 121})
+
+
+def test_released_zone_its_cycle_still_writes_returns_to_its_schedule_at_once(
+    f_live_floors_house_after_a_shed: House,
+) -> None:
+    _zone_load_off(f_live_floors_house_after_a_shed)
+    outputs = _seconds(f_live_floors_house_after_a_shed.guard, 57, '15.0')
+
+    assert (
+        _restored_at(outputs, 5),
+        f_live_floors_house_after_a_shed.zones.switched_on,
+        f_live_floors_house_after_a_shed.book.held_zones(),
+        f_live_floors_house_after_a_shed.events[2:],
+    ) == (
+        [(61, ('kitchen',))],
+        [],
+        frozenset(),
+        [
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('15.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.RELEASED,
+                occurred_at=_moment(61),
+            ),
+        ],
+    )
+
+
+def test_released_zone_no_longer_written_live_gets_its_thermostat_back_on_at_its_next_allowed_write(
+    f_live_floors_house_after_a_shed: House,
+) -> None:
+    _zone_live_control_off(f_live_floors_house_after_a_shed)
+    early = _seconds(f_live_floors_house_after_a_shed.guard, 57, '15.0')
+    held = f_live_floors_house_after_a_shed.book.held_zones()
+    _pause(f_live_floors_house_after_a_shed.guard, 1740)
+    late = _seconds(f_live_floors_house_after_a_shed.guard, 3, '15.0')
+
+    assert (
+        _restored_at(early, 5),
+        held,
+        _restored_at(late, 1802),
+        f_live_floors_house_after_a_shed.zones.switched_on,
+        f_live_floors_house_after_a_shed.events[2:],
+    ) == (
+        [],
+        frozenset({'kitchen'}),
+        [(1804, ('kitchen',))],
+        [('kitchen', 'thermostat-kitchen', _moment(1804))],
+        [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('15.0'), occurred_at=_moment(1802)),
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('15.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.RELEASED,
+                occurred_at=_moment(1804),
+            ),
+        ],
+    )
 
 
 @pytest.mark.django_db

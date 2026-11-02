@@ -9,7 +9,7 @@ from apps.devices.domain.readings import PlugState
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
 from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord
 from apps.power.services.load_switcher import LoadSwitcher
-from apps.power.stubs import PermitStub, ZoneShutoffStub
+from apps.power.stubs import PermitStub, ZoneSwitchStub
 
 NOW = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 BOILER = LoadRecord(
@@ -50,17 +50,17 @@ def f_plug() -> SwitchablePlugStub:
 
 
 @pytest.fixture
-def f_zones() -> ZoneShutoffStub:
-    return ZoneShutoffStub(error=None)
+def f_zones() -> ZoneSwitchStub:
+    return ZoneSwitchStub(error=None)
 
 
 @pytest.fixture
-def f_switcher(f_plug: SwitchablePlugStub, f_zones: ZoneShutoffStub) -> LoadSwitcher:
+def f_switcher(f_plug: SwitchablePlugStub, f_zones: ZoneSwitchStub) -> LoadSwitcher:
     return LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': f_plug}), zones=f_zones)
 
 
 @pytest.fixture
-def f_switcher_without_plugs(f_zones: ZoneShutoffStub) -> LoadSwitcher:
+def f_switcher_without_plugs(f_zones: ZoneSwitchStub) -> LoadSwitcher:
     return LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=f_zones)
 
 
@@ -77,7 +77,7 @@ def f_granted_permit() -> PermitStub:
 def test_shedding_a_plug_switches_it_off(
     f_switcher: LoadSwitcher,
     f_plug: SwitchablePlugStub,
-    f_zones: ZoneShutoffStub,
+    f_zones: ZoneSwitchStub,
 ) -> None:
     f_switcher.shed(BOILER, NOW)
 
@@ -87,7 +87,7 @@ def test_shedding_a_plug_switches_it_off(
 def test_shedding_a_zone_switches_its_thermostat_off(
     f_switcher: LoadSwitcher,
     f_plug: SwitchablePlugStub,
-    f_zones: ZoneShutoffStub,
+    f_zones: ZoneSwitchStub,
 ) -> None:
     f_switcher.shed(KITCHEN, NOW)
 
@@ -116,13 +116,13 @@ def test_restoring_a_plug_teplo_switched_off_switches_it_on_with_a_permit(
 def test_restoring_switches_nothing_and_asks_no_permit_but_for_a_plug_teplo_switched_off(
     f_switcher: LoadSwitcher,
     f_plug: SwitchablePlugStub,
-    f_zones: ZoneShutoffStub,
+    f_zones: ZoneSwitchStub,
     f_granted_permit: PermitStub,
     load: LoadRecord,
 ) -> None:
     outcome = f_switcher.restore(load, was_on=None, permit=f_granted_permit)
 
-    assert (outcome, f_plug.switches, f_zones.switched_off, f_granted_permit.asked) == (True, [], [], 0)
+    assert (outcome, f_plug.switches, f_zones.switched_on, f_granted_permit.asked) == (True, [], [], 0)
 
 
 def test_restoring_a_plug_without_a_switching_driver_fails_before_asking_a_permit(
@@ -136,21 +136,33 @@ def test_restoring_a_plug_without_a_switching_driver_fails_before_asking_a_permi
 
 
 @pytest.mark.parametrize(
-    ('load', 'was_on', 'switches'),
-    [(BOILER, True, [True]), (BOILER, None, []), (KITCHEN, None, [])],
-    ids=['plug_teplo_switched_off', 'plug_teplo_did_not_switch_off', 'zone'],
+    ('load', 'was_on', 'zone_writes_live', 'switches', 'switched_on'),
+    [
+        (BOILER, True, True, [True], []),
+        (BOILER, None, True, [], []),
+        (KITCHEN, None, True, [], []),
+        (KITCHEN, None, False, [], [('kitchen', 'thermostat-kitchen', NOW)]),
+    ],
+    ids=[
+        'plug_teplo_switched_off',
+        'plug_teplo_did_not_switch_off',
+        'zone_the_cycle_writes',
+        'zone_the_cycle_no_longer_writes',
+    ],
 )
-def test_releasing_switches_on_only_a_plug_teplo_switched_off(
+def test_releasing_hands_a_load_back_as_teplo_found_it(
     f_switcher: LoadSwitcher,
     f_plug: SwitchablePlugStub,
-    f_zones: ZoneShutoffStub,
+    f_zones: ZoneSwitchStub,
     load: LoadRecord,
     was_on: bool | None,
+    zone_writes_live: bool,
     switches: list[bool],
+    switched_on: list[tuple[str, str, datetime]],
 ) -> None:
-    f_switcher.release(load, was_on=was_on)
+    f_switcher.release(load, was_on=was_on, zone_writes_live=zone_writes_live, at=NOW)
 
-    assert (f_plug.switches, f_zones.switched_off) == (switches, [])
+    assert (f_plug.switches, f_zones.switched_on) == (switches, switched_on)
 
 
 def test_plug_without_a_switching_driver_fails_the_shed(f_switcher_without_plugs: LoadSwitcher) -> None:

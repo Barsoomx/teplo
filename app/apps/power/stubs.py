@@ -92,20 +92,31 @@ class DeviceDirectoryStub:
         return self._slugs.get(kind, [])
 
 
-class ZoneShutoffStub:
+class ZoneSwitchStub:
     def __init__(self, error: DomainError | None) -> None:
         self._error = error
         self._switched_off: list[tuple[str, str, datetime]] = []
+        self._switched_on: list[tuple[str, str, datetime]] = []
 
     @property
     def switched_off(self) -> list[tuple[str, str, datetime]]:
         return self._switched_off
+
+    @property
+    def switched_on(self) -> list[tuple[str, str, datetime]]:
+        return self._switched_on
 
     def switch_off(self, zone: str, thermostat: str, at: datetime) -> None:
         if self._error is not None:
             raise self._error
 
         self._switched_off.append((zone, thermostat, at))
+
+    def switch_on(self, zone: str, thermostat: str, at: datetime) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._switched_on.append((zone, thermostat, at))
 
 
 class PermitStub:

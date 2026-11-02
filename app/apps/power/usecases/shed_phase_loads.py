@@ -7,6 +7,7 @@ from decimal import Decimal
 import structlog
 from django.conf import settings
 
+from apps.climate.domain.write_guard import MIN_WRITE_INTERVAL
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
@@ -160,11 +161,16 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         now: datetime,
     ) -> ShedState:
         if shed.live:
-            if awaits_reading(state, shedding, record.slug):
+            if not self._release_due(state, shedding, record, shed, at):
                 return shedding
 
             try:
-                self._switcher.release(record, was_on=shed.was_on)
+                self._switcher.release(
+                    record,
+                    was_on=shed.was_on,
+                    zone_writes_live=self._zone_writes_live(state.loads, record),
+                    at=now,
+                )
             except DomainError as error:
                 return self._restore_failed(shedding, record, shed, error, at, now)
 
@@ -431,6 +437,19 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     def _live_load(self, loads: GuardLoads, slug: str) -> bool:
         record = loads.record(slug)
         return record is not None and self._live(loads, record)
+
+    def _zone_writes_live(self, loads: GuardLoads, record: LoadRecord) -> bool:
+        return not self._dry_run and record.zone_slug in loads.live_zones
+
+    def _release_due(self, state: GuardState, shedding: ShedState, record: LoadRecord, shed: Shed, at: float) -> bool:
+        if awaits_reading(state, shedding, record.slug):
+            return False
+
+        return (
+            record.kind is LoadKind.PLUG
+            or self._zone_writes_live(state.loads, record)
+            or elapsed(shed.at, at, MIN_WRITE_INTERVAL)
+        )
 
 
 def _reading(state: GuardState, slug: str) -> LoadReading | None:
