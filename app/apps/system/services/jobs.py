@@ -12,6 +12,7 @@ from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, De
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
 from apps.notifications.usecases.note_startup import NoteStartupInputDTO, NoteStartupUseCase
 from apps.power.usecases.record_outages import RecordOutagesInputDTO, RecordOutagesUseCase
+from apps.system.services.boot_id import BootIdReader
 from apps.system.services.clock_trust import clock_trust_source, read_clock
 from apps.system.services.uptime import UptimeReader
 from apps.telemetry.usecases.capture_samples import CaptureSamplesInputDTO, CaptureSamplesUseCase
@@ -40,7 +41,9 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
 
 def journal_startup() -> object:
     router_uptime = UptimeReader.init().read()
-    started = JournalStartupUseCase.init().execute(JournalStartupInputDTO(now=timezone.now()))
+    started = JournalStartupUseCase.init().execute(
+        JournalStartupInputDTO(now=timezone.now(), boot_id=BootIdReader.init().read(), router_uptime=router_uptime),
+    )
     return NoteStartupUseCase.init().execute(
         NoteStartupInputDTO(
             last_activity=started.last_activity,
