@@ -10,13 +10,16 @@ from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, S
 from apps.power.domain.shedding import (
     SETTLED,
     Shed,
+    UnconfirmedShed,
     choose_restore,
     choose_shed,
     in_view,
     new_shed,
     relief,
     resumed_shed,
+    shed_confirmed,
     switched_back_on,
+    unconfirmed_shed,
 )
 
 THRESHOLDS = PhaseThresholds(
@@ -31,6 +34,7 @@ THRESHOLDS = PhaseThresholds(
     meter_lost_after=timedelta(seconds=60),
 )
 AT = 1000.0
+NOW = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 ALL_CALM = frozenset({LoadPhase.L1, LoadPhase.L2, LoadPhase.L3})
 CURRENTS = {LoadPhase.L1: Decimal('10.0'), LoadPhase.L2: Decimal('14.0'), LoadPhase.L3: Decimal('4.0')}
 BOILER = LoadStatus(
@@ -61,6 +65,11 @@ DRY_RUN_SHED = replace(BOILER_SHED, live=False)
 LIVING_ROOM_SHED = replace(BOILER_SHED, load='living-room', amps=Decimal('8.0'), was_on=None)
 KITCHEN_SHED = replace(LIVING_ROOM_SHED, load='kitchen', phase=LoadPhase.L2)
 BATHROOM_SHED = replace(LIVING_ROOM_SHED, load='bathroom-1f', phase=LoadPhase.UNKNOWN, reason=ShedReason.METER_LOST)
+UNCONFIRMED_BOILER_SHED = UnconfirmedShed(
+    shed=replace(BOILER_SHED, at=AT, settled_at=SETTLED),
+    amps=Decimal('26.0'),
+    at=NOW,
+)
 SHED_BOILER_RECORD = LoadRecord(
     slug='boiler-1f',
     name='Бойлер 1 этаж',
@@ -141,6 +150,36 @@ def test_new_shed_relieves_its_phase_while_it_settles() -> None:
         at=AT,
         settled_at=AT + 5,
     )
+
+
+def test_unconfirmed_shed_holds_a_settled_live_shed_of_a_plug_that_was_on() -> None:
+    unconfirmed = unconfirmed_shed(
+        BOILER,
+        phase=LoadPhase.L1,
+        reason=ShedReason.OVERLOAD,
+        amps=Decimal('26.0'),
+        at=AT,
+        now=NOW,
+    )
+
+    assert unconfirmed == UNCONFIRMED_BOILER_SHED
+
+
+@pytest.mark.parametrize(
+    ('reading', 'expected'),
+    [
+        (None, None),
+        (plug_reading(on=False, current=Decimal('0.0'), read_at=AT), None),
+        (plug_reading(on=False, current=Decimal('0.0'), read_at=AT + 25), True),
+        (plug_reading(on=True, current=Decimal('6.1'), read_at=AT + 25), False),
+    ],
+    ids=['plug_unavailable', 'plug_read_before_the_write_failed', 'plug_read_off_since', 'plug_read_on_since'],
+)
+def test_shed_whose_write_failed_is_confirmed_by_the_first_reading_since_the_failure(
+    reading: LoadReading | None,
+    expected: bool | None,
+) -> None:
+    assert shed_confirmed(UNCONFIRMED_BOILER_SHED, reading) is expected
 
 
 def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading() -> None:

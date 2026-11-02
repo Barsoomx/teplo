@@ -37,6 +37,7 @@ from apps.power.domain.events import (
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
+from apps.power.domain.shedding import UnconfirmedShed
 from apps.power.domain.view import GuardView
 from apps.power.factories import PlugLoadFactory, ZoneLoadFactory
 from apps.power.repositories.load import LoadRepository
@@ -321,6 +322,11 @@ def _failed_commands(house: House) -> dict[str, float]:
     return {} if state is None else dict(state.shedding.failed)
 
 
+def _unconfirmed_sheds(house: House) -> dict[str, UnconfirmedShed]:
+    state = house.book.state()
+    return {} if state is None else dict(state.shedding.unconfirmed)
+
+
 def _load_off(house: House) -> None:
     house.loads.edit([replace(record, live=False) for record in house.loads.records], frozenset())
 
@@ -442,6 +448,12 @@ def f_unreachable_plug_house() -> House:
         LIVE_ZONES,
         boiler_error=DeviceUnavailableError('timed out'),
     )
+
+
+@pytest.fixture
+def f_overload_after_a_failed_plug_shed(f_unreachable_plug_house: House) -> House:
+    _seconds(f_unreachable_plug_house.guard, 5, '26.0')
+    return f_unreachable_plug_house
 
 
 @pytest.fixture
@@ -984,6 +996,61 @@ def test_failed_shed_is_journaled_and_the_next_load_is_shed_a_second_later(f_unr
         ],
         [('kitchen', 'thermostat-kitchen', _moment(5))],
     )
+
+
+def test_plug_shed_whose_write_failed_is_taken_as_shed_once_the_plug_reads_off(
+    f_overload_after_a_failed_plug_shed: House,
+) -> None:
+    _plug_read_off(f_overload_after_a_failed_plug_shed, 'plug-boiler-1f', 5)
+    outputs = _seconds(f_overload_after_a_failed_plug_shed.guard, 1, '18.0')
+
+    assert (
+        outputs,
+        f_overload_after_a_failed_plug_shed.loads.writes,
+        f_overload_after_a_failed_plug_shed.events[3:],
+        _unconfirmed_sheds(f_overload_after_a_failed_plug_shed),
+    ) == (
+        [ShedPhaseLoadsOutputDTO(shed=('boiler-1f',), restored=())],
+        [
+            (
+                'mark_shed',
+                'kitchen',
+                LiveShed(at=_moment(5), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+            ),
+            (
+                'mark_shed',
+                'boiler-1f',
+                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True),
+            ),
+        ],
+        [
+            LoadShed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('26.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(6),
+            ),
+        ],
+        {},
+    )
+
+
+def test_plug_shed_whose_write_failed_is_dropped_once_the_plug_still_reads_on(
+    f_overload_after_a_failed_plug_shed: House,
+) -> None:
+    f_overload_after_a_failed_plug_shed.plugs.record_state('plug-boiler-1f', _plug(on=True, second=5))
+    outputs = _seconds(f_overload_after_a_failed_plug_shed.guard, 1, '18.0')
+
+    assert (
+        outputs,
+        f_overload_after_a_failed_plug_shed.loads.writes[1:],
+        f_overload_after_a_failed_plug_shed.events[3:],
+        _unconfirmed_sheds(f_overload_after_a_failed_plug_shed),
+    ) == ([NOTHING], [], [], {})
 
 
 def test_live_house_without_a_meter_keeps_one_floor_a_phase_a_minute_after_the_start(

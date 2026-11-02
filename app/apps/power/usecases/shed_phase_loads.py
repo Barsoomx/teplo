@@ -32,7 +32,16 @@ from apps.power.domain.meter_watch import MeterCondition, limp_sheds, meter_cond
 from apps.power.domain.moments import elapsed
 from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
-from apps.power.domain.shedding import Shed, choose_restore, choose_shed, new_shed, resumed_shed, switched_back_on
+from apps.power.domain.shedding import (
+    Shed,
+    choose_restore,
+    choose_shed,
+    new_shed,
+    resumed_shed,
+    shed_confirmed,
+    switched_back_on,
+    unconfirmed_shed,
+)
 from apps.power.domain.start_gate import decide_start
 from apps.power.domain.view import GuardView
 from apps.power.repositories.load import LoadRepository
@@ -91,7 +100,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         at = self._clock()
         now = input_dto.now
         resumed = self._resumed(state, at)
-        shedding = self._overridden(state, resumed, now)
+        shedding = self._confirmed(state, resumed, now)
+        shedding = self._overridden(state, shedding, now)
         shedding = self._released(state, shedding, at, now)
         watches = dict(state.phases.watches)
         for live in LIVE_FIRST:
@@ -122,6 +132,30 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if resumed:
             logger.info('load_sheds_resumed', loads=sorted(resumed))
         return replace(shedding, sheds={**resumed, **shedding.sheds}, resumed=True)
+
+    def _confirmed(self, state: GuardState, shedding: ShedState, now: datetime) -> ShedState:
+        for slug, unconfirmed in tuple(shedding.unconfirmed.items()):
+            record = state.loads.record(slug)
+            confirmed = shed_confirmed(unconfirmed, _reading(state, slug))
+            if record is not None and confirmed is None:
+                continue
+
+            shedding = replace(
+                shedding,
+                unconfirmed={key: kept for key, kept in shedding.unconfirmed.items() if key != slug},
+            )
+            if record is None or not confirmed:
+                continue
+
+            shed = unconfirmed.shed
+            logger.info('load_shed_confirmed', load=slug)
+            self._event_store.add_event(_shed_event(LoadShed, record, shed, amps=unconfirmed.amps, now=now))
+            shedding = _stored(
+                replace(shedding, sheds={**shedding.sheds, slug: shed}),
+                slug,
+                LiveShed(at=unconfirmed.at, reason=shed.reason, phase=shed.phase, was_on=shed.was_on),
+            )
+        return shedding
 
     def _overridden(self, state: GuardState, shedding: ShedState, now: datetime) -> ShedState:
         taken = [shed for shed in shedding.sheds.values() if switched_back_on(shed, _reading(state, shed.load))]
@@ -175,7 +209,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                     at=now,
                 )
             except DomainError as error:
-                return self._restore_failed(shedding, record, shed, error, at, now)
+                return self._restore_failed(shedding, record, shed, error, now)
 
             logger.info('load_released', load=record.slug)
             shedding = _stored(shedding, record.slug, None)
@@ -273,7 +307,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
         was_on = True if record.kind is LoadKind.PLUG else None
         if live and not self._switched_off(record, now):
-            return replace(shedding, failed={**shedding.failed, record.slug: at})
+            return self._shed_failed(shedding, record, load, phase=phase, reason=reason, amps=amps, now=now)
 
         shed = new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at)
         self._event_store.add_event(
@@ -323,7 +357,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 ):
                     return shedding
             except DomainError as error:
-                return self._restore_failed(restored, record, shed, error, at, now)
+                return self._restore_failed(restored, record, shed, error, now)
 
             logger.info('load_restored', load=record.slug)
             restored = _stored(restored, record.slug, None)
@@ -385,20 +419,38 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         logger.info('load_shed', load=record.slug)
         return True
 
+    def _shed_failed(
+        self,
+        shedding: ShedState,
+        record: LoadRecord,
+        load: LoadStatus,
+        *,
+        phase: LoadPhase,
+        reason: ShedReason,
+        amps: Decimal | None,
+        now: datetime,
+    ) -> ShedState:
+        failed_at = self._clock()
+        failed = replace(shedding, failed={**shedding.failed, record.slug: failed_at})
+        if record.kind is not LoadKind.PLUG:
+            return failed
+
+        unconfirmed = unconfirmed_shed(load, phase=phase, reason=reason, amps=amps, at=failed_at, now=now)
+        return replace(failed, unconfirmed={**failed.unconfirmed, record.slug: unconfirmed})
+
     def _restore_failed(
         self,
         shedding: ShedState,
         record: LoadRecord,
         shed: Shed,
         error: DomainError,
-        at: float,
         now: datetime,
     ) -> ShedState:
         self._failed(record, LoadCommand.RESTORE, error, now, journaled=not shed.restore_failed)
         return replace(
             shedding,
             sheds={**shedding.sheds, record.slug: replace(shed, restore_failed=True)},
-            failed={**shedding.failed, record.slug: at},
+            failed={**shedding.failed, record.slug: self._clock()},
         )
 
     def _failed(

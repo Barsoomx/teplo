@@ -11,7 +11,7 @@ from apps.power.domain.meter_watch import MeterWatch
 from apps.power.domain.phase_learning import LearningState
 from apps.power.domain.phase_samples import SAMPLE_SPAN, PhaseSample
 from apps.power.domain.phase_watch import PhaseAmps, PhaseWatch
-from apps.power.domain.shedding import Shed, in_view, relief
+from apps.power.domain.shedding import Shed, UnconfirmedShed, in_view, relief
 from apps.power.domain.view import GuardView
 
 
@@ -73,6 +73,7 @@ class ShedState:
     live: TrackTimes = TrackTimes()
     dry_run: TrackTimes = TrackTimes()
     failed: Mapping[str, float] = field(default_factory=dict)
+    unconfirmed: Mapping[str, UnconfirmedShed] = field(default_factory=dict)
     overridden: Mapping[str, LoadPhase] = field(default_factory=dict)
     unsaved: Mapping[str, LiveShed | None] = field(default_factory=dict)
     save_failed_at: float | None = None

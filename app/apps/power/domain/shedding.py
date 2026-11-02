@@ -1,6 +1,6 @@
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from apps.power.domain.control import PhaseThresholds
@@ -26,6 +26,13 @@ class Shed:
     restore_failed: bool = False
 
 
+@dataclass(frozen=True, kw_only=True)
+class UnconfirmedShed:
+    shed: Shed
+    amps: Decimal | None
+    at: datetime
+
+
 def new_shed(
     load: LoadStatus,
     *,
@@ -45,6 +52,38 @@ def new_shed(
         at=at,
         settled_at=at + SETTLE.total_seconds(),
     )
+
+
+def unconfirmed_shed(
+    load: LoadStatus,
+    *,
+    phase: LoadPhase,
+    reason: ShedReason,
+    amps: Decimal | None,
+    at: float,
+    now: datetime,
+) -> UnconfirmedShed:
+    return UnconfirmedShed(
+        shed=Shed(
+            load=load.slug,
+            phase=phase,
+            amps=load.amps,
+            live=True,
+            reason=reason,
+            was_on=True,
+            at=at,
+            settled_at=SETTLED,
+        ),
+        amps=amps,
+        at=now,
+    )
+
+
+def shed_confirmed(unconfirmed: UnconfirmedShed, reading: LoadReading | None) -> bool | None:
+    if reading is None or reading.read_at <= unconfirmed.shed.at:
+        return None
+
+    return reading.closed is False
 
 
 def resumed_shed(record: LoadRecord, *, at: float, default_amps: Decimal) -> Shed | None:
