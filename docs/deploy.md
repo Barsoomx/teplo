@@ -56,7 +56,7 @@ Releases ship without tests: `.gitattributes` marks `*_tests.py` and `conftest.p
 
 ## Telegram alerts
 
-teplo sends its alerts (a lost thermostat, plug or sensor, a stale phase meter, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
+teplo sends its alerts (a lost thermostat, plug or sensor, a stale phase meter, a phase overloaded for a minute, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
 
 ```toml
 [telegram]
@@ -239,6 +239,17 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 1. Watch the dry-run journal (`/journal/`) through at least one night and one morning pre-heat.
 2. Set `TEPLO_DRY_RUN=false` in `/opt/etc/teplo/teplo.env` and restart.
 3. In the admin (`/admin/climate/zone/`), tick `live control` one zone at a time and confirm on the dashboard that the thermostat setpoint follows the target.
+
+### Load management
+
+Load management and the switchable water heater plugs ship in dry-run (`docs/design.md`, sections 4 and 7). Once the phase meter reports, the guard checks the phases every second, learns which phase each load is on and journals the sheds, restores and waiting starts it would make; nothing it decides reaches a plug or a thermostat, and the dashboard's shedding order shows every load with «Наблюдение». Until the clamps are installed the meter never reports and the guard stays quiet; the phase meter's device-lost alert covers it.
+
+1. Install the clamps and calibrate them (see [ESPHome nodes](#esphome-nodes), step 6), then let the house run for a few days. Each time a water heater switches or a floor's relay turns, the guard looks for the phase whose current stepped with it; three votes for one phase and none for another among the load's last five learn it. Check the learned phases in `/admin/power/load/`, where `learned phase`, `learned amps` and `learning samples` are read-only, on the dashboard, where a load reads «Фаза L2, выучена», or in `api/v1/loads/`. The journal says «Бойлер 1 этаж: выучил фазу L2, 6,2 А» when a phase is learned or its current moves. A floor that stays at its limit never switches, so it learns nothing; a load whose phase stays unknown is shed after the loads of the overloaded phase and counts against every phase when it starts.
+2. Set `phase` on a load whose learned phase you have checked, or whose phase you know from the switchboard: the phase you set always wins over the learned one. Set `nominal amps` where you know the current a load adds at the clamp, e.g. from its plug or a kettle test: the water heaters come with 6.0 A, and a load without it counts its learned current, or else the default load current of `/admin/power/loadsettings/`, 6.0 A. Both columns can be edited in the list of loads.
+3. Watch the journal through a few evenings with the EV charging and the water heaters on. «Перегрузка фазы L2: 26,4 А», «Бойлер 1 этаж: выключил бы розетку» and «Кухня: отложил бы включение» say what load management would do; «Фаза L3: похоже, заряжается электромобиль, +16,0 А» and the badge on the phase bars show what EV detection sees. The thresholds, 20 A start ceiling, 24 A shed threshold and 18 A restore threshold by default, are edited in `/admin/power/loadsettings/`.
+4. Tick `load management live` in `/admin/power/loadsettings/`, then tick `live` in `/admin/power/load/` one load at a time, the water heaters first. A command reaches a device only while `TEPLO_DRY_RUN` is false, and a zone's load also needs `live control` on its zone. The «Наблюдение» chip leaves a load's row once its commands are live; a live shed reads «Отключена» and is journaled as «Бойлер 1 этаж: выключил розетку». A live shed of a zone switches its thermostat off at once, whatever its 30-minute write budget, and the zone returns to its schedule no sooner than 30 minutes later.
+
+Unticking a load's `live`, or `load management live`, releases its live shed within a minute: a plug teplo switched off is switched back on, and a zone returns to its schedule at its next allowed write. Switching a shed plug back on by hand also ends its shed, journaled as «Бойлер 1 этаж: розетку включили вручную, отключение снято».
 
 ## Enable air control
 
