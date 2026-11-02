@@ -337,7 +337,7 @@ A load is a zone's floor or a plug that teplo may switch off to relieve a phase:
 
 Learned values never override what the owner set. Only a plug whose driver can switch it can be a load (section 4); monitor-only plugs and the EV are never loads.
 
-A load **draws** while its plug is on and draws more than 0.5 A, or while its thermostat is powered and its relay heats; with the relay unknown, a powered thermostat set above its floor temperature draws. A load whose device is unavailable neither draws nor is chosen.
+A load **draws** while its plug is on and draws more than 0.5 A, or while its thermostat is powered and its relay heats; with the relay unknown, a powered thermostat set above its floor temperature draws. A load whose device is unavailable, or whose last poll failed after its latest reading, neither draws nor is chosen, so the guard sends no shed or restore that would wait out the timeouts of a device that does not answer.
 
 ### Gates
 

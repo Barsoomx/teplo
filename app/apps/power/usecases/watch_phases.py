@@ -167,7 +167,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
     def _seen(self, record: LoadRecord, before: SeenReading | None, at: float) -> SeenReading | None:
         if record.kind is LoadKind.PLUG:
             plug = self._plugs.snapshot(record.device_slug)
-            if not plug.available or plug.state is None or plug.age is None:
+            if not plug.available or plug.error_code is not None or plug.state is None or plug.age is None:
                 return None
 
             if before is not None and before.polled_at == plug.state.read_at:
@@ -183,7 +183,12 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             )
 
         thermostat = self._thermostats.snapshot(record.device_slug)
-        if not thermostat.available or thermostat.state is None or thermostat.age is None:
+        if (
+            not thermostat.available
+            or thermostat.error_code is not None
+            or thermostat.state is None
+            or thermostat.age is None
+        ):
             return None
 
         if before is not None and before.polled_at == thermostat.state.read_at:

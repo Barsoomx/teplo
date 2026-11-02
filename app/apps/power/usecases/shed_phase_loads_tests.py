@@ -368,6 +368,12 @@ def f_live_house() -> House:
 
 
 @pytest.fixture
+def f_live_house_whose_water_heater_poll_failed(f_live_house: House) -> House:
+    f_live_house.plugs.record_failure('plug-boiler-1f', error_code='device_unavailable', error='timed out')
+    return f_live_house
+
+
+@pytest.fixture
 def f_live_house_after_a_shed(f_live_house: House) -> House:
     _seconds(f_live_house.guard, 4, '26.0')
     return f_live_house
@@ -680,6 +686,18 @@ def test_one_load_is_shed_a_second(f_live_house: House) -> None:
     outputs = _seconds(f_live_house.guard, 6, '40.0')
 
     assert _shed_at(outputs, 1) == [(4, ('boiler-1f',)), (5, ('kitchen',)), (6, ('living-room',))]
+
+
+def test_load_whose_last_poll_failed_is_passed_over_for_the_next_one(
+    f_live_house_whose_water_heater_poll_failed: House,
+) -> None:
+    outputs = _seconds(f_live_house_whose_water_heater_poll_failed.guard, 4, '26.0')
+
+    assert (
+        _shed_at(outputs, 1),
+        f_live_house_whose_water_heater_poll_failed.boiler.switches,
+        f_live_house_whose_water_heater_poll_failed.zones.switched_off,
+    ) == ([(4, ('kitchen',))], [], [('kitchen', 'thermostat-kitchen', _moment(4))])
 
 
 def test_load_of_unknown_phase_is_shed_for_the_phase_once_none_of_its_own_draws(f_unknown_phase_house: House) -> None:
