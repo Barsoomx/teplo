@@ -120,6 +120,16 @@ msgstr "%(voltage)s В"
 msgid "No connection. Check that the plug has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание розетки и Wi-Fi."
 
+msgid "Phase currents"
+msgstr "Ток по фазам"
+
+#, python-format
+msgid "%(amps)s A"
+msgstr "%(amps)s А"
+
+msgid "No fresh readings. Check that the phase meter has power and Wi-Fi."
+msgstr "Нет свежих показаний. Проверьте питание фазометра и Wi-Fi."
+
 msgid "Sections"
 msgstr "Разделы"
 

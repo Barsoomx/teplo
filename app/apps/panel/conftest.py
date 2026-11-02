@@ -18,6 +18,7 @@ from apps.panel.usecases.get_panel_overview import (
     ZoneOverview,
     ZoneRegime,
 )
+from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO, PhaseCurrent, PhaseMeterOverview
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 
@@ -110,6 +111,25 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
         standalone_sensors=(air_second_floor,),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized'),
         dry_run=True,
+    )
+
+
+@pytest.fixture
+def phase_currents() -> GetPhaseCurrentsOutputDTO:
+    return GetPhaseCurrentsOutputDTO(
+        meter=PhaseMeterOverview(
+            stale=False,
+            error_code=None,
+            error=None,
+            phases=(
+                PhaseCurrent(phase='l1', amps=Decimal('12.40'), stale=False, age_seconds=1),
+                PhaseCurrent(phase='l2', amps=Decimal('3.05'), stale=False, age_seconds=1),
+                PhaseCurrent(phase='l3', amps=Decimal('27.81'), stale=False, age_seconds=2),
+            ),
+        ),
+        scale_amps=Decimal(25),
+        start_ceiling_amps=Decimal(20),
+        shed_amps=Decimal(24),
     )
 
 

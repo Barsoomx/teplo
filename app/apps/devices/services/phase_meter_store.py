@@ -20,6 +20,7 @@ class PhaseMeterSnapshot:
     age: timedelta | None
     available: bool
     stale: bool
+    stale_phases: frozenset[Phase]
     error_code: str | None
     error: str | None
 
@@ -79,6 +80,7 @@ class PhaseMeterStore:
         now = self._clock()
         phases = [phase for phase in Phase if phase in currents]
         ages = {phase: timedelta(seconds=now - currents[phase].recorded_at) for phase in phases}
+        stale_phases = frozenset(phase for phase in Phase if phase not in ages or ages[phase] > self._stale_after)
         age = min(ages.values(), default=None)
         return PhaseMeterSnapshot(
             slug=slug,
@@ -86,7 +88,8 @@ class PhaseMeterStore:
             ages=ages,
             age=age,
             available=age is not None and age <= self._unavailable_after,
-            stale=len(phases) < len(Phase) or max(ages.values()) > self._stale_after,
+            stale=bool(stale_phases),
+            stale_phases=stale_phases,
             error_code=error_code,
             error=error,
         )

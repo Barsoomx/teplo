@@ -91,28 +91,34 @@ def test_snapshot_holds_the_latest_current_of_every_phase(f_store: PhaseMeterSto
         age=2 * SECOND,
         available=True,
         stale=False,
+        stale_phases=frozenset(),
         error_code=None,
         error=None,
     )
 
 
 @pytest.mark.parametrize(
-    ('f_aged_store', 'stale'),
-    [(7.0, False), (7.5, True)],
+    ('f_aged_store', 'stale', 'stale_phases'),
+    [(7.0, False, frozenset()), (7.5, True, frozenset({Phase.B}))],
     ids=['phase-b-10-s-old', 'phase-b-older-than-10-s'],
     indirect=['f_aged_store'],
 )
-def test_meter_is_stale_once_a_phase_is_older_than_10_seconds(f_aged_store: PhaseMeterStore, stale: bool) -> None:
+def test_meter_is_stale_once_a_phase_is_older_than_10_seconds(
+    f_aged_store: PhaseMeterStore,
+    stale: bool,
+    stale_phases: frozenset[Phase],
+) -> None:
     snapshot = f_aged_store.snapshot('phase-meter')
 
-    assert (snapshot.stale, snapshot.available) == (stale, True)
+    assert (snapshot.stale, snapshot.stale_phases, snapshot.available) == (stale, stale_phases, True)
 
 
 def test_meter_without_a_phase_is_stale(f_two_phase_store: PhaseMeterStore) -> None:
     snapshot = f_two_phase_store.snapshot('phase-meter')
 
-    assert (snapshot.stale, snapshot.currents, snapshot.ages) == (
+    assert (snapshot.stale, snapshot.stale_phases, snapshot.currents, snapshot.ages) == (
         True,
+        frozenset({Phase.B}),
         PhaseCurrents(amps={Phase.A: Decimal('12.34'), Phase.C: Decimal('0.52')}, read_at=NOW),
         {Phase.A: timedelta(0), Phase.C: timedelta(0)},
     )
@@ -175,6 +181,7 @@ def test_unknown_meter_is_unavailable_and_stale(f_store: PhaseMeterStore) -> Non
         age=None,
         available=False,
         stale=True,
+        stale_phases=frozenset(Phase),
         error_code=None,
         error=None,
     )

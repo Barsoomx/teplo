@@ -5,4 +5,5 @@
 <section id="zones" hx-get="{% url 'panel:zones' %}" hx-trigger="every 10s" hx-swap="innerHTML">
   {% include 'panel/_zones.html' %}
 </section>
+{% include 'panel/_phases.html' %}
 {% endblock %}

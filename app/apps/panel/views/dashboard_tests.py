@@ -9,6 +9,7 @@ from django.test import Client
 
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SensorOverview
+from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 pytestmark = pytest.mark.django_db
@@ -23,6 +24,13 @@ BROKER_DETAIL = 'mqtt connection refused: not authorised'
 def m_overview_use_case(panel_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = panel_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_phases_use_case(phase_currents: GetPhaseCurrentsOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.dashboard.GetPhaseCurrentsUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = phase_currents
         yield use_case
 
 
@@ -68,19 +76,25 @@ def m_lost_air_overview_use_case(lost_air_overview: GetPanelOverviewOutputDTO) -
         yield use_case
 
 
-def test_dashboard_lists_zones(f_client: Client, m_overview_use_case: MagicMock) -> None:
+def test_dashboard_lists_zones(
+    f_client: Client,
+    m_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
     response = f_client.get('/')
 
-    assert (response.status_code, 'Кухня' in response.content.decode(), m_overview_use_case.init.call_count) == (
-        200,
-        True,
-        1,
-    )
+    assert (
+        response.status_code,
+        'Кухня' in response.content.decode(),
+        m_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (200, True, 1, 1)
 
 
 def test_dashboard_explains_failures_in_words_and_keeps_raw_details_in_tooltips(
     f_russian_client: Client,
     m_failing_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
 ) -> None:
     response = f_russian_client.get('/')
 
@@ -91,12 +105,14 @@ def test_dashboard_explains_failures_in_words_and_keeps_raw_details_in_tooltips(
         '(не удалось узнать статус NTP у роутера): держу комфорт' in content,
         [(content.count(detail), f'title="{detail}"' in content) for detail in RAW_DETAILS],
         m_failing_overview_use_case.init.call_count,
-    ) == (True, False, True, [(1, True)] * len(RAW_DETAILS), 1)
+        m_phases_use_case.init.call_count,
+    ) == (True, False, True, [(1, True)] * len(RAW_DETAILS), 1, 1)
 
 
 def test_dashboard_shows_loads_and_explains_a_lost_plug(
     f_russian_client: Client,
     m_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
 ) -> None:
     response = f_russian_client.get('/')
 
@@ -111,12 +127,14 @@ def test_dashboard_shows_loads_and_explains_a_lost_plug(
         'Розетка прислала неожиданный ответ' in content,
         (content.count(PLUG_DETAIL), f'title="{PLUG_DETAIL}"' in content),
         m_overview_use_case.init.call_count,
-    ) == (True, True, True, True, True, True, True, (1, True), 1)
+        m_phases_use_case.init.call_count,
+    ) == (True, True, True, True, True, True, True, (1, True), 1, 1)
 
 
 def test_dashboard_shows_the_air_beside_the_floor_and_the_outdoor_temperature(
     f_russian_client: Client,
     m_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
 ) -> None:
     response = f_russian_client.get('/')
 
@@ -129,12 +147,14 @@ def test_dashboard_shows_the_air_beside_the_floor_and_the_outdoor_temperature(
         'Датчик не смог снять показания' in content,
         (content.count(SENSOR_DETAIL), f'title="{SENSOR_DETAIL}"' in content),
         m_overview_use_case.init.call_count,
-    ) == (True, True, True, True, True, (1, True), 1)
+        m_phases_use_case.init.call_count,
+    ) == (True, True, True, True, True, (1, True), 1, 1)
 
 
 def test_dashboard_hatches_a_lost_air_sensor_and_says_what_to_check(
     f_russian_client: Client,
     m_lost_air_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
 ) -> None:
     response = f_russian_client.get('/')
 
@@ -147,7 +167,25 @@ def test_dashboard_hatches_a_lost_air_sensor_and_says_what_to_check(
         'На улице' in content,
         (content.count(BROKER_DETAIL), f'title="{BROKER_DETAIL}"' in content),
         m_lost_air_overview_use_case.init.call_count,
-    ) == (True, True, True, False, False, (1, True), 1)
+        m_phases_use_case.init.call_count,
+    ) == (True, True, True, False, False, (1, True), 1, 1)
+
+
+def test_dashboard_shows_the_phase_currents_and_refreshes_them_on_their_own(
+    f_russian_client: Client,
+    m_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Ток по фазам' in content,
+        ['12,4 А' in content, '3,1 А' in content, '27,8 А' in content],
+        'hx-get="/phases/"' in content,
+        m_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, [True, True, True], True, 1, 1)
 
 
 def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:
