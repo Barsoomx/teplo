@@ -157,4 +157,11 @@ def test_restart_finds_the_start_that_opened_its_boot(f_use_case: JournalStartup
 def test_first_start_with_a_boot_id_opens_its_boot_after_a_start_without_one(f_use_case: JournalStartupUseCase) -> None:
     output = f_use_case.execute(STARTED)
 
-    assert output.boot.previous_boot_id is None
+    assert output.boot == BootOpening(
+        start=TeploStart(
+            boot_id=BOOT_ID,
+            last_activity=datetime(2026, 10, 29, 5, 29, 59, 982000, tzinfo=UTC),
+            router_uptime=ROUTER_UPTIME,
+        ),
+        previous_boot_id=None,
+    )
