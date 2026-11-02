@@ -4,6 +4,7 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.climate.domain.modes import ZoneKind
+from apps.devices.domain.kinds import DeviceKind
 
 SETPOINT_VALIDATORS = [MinValueValidator(Decimal('5.0')), MaxValueValidator(Decimal('40.0'))]
 
@@ -17,6 +18,14 @@ class Zone(models.Model):
         default=ZoneKind.AIR.value,
     )
     thermostat = models.ForeignKey('devices.Device', on_delete=models.PROTECT, related_name='zones')
+    air_sensor = models.ForeignKey(
+        'devices.Device',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='air_zones',
+        limit_choices_to={'kind': DeviceKind.TEMPERATURE_SENSOR.value},
+    )
     heating_enabled = models.BooleanField(default=True)
     live_control = models.BooleanField(default=False)
     comfort_floor_setpoint = models.DecimalField(

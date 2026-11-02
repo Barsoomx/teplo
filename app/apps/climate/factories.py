@@ -3,7 +3,7 @@ from datetime import time
 import factory
 
 from apps.climate.domain.modes import ZoneKind
-from apps.climate.models import ComfortPeriod, Zone
+from apps.climate.models import ClimateSettings, ComfortPeriod, Zone
 from apps.devices.factories import DeviceFactory
 
 
@@ -25,3 +25,8 @@ class ComfortPeriodFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = ComfortPeriod
+
+
+class ClimateSettingsFactory(factory.django.DjangoModelFactory):
+    class Meta:
+        model = ClimateSettings

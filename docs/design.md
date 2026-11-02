@@ -158,6 +158,7 @@ Control policies in `climate/domain` and `power/domain` import nothing from Djan
 - **Air zone:** has an air sensor; teplo switches the floor to hold the room air at the target.
 - **Floor zone:** no air sensor; teplo sets the thermostat's floor setpoint from the schedule and the thermostat regulates itself.
 - A zone has one or more heat sources ordered by priority. v1 uses floor thermostats only; a heat pump can become the first source later with the floor as backup.
+- A zone's air sensor is a `temperature_sensor` device linked to the zone. The climate settings name the outdoor sensor and the second-floor sensor. Both come from the site data and are edited in the admin; no control reads them yet.
 
 ### Schedules and targets
 

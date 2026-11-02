@@ -17,6 +17,7 @@ def f_zone(request: pytest.FixtureRequest) -> ZoneSettings:
         name='Kitchen',
         kind=ZoneKind.AIR,
         thermostat_slug='thermostat-kitchen',
+        air_sensor_slug=None,
         heating_enabled=True,
         live_control=True,
         setpoints=FloorSetpoints(comfort=Decimal('28.0'), night=Decimal('22.0'), boost=Decimal('30.0')),

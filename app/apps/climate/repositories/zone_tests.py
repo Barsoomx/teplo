@@ -10,6 +10,8 @@ from apps.climate.domain.zone import ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.factories import ComfortPeriodFactory, ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
+from apps.devices.domain.kinds import DeviceDriver, DeviceKind
+from apps.devices.factories import DeviceFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -21,6 +23,19 @@ def f_zone() -> Zone:
     zone = ZoneFactory.create(slug='kitchen', name='Kitchen', thermostat__slug='thermostat-kitchen')
     ComfortPeriodFactory(zone=zone, weekday=0, start=time(6, 30), end=time(23, 30))
     return zone
+
+
+@pytest.fixture
+def f_air_zones() -> list[Zone]:
+    sensor = DeviceFactory.create(
+        slug='air-living-room',
+        kind=DeviceKind.TEMPERATURE_SENSOR,
+        driver=DeviceDriver.ESPHOME_TEMPERATURE,
+    )
+    return [
+        ZoneFactory.create(slug='living-room', air_sensor=sensor),
+        ZoneFactory.create(slug='bathroom-1f'),
+    ]
 
 
 @pytest.fixture
@@ -39,6 +54,7 @@ def test_all_settings_maps_zone(f_zone: Zone) -> None:
             name='Kitchen',
             kind=ZoneKind.AIR,
             thermostat_slug='thermostat-kitchen',
+            air_sensor_slug=None,
             heating_enabled=True,
             live_control=False,
             setpoints=FloorSetpoints(comfort=Decimal('28.0'), night=Decimal('22.0'), boost=Decimal('30.0')),
@@ -48,6 +64,13 @@ def test_all_settings_maps_zone(f_zone: Zone) -> None:
             last_command_at=None,
             last_dry_run_at=None,
         ),
+    ]
+
+
+def test_all_settings_names_the_air_sensor_of_a_zone_that_has_one(f_air_zones: list[Zone]) -> None:
+    assert [(zone.slug, zone.air_sensor_slug) for zone in ZoneRepository.all_settings()] == [
+        (f_air_zones[1].slug, None),
+        (f_air_zones[0].slug, 'air-living-room'),
     ]
 
 

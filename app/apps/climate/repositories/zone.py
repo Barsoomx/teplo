@@ -9,7 +9,9 @@ from apps.climate.models import Zone
 class ZoneRepository:
     @staticmethod
     def all_settings() -> list[ZoneSettings]:
-        zones = Zone.objects.select_related('thermostat').prefetch_related('comfort_periods').order_by('slug')
+        zones = (
+            Zone.objects.select_related('thermostat', 'air_sensor').prefetch_related('comfort_periods').order_by('slug')
+        )
         return [_to_settings(zone) for zone in zones]
 
     @staticmethod
@@ -33,6 +35,7 @@ def _to_settings(zone: Zone) -> ZoneSettings:
         name=zone.name,
         kind=ZoneKind(zone.kind),
         thermostat_slug=zone.thermostat.slug,
+        air_sensor_slug=None if zone.air_sensor is None else zone.air_sensor.slug,
         heating_enabled=zone.heating_enabled,
         live_control=zone.live_control,
         setpoints=FloorSetpoints(

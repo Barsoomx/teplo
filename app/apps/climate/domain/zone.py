@@ -27,6 +27,7 @@ class ZoneSettings:
     name: str
     kind: ZoneKind
     thermostat_slug: str
+    air_sensor_slug: str | None
     heating_enabled: bool
     live_control: bool
     setpoints: FloorSetpoints
