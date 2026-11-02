@@ -135,32 +135,56 @@ def test_alert_follows_the_active_language() -> None:
 
 @pytest.mark.usefixtures('russian')
 @pytest.mark.parametrize(
-    ('began_at', 'ended_at', 'expected'),
+    ('began_at', 'ended_at', 'at', 'expected'),
     [
         (
             datetime(2026, 10, 31, 17, 24, 50, tzinfo=UTC),
             datetime(2026, 10, 31, 17, 33, 10, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 40, tzinfo=UTC),
             'teplo снова работает. Перерыв 20:24–20:33 (9 мин)',
         ),
         (
             datetime(2026, 10, 31, 16, 0, tzinfo=UTC),
             datetime(2026, 10, 31, 17, 5, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 10, tzinfo=UTC),
             'teplo снова работает. Перерыв 19:00–20:05 (1 ч 5 мин)',
         ),
         (
             datetime(2026, 10, 31, 15, 0, tzinfo=UTC),
             datetime(2026, 10, 31, 17, 0, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 5, tzinfo=UTC),
             'teplo снова работает. Перерыв 18:00–20:00 (2 ч)',
         ),
         (
+            datetime(2026, 10, 31, 20, 10, tzinfo=UTC),
+            datetime(2026, 10, 31, 20, 40, tzinfo=UTC),
+            datetime(2026, 10, 31, 21, 20, tzinfo=UTC),
+            'teplo снова работает. Перерыв 31 октября 23:10–23:40 (30 мин)',
+        ),
+        (
             datetime(2026, 10, 31, 20, 50, tzinfo=UTC),
-            datetime(2026, 10, 31, 21, 10, tzinfo=UTC),
-            'teplo снова работает. Перерыв 31 октября 23:50–00:10 (20 мин)',
+            datetime(2026, 10, 31, 21, 20, tzinfo=UTC),
+            datetime(2026, 10, 31, 21, 25, tzinfo=UTC),
+            'teplo снова работает. Перерыв 31 октября 23:50–00:20 (30 мин)',
+        ),
+        (
+            datetime(2026, 10, 30, 20, 0, tzinfo=UTC),
+            datetime(2026, 10, 30, 22, 0, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, 0, tzinfo=UTC),
+            'teplo снова работает. Перерыв 30 октября 23:00–31 октября 01:00 (2 ч)',
         ),
     ],
+    ids=[
+        'minutes',
+        'hours_and_minutes',
+        'whole_hours',
+        'sent_after_midnight',
+        'across_midnight',
+        'across_an_earlier_midnight',
+    ],
 )
-def test_outage_reads_as_a_local_interval(began_at: datetime, ended_at: datetime, expected: str) -> None:
-    assert outage_text(Outage(began_at=began_at, ended_at=ended_at)) == expected
+def test_outage_reads_as_a_local_interval(began_at: datetime, ended_at: datetime, at: datetime, expected: str) -> None:
+    assert outage_text(Outage(began_at=began_at, ended_at=ended_at), at) == expected
 
 
 @pytest.mark.usefixtures('russian')
@@ -180,10 +204,10 @@ def test_alert_content_is_dated_against_the_moment_it_is_written(
 
 
 @pytest.mark.usefixtures('russian')
-def test_outage_content_dates_the_interval_by_its_end(f_late_evening_outage: OutageContent) -> None:
+def test_outage_content_dates_the_interval_against_the_sending(f_late_evening_outage: OutageContent) -> None:
     text = f_late_evening_outage.text(datetime(2026, 10, 31, 21, 20, tzinfo=UTC))
 
-    assert text == 'teplo снова работает. Перерыв 23:10–23:40 (30 мин)'
+    assert text == 'teplo снова работает. Перерыв 31 октября 23:10–23:40 (30 мин)'
 
 
 @pytest.mark.usefixtures('russian')

@@ -55,8 +55,8 @@ class AlertContent:
 class OutageContent:
     outage: Outage
 
-    def text(self, at: datetime) -> str:  # noqa: ARG002
-        return outage_text(self.outage)
+    def text(self, at: datetime) -> str:
+        return outage_text(self.outage, at)
 
 
 def alert_text(
@@ -85,12 +85,12 @@ def alert_text_from_payload(transition: AlertTransition, payload: Mapping[str, o
         return None
 
 
-def outage_text(outage: Outage) -> str:
+def outage_text(outage: Outage, at: datetime) -> str:
     began = outage.began_at.replace(second=0, microsecond=0)
     ended = outage.ended_at.replace(second=0, microsecond=0)
     return str(TEPLO_RESUMED) % {
-        'began': _moment(began, ended),
-        'ended': date_format(timezone.localtime(ended), 'H:i'),
+        'began': _moment(began, at),
+        'ended': _interval_end(ended, began, at),
         'duration': _duration(ended - began),
     }
 
@@ -128,6 +128,14 @@ def _moment(moment: datetime, reference: datetime) -> str:
         return date_format(local, 'H:i')
 
     return date_format(local, 'j E H:i')
+
+
+def _interval_end(ended: datetime, began: datetime, at: datetime) -> str:
+    local = timezone.localtime(ended)
+    if local.date() == timezone.localtime(began).date():
+        return date_format(local, 'H:i')
+
+    return _moment(ended, at)
 
 
 def _duration(duration: timedelta) -> str:
