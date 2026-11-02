@@ -8,13 +8,33 @@ packages:
 
 one_wire:
   - platform: gpio
+    id: outdoor_bus
     pin: GPIO10
 
 sensor:
   - platform: dallas_temp
+    id: outdoor_temperature
     name: Temperature
     update_interval: 30s
     accuracy_decimals: 1
     state_topic: teplo/${node_name}/sensor/temperature/state
     retain: false
     qos: 0
+
+# The bus searches for the DS18B20 only at boot, and a sensor it did not find reads nothing. While it is missing,
+# search again and publish nan.
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          auto *bus = id(outdoor_bus);
+          if (!bus->get_devices().empty())
+            return;
+
+          bus->search();
+          if (bus->get_devices().size() == 1) {
+            id(outdoor_temperature).set_address(bus->get_devices().front());
+            return;
+          }
+
+          id(outdoor_temperature).publish_state(NAN);
