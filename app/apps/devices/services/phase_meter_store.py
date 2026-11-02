@@ -17,6 +17,7 @@ class PhaseMeterSnapshot:
     slug: str
     currents: PhaseCurrents | None
     ages: dict[Phase, timedelta]
+    recorded_at: dict[Phase, float]
     age: timedelta | None
     available: bool
     stale: bool
@@ -91,6 +92,7 @@ class PhaseMeterStore:
             slug=slug,
             currents=_phase_currents(currents, phases),
             ages=ages,
+            recorded_at={phase: currents[phase].recorded_at for phase in phases},
             age=age,
             available=age is not None and age <= self._unavailable_after,
             stale=bool(stale_phases),

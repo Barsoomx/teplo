@@ -35,8 +35,13 @@ OVERLOADED = PhaseWatch(live=OVERLOAD, dry_run=OVERLOAD)
 ALARMED = PhaseWatch(measured_above_since=100.0, alarmed=True, alarm_since=100.0, alarm_amps=Decimal('31.0'))
 
 
-def _amps(measured: Decimal, live_relief: Decimal = NO_RELIEF, dry_run_relief: Decimal = NO_RELIEF) -> PhaseAmps:
-    return PhaseAmps(measured=measured, live=measured - live_relief, dry_run=measured - live_relief - dry_run_relief)
+def _amps(measured: Decimal, read_at: float, live_relief: Decimal, dry_run_relief: Decimal) -> PhaseAmps:
+    return PhaseAmps(
+        measured=measured,
+        live=measured - live_relief,
+        dry_run=measured - live_relief - dry_run_relief,
+        read_at=read_at,
+    )
 
 
 def _watched(
@@ -44,10 +49,12 @@ def _watched(
     readings: Sequence[tuple[float, Decimal | None]],
     live_relief: Decimal = NO_RELIEF,
     dry_run_relief: Decimal = NO_RELIEF,
+    read_at: float | None = None,
 ) -> list[PhaseWatchStep]:
     steps: list[PhaseWatchStep] = []
     for at, measured in readings:
-        amps = None if measured is None else _amps(measured, live_relief, dry_run_relief)
+        taken_at = at if read_at is None else read_at
+        amps = None if measured is None else _amps(measured, taken_at, live_relief, dry_run_relief)
         steps.append(watch_phase(watch, amps, at, THRESHOLDS))
         watch = steps[-1].watch
     return steps
@@ -67,6 +74,20 @@ def test_phase_overloads_once_above_the_shed_threshold_for_the_shed_hold() -> No
     steps = _watched(PhaseWatch(), [(100.0 + second, Decimal('24.1')) for second in range(4)])
 
     assert [step.overloaded for step in steps] == [False, False, False, True]
+
+
+def test_a_reading_watched_again_advances_no_hold() -> None:
+    steps = _watched(PhaseWatch(), [(100.0 + second, Decimal('25.5')) for second in range(4)], read_at=100.0)
+
+    assert ([step.overloaded for step in steps], steps[-1].watch) == (
+        [False] * 4,
+        PhaseWatch(
+            live=OverloadWatch(above_since=100.0),
+            dry_run=OverloadWatch(above_since=100.0),
+            measured_above_since=100.0,
+            read_at=100.0,
+        ),
+    )
 
 
 def test_a_reading_at_the_shed_threshold_restarts_the_shed_hold() -> None:
@@ -155,7 +176,7 @@ def test_stale_meter_restarts_the_holds_and_keeps_the_overload(f_overloaded_watc
     assert ([step.calmed for step in steps], steps[1].watch.live.calm_since, steps[-1].watch) == (
         [False, False, False, False],
         None,
-        replace(f_overloaded_watch, live=calm, dry_run=calm, measured_calm_since=330.0),
+        replace(f_overloaded_watch, live=calm, dry_run=calm, measured_calm_since=330.0, read_at=449.0),
     )
 
 
@@ -164,7 +185,13 @@ def test_alarm_rises_after_a_minute_above_the_shed_threshold_whatever_the_relief
 
     assert ([step.alarmed for step in steps], steps[-1].watch) == (
         [False, True],
-        PhaseWatch(measured_above_since=100.0, alarmed=True, alarm_since=100.0, alarm_amps=Decimal('31.0')),
+        PhaseWatch(
+            measured_above_since=100.0,
+            alarmed=True,
+            alarm_since=100.0,
+            alarm_amps=Decimal('31.0'),
+            read_at=160.0,
+        ),
     )
 
 

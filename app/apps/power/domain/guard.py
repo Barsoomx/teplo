@@ -162,7 +162,7 @@ def phase_amps(
     live = relieved_currents(currents, read_at, (shed for shed in kept if in_view(shed, live=True)))
     dry_run = relieved_currents(currents, read_at, kept)
     return {
-        phase: PhaseAmps(measured=current, live=live[phase], dry_run=dry_run[phase])
+        phase: PhaseAmps(measured=current, live=live[phase], dry_run=dry_run[phase], read_at=read_at[phase])
         for phase, current in currents.items()
     }
 

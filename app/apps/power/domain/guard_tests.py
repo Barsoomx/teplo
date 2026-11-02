@@ -200,11 +200,11 @@ def test_view_takes_from_the_measured_current_the_relief_of_the_sheds_it_sees(
     assert view.currents == {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: l2, LoadPhase.L3: Decimal('4.0')}
 
 
-def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it() -> None:
+def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it_with_the_moment_it_was_read() -> None:
     assert phase_amps(CURRENTS, READ_AT, [SHED, BOILER_DRY_RUN_SHED]) == {
-        LoadPhase.L1: PhaseAmps(measured=Decimal('12.0'), live=Decimal('12.0'), dry_run=Decimal('12.0')),
-        LoadPhase.L2: PhaseAmps(measured=Decimal('26.0'), live=Decimal('18.0'), dry_run=Decimal('12.0')),
-        LoadPhase.L3: PhaseAmps(measured=Decimal('4.0'), live=Decimal('4.0'), dry_run=Decimal('4.0')),
+        LoadPhase.L1: PhaseAmps(measured=Decimal('12.0'), live=Decimal('12.0'), dry_run=Decimal('12.0'), read_at=AT),
+        LoadPhase.L2: PhaseAmps(measured=Decimal('26.0'), live=Decimal('18.0'), dry_run=Decimal('12.0'), read_at=AT),
+        LoadPhase.L3: PhaseAmps(measured=Decimal('4.0'), live=Decimal('4.0'), dry_run=Decimal('4.0'), read_at=AT),
     }
 
 

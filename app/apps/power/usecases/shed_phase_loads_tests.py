@@ -639,6 +639,20 @@ def test_three_seconds_above_the_shed_threshold_shed_nothing(f_dry_run_house: Ho
     assert (outputs, f_dry_run_house.events) == ([NOTHING] * 3, [])
 
 
+def test_one_reading_above_the_shed_threshold_that_the_meter_does_not_follow_up_sheds_nothing(
+    f_live_house: House,
+) -> None:
+    spike = _seconds(f_live_house.guard, 1, '25.5')
+    stalled = _seconds(f_live_house.guard, 4, None)
+    resumed = _seconds(f_live_house.guard, 1, '12.0')
+
+    assert ([*spike, *stalled, *resumed], f_live_house.events, f_live_house.boiler.switches) == (
+        [NOTHING] * 6,
+        [],
+        [],
+    )
+
+
 def test_overload_in_dry_run_journals_the_shed_after_the_overload_and_switches_nothing(
     f_dry_run_house: House,
 ) -> None:

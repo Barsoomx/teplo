@@ -15,6 +15,7 @@ class PhaseAmps:
     measured: Decimal
     live: Decimal
     dry_run: Decimal
+    read_at: float
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,6 +35,7 @@ class PhaseWatch:
     alarmed: bool = False
     alarm_since: float | None = None
     alarm_amps: Decimal | None = None
+    read_at: float | None = None
 
     def overload(self, *, live: bool) -> OverloadWatch:
         return self.live if live else self.dry_run
@@ -64,6 +66,9 @@ def watch_phase(
         )
         return PhaseWatchStep(watch=unheld, overloaded=False, calmed=False, alarmed=False, alarm_cleared=False)
 
+    if watch.read_at is not None and amps.read_at <= watch.read_at:
+        return PhaseWatchStep(watch=watch, overloaded=False, calmed=False, alarmed=False, alarm_cleared=False)
+
     live = _followed(watch.live, amps.live, at, thresholds)
     measured_above_since = held_since(watch.measured_above_since, amps.measured > thresholds.shed, at)
     measured_calm_since = held_since(watch.measured_calm_since, amps.measured <= thresholds.restore, at)
@@ -83,6 +88,7 @@ def watch_phase(
             alarmed=alarmed,
             alarm_since=_kept(alarmed, raised, measured_above_since, watch.alarm_since),
             alarm_amps=_kept(alarmed, raised, amps.measured, watch.alarm_amps),
+            read_at=amps.read_at,
         ),
         overloaded=live.overloaded and not watch.live.overloaded,
         calmed=watch.live.overloaded and not live.overloaded,

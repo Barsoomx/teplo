@@ -106,7 +106,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         loads = self._loads_at(previous, at)
         state = GuardState.started(loads, at) if previous is None else replace(previous, loads=loads)
         readings, changes = self._readings(state, at)
-        currents, read_at = self._currents(loads.meter, at)
+        currents, read_at = self._currents(loads.meter)
         phases, steps = self._watch(state, currents, read_at, at, input_dto.now)
         learning = follow_learning(state.learning, changes, phases.samples, at)
         learned = self._learned(loads, learning.learned, input_dto.now)
@@ -132,7 +132,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             read_at=at,
         )
 
-    def _currents(self, meter: str | None, at: float) -> tuple[dict[LoadPhase, Decimal], dict[LoadPhase, float]]:
+    def _currents(self, meter: str | None) -> tuple[dict[LoadPhase, Decimal], dict[LoadPhase, float]]:
         if meter is None:
             return {}, {}
 
@@ -141,10 +141,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             return {}, {}
 
         fresh = {phase: amps for phase, amps in snapshot.currents.amps.items() if phase not in snapshot.stale_phases}
-        return (
-            measured_currents(fresh),
-            {METER_PHASES[phase]: at - snapshot.ages[phase].total_seconds() for phase in fresh},
-        )
+        return measured_currents(fresh), {METER_PHASES[phase]: snapshot.recorded_at[phase] for phase in fresh}
 
     def _readings(self, state: GuardState, at: float) -> tuple[dict[str, SeenReading], list[LoadChange]]:
         readings: dict[str, SeenReading] = {}
