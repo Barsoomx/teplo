@@ -28,6 +28,7 @@ class AlertOutbox:
         self._clock = clock
         self._lifetime = lifetime
         self._messages: list[OutgoingMessage] = []
+        self._refused_alerts: set[AlertKey] = set()
         self._last_number = 0
         self._lock = threading.Lock()
 
@@ -43,6 +44,11 @@ class AlertOutbox:
         transition: AlertTransition | None = None,
     ) -> None:
         with self._lock:
+            if alert is not None and alert in self._refused_alerts:
+                self._refused_alerts.discard(alert)
+                if transition is AlertTransition.CLEARED:
+                    return
+
             self._last_number += 1
             self._messages.append(
                 OutgoingMessage(
@@ -62,6 +68,12 @@ class AlertOutbox:
         with self._lock:
             self._messages = [queued for queued in self._messages if queued.number != message.number]
 
+    def refuse(self, message: OutgoingMessage) -> tuple[OutgoingMessage, ...]:
+        with self._lock:
+            refused = (message, *self._refuse_recovery(message))
+            self._messages = [queued for queued in self._messages if queued not in refused]
+        return refused
+
     def drop_expired(self) -> tuple[OutgoingMessage, ...]:
         with self._lock:
             kept_since = self._clock() - self._lifetime.total_seconds()
@@ -73,6 +85,17 @@ class AlertOutbox:
             self._messages = [message for message in self._messages if message not in expired]
         return expired
 
+    def _refuse_recovery(self, message: OutgoingMessage) -> tuple[OutgoingMessage, ...]:
+        if message.transition is not AlertTransition.RAISED or message.alert is None:
+            return ()
+
+        recovery = _recovery(message, [queued for queued in self._messages if queued.number > message.number])
+        if recovery is None:
+            self._refused_alerts.add(message.alert)
+            return ()
+
+        return (recovery,)
+
 
 def _expired(message: OutgoingMessage, later: Sequence[OutgoingMessage], kept_since: float) -> bool:
     lifetime_start = _lifetime_start(message, later)
@@ -83,11 +106,15 @@ def _lifetime_start(message: OutgoingMessage, later: Sequence[OutgoingMessage]) 
     if message.transition is not AlertTransition.RAISED:
         return message.queued_at
 
-    recovery = next(
+    recovery = _recovery(message, later)
+    return None if recovery is None else recovery.queued_at
+
+
+def _recovery(message: OutgoingMessage, later: Sequence[OutgoingMessage]) -> OutgoingMessage | None:
+    return next(
         (queued for queued in later if queued.alert == message.alert and queued.transition is AlertTransition.CLEARED),
         None,
     )
-    return None if recovery is None else recovery.queued_at
 
 
 alert_outbox = AlertOutbox.init()

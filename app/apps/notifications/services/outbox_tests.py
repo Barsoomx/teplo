@@ -60,22 +60,22 @@ def f_long_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOu
 
 
 @pytest.fixture
-def recovered_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
+def f_recovered_outbox(f_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
     f_clock.advance(HOUR)
     f_outbox.put(FOUND, alert=KITCHEN_LOST, transition=AlertTransition.CLEARED)
     return f_outbox
 
 
 @pytest.fixture
-def f_recovered_hour_ago_outbox(recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
+def f_recovered_hour_ago_outbox(f_recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
     f_clock.advance(HOUR)
-    return recovered_outbox
+    return f_recovered_outbox
 
 
 @pytest.fixture
-def f_recovered_long_ago_outbox(recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
+def f_recovered_long_ago_outbox(f_recovered_outbox: AlertOutbox, f_clock: MonotonicClockStub) -> AlertOutbox:
     f_clock.advance(HOUR + 1)
-    return recovered_outbox
+    return f_recovered_outbox
 
 
 @pytest.fixture
@@ -84,6 +84,18 @@ def f_announced_outbox(f_clock: MonotonicClockStub) -> AlertOutbox:
     outbox.put(FOUND, alert=KITCHEN_LOST, transition=AlertTransition.CLEARED)
     f_clock.advance(HOUR + 1)
     return outbox
+
+
+@pytest.fixture
+def f_refused_outbox(f_outbox: AlertOutbox) -> AlertOutbox:
+    f_outbox.refuse(f_outbox.pending()[0])
+    return f_outbox
+
+
+@pytest.fixture
+def f_refused_recovered_outbox(f_refused_outbox: AlertOutbox) -> AlertOutbox:
+    f_refused_outbox.put(FOUND, alert=KITCHEN_LOST, transition=AlertTransition.CLEARED)
+    return f_refused_outbox
 
 
 def test_messages_wait_in_order(f_outbox: AlertOutbox) -> None:
@@ -133,3 +145,48 @@ def test_recovery_of_an_alert_already_sent_expires_after_an_hour(f_announced_out
     expired = f_announced_outbox.drop_expired()
 
     assert (_numbers(expired), f_announced_outbox.pending()) == ([1], ())
+
+
+def test_refusing_a_raise_removes_its_queued_recovery(f_recovered_outbox: AlertOutbox) -> None:
+    refused = f_recovered_outbox.refuse(f_recovered_outbox.pending()[0])
+
+    assert (_numbers(refused), _numbers(f_recovered_outbox.pending())) == ([1, 3], [2])
+
+
+def test_refusing_a_raise_whose_alert_lasts_removes_only_it(f_outbox: AlertOutbox) -> None:
+    refused = f_outbox.refuse(f_outbox.pending()[0])
+
+    assert (_numbers(refused), _numbers(f_outbox.pending())) == ([1], [2])
+
+
+def test_refusing_a_raise_whose_alert_lasts_keeps_its_later_recovery_out(f_refused_outbox: AlertOutbox) -> None:
+    f_refused_outbox.put(FOUND, alert=KITCHEN_LOST, transition=AlertTransition.CLEARED)
+
+    assert _numbers(f_refused_outbox.pending()) == [2]
+
+
+def test_alert_raised_again_after_a_refused_raise_is_queued_with_its_recovery(
+    f_refused_recovered_outbox: AlertOutbox,
+) -> None:
+    f_refused_recovered_outbox.put(LOST, alert=KITCHEN_LOST, transition=AlertTransition.RAISED)
+    f_refused_recovered_outbox.put(FOUND, alert=KITCHEN_LOST, transition=AlertTransition.CLEARED)
+
+    assert _numbers(f_refused_recovered_outbox.pending()) == [2, 3, 4]
+
+
+@pytest.mark.parametrize(
+    ('position', 'expected'),
+    [
+        (2, ([3], [1, 2])),
+        (1, ([2], [1, 3])),
+    ],
+    ids=['recovery', 'without_an_alert'],
+)
+def test_refusing_a_recovery_or_a_message_without_an_alert_removes_only_it(
+    f_recovered_outbox: AlertOutbox,
+    position: int,
+    expected: tuple[list[int], list[int]],
+) -> None:
+    refused = f_recovered_outbox.refuse(f_recovered_outbox.pending()[position])
+
+    assert (_numbers(refused), _numbers(f_recovered_outbox.pending())) == expected

@@ -205,13 +205,13 @@ def test_failed_send_keeps_the_queue_for_the_next_run(
     )
 
 
-def test_refused_message_is_dropped_and_the_rest_go_out(
+def test_refused_alert_is_dropped_with_its_recovery_and_the_rest_go_out(
     f_refusing_use_case: DeliverAlertsUseCase,
     f_refusing_sender: AlertSenderStub,
 ) -> None:
     output = f_refusing_use_case.execute(DeliverAlertsInputDTO(now=NOW))
 
-    assert (output, f_refusing_sender.sent) == (DeliverAlertsOutputDTO(sent=2, dropped=1, pending=0), [RESUMED, FOUND])
+    assert (output, f_refusing_sender.sent) == (DeliverAlertsOutputDTO(sent=1, dropped=2, pending=0), [RESUMED])
 
 
 def test_messages_past_their_lifetime_are_dropped_unsent(

@@ -49,14 +49,17 @@ class DeliverAlertsUseCase(BaseUseCase[DeliverAlertsInputDTO, DeliverAlertsOutpu
         )
 
     def _send_pending(self, now: datetime) -> tuple[int, int]:
-        sent = rejected = 0
+        sent = 0
+        rejected: set[int] = set()
         for message in self._outbox.pending():
+            if message.number in rejected:
+                continue
+
             text = self._text(message, now)
             try:
                 self._sender.send(text)
             except AlertRejectedError as error:
-                self._drop(message, text, error)
-                rejected += 1
+                rejected.update(dropped.number for dropped in self._drop(message, text, error))
             except AlertDeliveryError as error:
                 logger.warning(
                     'alert_delivery_failed',
@@ -68,17 +71,18 @@ class DeliverAlertsUseCase(BaseUseCase[DeliverAlertsInputDTO, DeliverAlertsOutpu
             else:
                 self._outbox.remove(message)
                 sent += 1
-        return sent, rejected
+        return sent, len(rejected)
 
     def _text(self, message: OutgoingMessage, at: datetime) -> str:
         with translation.override(self._language):
             return message.content.text(at)
 
-    def _drop(self, message: OutgoingMessage, text: str, error: AlertRejectedError) -> None:
-        self._outbox.remove(message)
+    def _drop(self, message: OutgoingMessage, text: str, error: AlertRejectedError) -> tuple[OutgoingMessage, ...]:
+        dropped = self._outbox.refuse(message)
         logger.warning(
             'alert_message_rejected',
             error_code=error.error_code,
             detail=error.detail,
             text=text,
         )
+        return dropped
