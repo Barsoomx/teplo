@@ -1,10 +1,10 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.load_status import LoadStatus
-from apps.power.domain.loads import LoadKind
+from apps.power.domain.loads import LoadKind, LoadPhase
 from apps.power.domain.moments import held
 
 
@@ -38,6 +38,10 @@ def meter_condition(watch: MeterWatch, at: float, thresholds: PhaseThresholds) -
     return MeterCondition.LOST if held(watch.stale_since, at, thresholds.meter_lost_after) else MeterCondition.STALE
 
 
+def phases_overlap(first: LoadPhase, second: LoadPhase) -> bool:
+    return LoadPhase.UNKNOWN in (first, second) or first is second
+
+
 def drawing_floors(loads: Sequence[LoadStatus]) -> list[LoadStatus]:
     return sorted(
         (load for load in loads if load.kind is LoadKind.ZONE and load.available and load.drawing and not load.shed),
@@ -45,7 +49,12 @@ def drawing_floors(loads: Sequence[LoadStatus]) -> list[LoadStatus]:
     )
 
 
-def limp_sheds(loads: Sequence[LoadStatus]) -> tuple[LoadStatus, ...]:
-    floors = drawing_floors(loads)
-    kept = {load.phase: load.slug for load in floors}
-    return tuple(load for load in floors if kept[load.phase] != load.slug)
+def limp_sheds(loads: Sequence[LoadStatus], sheddable: Collection[str]) -> tuple[LoadStatus, ...]:
+    kept: list[LoadStatus] = []
+    shed: list[LoadStatus] = []
+    for load in reversed(drawing_floors(loads)):
+        if load.slug in sheddable and any(phases_overlap(load.phase, other.phase) for other in kept):
+            shed.append(load)
+        else:
+            kept.append(load)
+    return tuple(reversed(shed))

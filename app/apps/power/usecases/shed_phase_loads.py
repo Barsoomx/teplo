@@ -275,7 +275,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
         view = guard_view(state, shedding, live=live)
         sheddable = {status.slug for status in self._candidates(state, shedding, view, live=live)}
-        load = next((load for load in limp_sheds(view.loads) if load.slug in sheddable), None)
+        load = next(iter(limp_sheds(view.loads, sheddable)), None)
         if load is None:
             return shedding
 

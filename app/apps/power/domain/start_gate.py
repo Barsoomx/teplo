@@ -6,7 +6,7 @@ from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.headroom import PhaseOverrun, overrun
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind
-from apps.power.domain.meter_watch import MeterCondition, drawing_floors
+from apps.power.domain.meter_watch import MeterCondition, drawing_floors, phases_overlap
 from apps.power.domain.moments import elapsed
 from apps.power.domain.view import GuardView
 
@@ -109,7 +109,7 @@ def _refusal(
         return StartRefusal.METER_STALE
 
     if meter is MeterCondition.LOST and any(
-        floor.slug != load.slug and floor.phase is load.phase for floor in drawing_floors(loads)
+        floor.slug != load.slug and phases_overlap(floor.phase, load.phase) for floor in drawing_floors(loads)
     ):
         return StartRefusal.PHASE_TAKEN
 

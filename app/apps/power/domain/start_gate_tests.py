@@ -48,6 +48,7 @@ BOILER = replace(KITCHEN, slug='boiler-1f', kind=LoadKind.PLUG, priority=1, amps
 GRANTED = StartDecision(load='kitchen', refusal=None, overrun=None)
 LIVING_ROOM = replace(KITCHEN, slug='living-room', priority=7, phase=LoadPhase.L3)
 GRANTED_LIVING_ROOM = StartDecision(load='living-room', refusal=None, overrun=None)
+UNKNOWN_KITCHEN = replace(KITCHEN, phase=LoadPhase.UNKNOWN)
 
 
 def _decide(
@@ -133,6 +134,10 @@ def test_lost_meter_starts_no_plug() -> None:
         ([replace(HALLWAY, phase=LoadPhase.L2)], GRANTED),
         ([replace(HALLWAY, shed=True)], GRANTED),
         ([replace(BOILER, drawing=True)], GRANTED),
+        (
+            [replace(HALLWAY, phase=LoadPhase.UNKNOWN)],
+            StartDecision(load='kitchen', refusal=StartRefusal.PHASE_TAKEN, overrun=None),
+        ),
     ],
     ids=[
         'no_floor_draws',
@@ -140,6 +145,7 @@ def test_lost_meter_starts_no_plug() -> None:
         'a_floor_draws_on_another_phase',
         'the_floor_on_its_phase_is_shed',
         'a_plug_draws_on_its_phase',
+        'a_floor_of_unknown_phase_draws',
     ],
 )
 def test_lost_meter_starts_a_floor_only_when_no_other_floor_draws_on_its_phase(
@@ -147,6 +153,25 @@ def test_lost_meter_starts_a_floor_only_when_no_other_floor_draws_on_its_phase(
     expected: StartDecision,
 ) -> None:
     assert _decide(KITCHEN, MeterCondition.LOST, loads=[KITCHEN, *others]) == expected
+
+
+@pytest.mark.parametrize(
+    ('others', 'expected'),
+    [
+        ([], GRANTED),
+        (
+            [replace(HALLWAY, phase=LoadPhase.L3)],
+            StartDecision(load='kitchen', refusal=StartRefusal.PHASE_TAKEN, overrun=None),
+        ),
+        ([replace(BOILER, drawing=True)], GRANTED),
+    ],
+    ids=['no_floor_draws', 'a_floor_draws_on_any_phase', 'a_plug_draws'],
+)
+def test_lost_meter_starts_a_floor_of_unknown_phase_only_when_no_other_floor_draws(
+    others: list[LoadStatus],
+    expected: StartDecision,
+) -> None:
+    assert _decide(UNKNOWN_KITCHEN, MeterCondition.LOST, loads=[UNKNOWN_KITCHEN, *others]) == expected
 
 
 def test_lost_meter_starts_floors_thirty_seconds_apart() -> None:
