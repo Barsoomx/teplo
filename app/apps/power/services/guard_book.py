@@ -75,6 +75,10 @@ class GuardBook:
             self._last_permit_at = served.last_permit_at
             return served.decisions
 
+    def waiting(self) -> frozenset[str]:
+        with self._lock:
+            return self._waiting
+
     def note_waiting(self, waiting: frozenset[str]) -> frozenset[str]:
         with self._lock:
             began = waiting - self._waiting

@@ -196,6 +196,10 @@ def test_book_names_only_the_loads_that_begin_to_wait(
     assert f_book_with_a_waiting_load.note_waiting(waiting) == began
 
 
+def test_book_names_the_loads_still_waiting_to_start(f_book_with_a_waiting_load: GuardBook) -> None:
+    assert f_book_with_a_waiting_load.waiting() == frozenset({'kitchen'})
+
+
 def test_load_that_stopped_waiting_begins_a_new_wait(f_book_with_a_waiting_load: GuardBook) -> None:
     f_book_with_a_waiting_load.note_waiting(frozenset())
 

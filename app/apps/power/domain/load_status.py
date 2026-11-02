@@ -46,8 +46,19 @@ class LoadStatus:
         )
 
 
+def plug_draws(*, on: bool, current: Decimal) -> bool:
+    return on and current > PLUG_DRAWING_AMPS
+
+
+def thermostat_draws(*, power: bool, heating: bool | None, setpoint: Decimal, floor_temperature: Decimal) -> bool:
+    if heating is None:
+        return power and setpoint > floor_temperature
+
+    return power and heating
+
+
 def plug_reading(*, on: bool, current: Decimal, read_at: float) -> LoadReading:
-    return LoadReading(read_at=read_at, drawing=on and current > PLUG_DRAWING_AMPS, closed=on, current=current)
+    return LoadReading(read_at=read_at, drawing=plug_draws(on=on, current=current), closed=on, current=current)
 
 
 def thermostat_reading(
@@ -58,7 +69,8 @@ def thermostat_reading(
     floor_temperature: Decimal,
     read_at: float,
 ) -> LoadReading:
+    drawing = thermostat_draws(power=power, heating=heating, setpoint=setpoint, floor_temperature=floor_temperature)
     if heating is None:
-        return LoadReading(read_at=read_at, drawing=power and setpoint > floor_temperature, closed=None, current=None)
+        return LoadReading(read_at=read_at, drawing=drawing, closed=None, current=None)
 
-    return LoadReading(read_at=read_at, drawing=power and heating, closed=power and heating, current=None)
+    return LoadReading(read_at=read_at, drawing=drawing, closed=power and heating, current=None)
