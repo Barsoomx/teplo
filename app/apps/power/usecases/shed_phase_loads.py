@@ -25,7 +25,7 @@ from apps.power.domain.events import (
     LoadShedOverridden,
     RestoreCause,
 )
-from apps.power.domain.guard import GuardLoads, GuardState, ShedState, awaits_reading, guard_view
+from apps.power.domain.guard import GuardLoads, GuardState, ShedState, awaits_reading, guard_view, start_view
 from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition, choose_limp_restore, limp_sheds, meter_condition
@@ -348,8 +348,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if shed is None or record is None:
             return shedding
 
-        load = next(status for status in view.loads if status.slug == record.slug)
-        if record.kind is LoadKind.PLUG and not self._would_start(load, view, at, thresholds):
+        start = start_view(state, shedding, live=live)
+        load = next(status for status in start.loads if status.slug == record.slug)
+        if record.kind is LoadKind.PLUG and not self._would_start(load, start, at, thresholds):
             return shedding
 
         restored = shedding.with_times(replace(times, last_restore_at=at), live=live)
@@ -358,7 +359,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 if not self._switcher.restore(
                     record,
                     was_on=shed.was_on,
-                    permit=lambda: self._permitted(load, view, at, thresholds),
+                    permit=lambda: self._permitted(load, start, at, thresholds),
                 ):
                     return shedding
             except DomainError as error:

@@ -190,6 +190,22 @@ def f_dry_run_shed_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGa
 
 
 @pytest.fixture
+def f_settling_shed_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
+    shed = Shed(
+        load='boiler-1f',
+        phase=LoadPhase.L2,
+        amps=Decimal('6.0'),
+        live=True,
+        reason=ShedReason.OVERLOAD,
+        was_on=True,
+        at=AT - 1,
+        settled_at=AT + 4,
+    )
+    _remember(f_book, management_live=True, l2=request.param, shedding=ShedState(sheds={'boiler-1f': shed}))
+    return f_gate
+
+
+@pytest.fixture
 def f_shed_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     shed = Shed(
         load='kitchen',
@@ -331,3 +347,20 @@ def test_dry_run_start_counts_the_room_a_dry_run_shed_would_make(
     answers = f_dry_run_shed_gate.ask_starts([ZoneStart(zone='kitchen', writes_live=False)], NOW)
 
     assert (answers, f_book.last_permit_at()) == ({'kitchen': GRANTED}, None)
+
+
+@pytest.mark.parametrize(
+    ('f_settling_shed_gate', 'answer', 'last_permit_at'),
+    [('18.0', WAITS, None), ('12.0', GRANTED, AT)],
+    ids=['meter_already_shows_the_drop', 'room_measured_with_the_drop'],
+    indirect=['f_settling_shed_gate'],
+)
+def test_live_start_counts_a_settling_shed_only_by_the_drop_the_meter_measures(
+    f_settling_shed_gate: GuardLoadGate,
+    f_book: GuardBook,
+    answer: StartAnswer,
+    last_permit_at: float | None,
+) -> None:
+    answers = f_settling_shed_gate.ask_starts([KITCHEN_START], NOW)
+
+    assert (answers, f_book.last_permit_at()) == ({'kitchen': answer}, last_permit_at)

@@ -178,6 +178,17 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
     )
 
 
+def start_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardView:
+    return GuardView(
+        currents=relieved_currents(
+            state.phases.currents,
+            state.phases.read_at,
+            (shed for shed in shedding.sheds.values() if not shed.live and not live),
+        ),
+        loads=load_statuses(state.loads, state.readings, shedding, live=live),
+    )
+
+
 def awaits_reading(state: GuardState, shedding: ShedState, slug: str) -> bool:
     return slug in shedding.failed and _usable(state.readings.get(slug), shedding.failed[slug]) is None
 

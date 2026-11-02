@@ -7,7 +7,7 @@ import structlog
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.power.domain.control import starts_live
 from apps.power.domain.events import StartWouldWaitDryRun
-from apps.power.domain.guard import GuardState, guard_view
+from apps.power.domain.guard import GuardState, start_view
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadRecord
 from apps.power.domain.meter_watch import meter_condition
@@ -47,13 +47,13 @@ class GuardLoadGate:
 
         at = self._clock()
         thresholds = state.loads.control.thresholds
-        live_view = guard_view(state, state.shedding, live=True)
+        live_view = start_view(state, state.shedding, live=True)
         requests = _requests(state, starts, live_view.loads)
         decisions = self._book.serve_starts(
             tuple(requests.values()),
             meter=meter_condition(state.phases.meter, at, thresholds),
             live_view=live_view,
-            dry_run_view=guard_view(state, state.shedding, live=False),
+            dry_run_view=start_view(state, state.shedding, live=False),
             at=at,
             thresholds=thresholds,
         )

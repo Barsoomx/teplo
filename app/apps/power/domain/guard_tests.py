@@ -16,6 +16,7 @@ from apps.power.domain.guard import (
     load_statuses,
     phase_amps,
     relieved_currents,
+    start_view,
 )
 from apps.power.domain.load_status import LoadStatus, plug_reading, thermostat_reading
 from apps.power.domain.loads import LearnedPhase, LoadKind, LoadPhase, LoadRecord, ShedReason
@@ -198,6 +199,32 @@ def test_view_takes_from_the_measured_current_the_relief_of_the_sheds_it_sees(
     )
 
     assert view.currents == {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: l2, LoadPhase.L3: Decimal('4.0')}
+
+
+@pytest.mark.parametrize(
+    ('live', 'l2'),
+    [(True, Decimal('26.0')), (False, Decimal('20.0'))],
+    ids=['live_start_on_the_measured_current', 'dry_run_start_less_the_dry_run_sheds'],
+)
+def test_start_view_credits_no_live_shed_whose_drop_the_meter_has_not_shown(
+    f_state_with_a_live_and_a_dry_run_shed: GuardState,
+    live: bool,
+    l2: Decimal,
+) -> None:
+    view = start_view(
+        f_state_with_a_live_and_a_dry_run_shed,
+        f_state_with_a_live_and_a_dry_run_shed.shedding,
+        live=live,
+    )
+
+    assert (view.currents, view.loads) == (
+        {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: l2, LoadPhase.L3: Decimal('4.0')},
+        guard_view(
+            f_state_with_a_live_and_a_dry_run_shed,
+            f_state_with_a_live_and_a_dry_run_shed.shedding,
+            live=live,
+        ).loads,
+    )
 
 
 def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it_with_the_moment_it_was_read() -> None:
