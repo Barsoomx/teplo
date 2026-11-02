@@ -11,6 +11,8 @@ esp32:
   board: esp32dev
   framework:
     type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_ENABLED: n
 
 sensor:
   - platform: adc

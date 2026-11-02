@@ -1,5 +1,7 @@
+# The radio stays awake between beacons: the nodes sit on weak links far from the router.
 wifi:
   ssid: !secret wifi_ssid
+  power_save_mode: none
   password: !secret wifi_password
   ap:
     ssid: ${node_name}

@@ -8,7 +8,7 @@ from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.events import AirControlDryRun, OptimalStartDryRun
 from apps.climate.domain.floor_policy import ThermostatTarget, decide_floor_target
 from apps.climate.domain.learning import Morning, ZoneLearningRecord
-from apps.climate.domain.memory import AirDecision, ZoneMemory
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import FOLLOWED, AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import (
     MorningProgress,
@@ -16,6 +16,7 @@ from apps.climate.domain.observation import (
     StopProgress,
     StopReading,
     StopWatch,
+    note_preheat,
     observe_morning,
     observe_stop,
     start_stop_watch,
@@ -85,18 +86,19 @@ def follow_zone(
     conditions: ZoneConditions,
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
+    reading = _morning_reading(zone, memory, decision, outcome, conditions, cycle)
     if outcome is ZoneCycleOutcome.SHED:
         return ZoneFollowUp(
-            memory=_kept_memory(memory, decision, cycle),
+            memory=_kept_memory(memory, decision, reading, cycle),
             air_dry_run=None,
             optimal_start=None,
             morning=None,
             stop=None,
         )
 
-    morning = _observe_morning(zone, memory, decision, outcome, conditions, cycle)
+    morning = _observe_morning(memory.morning, reading)
     follow_up = ZoneFollowUp(
-        memory=replace(_kept_memory(memory, decision, cycle), morning=morning.morning),
+        memory=replace(_kept_memory(memory, decision, reading, cycle), morning=morning.morning),
         air_dry_run=None,
         optimal_start=None,
         morning=morning.finished,
@@ -111,12 +113,30 @@ def follow_zone(
     return _follow_air_dry_run(follow_up, zone, memory, decision.plan, outcome, conditions, cycle)
 
 
-def _kept_memory(memory: ZoneMemory, decision: ZoneDecision, cycle: CycleConditions) -> ZoneMemory:
+def hold_air_dry_run(follow_up: ZoneFollowUp, memory: ZoneMemory) -> ZoneFollowUp:
+    return replace(
+        follow_up,
+        memory=replace(
+            follow_up.memory,
+            air_state=memory.air_state_on(ControlPath.AIR_DRY_RUN),
+            would_be_target=memory.would_be_target,
+        ),
+        air_dry_run=None,
+    )
+
+
+def _kept_memory(
+    memory: ZoneMemory,
+    decision: ZoneDecision,
+    reading: MorningReading | None,
+    cycle: CycleConditions,
+) -> ZoneMemory:
     return ZoneMemory(
         path=decision.path,
         mode=decision.mode if cycle.clock_trusted else None,
-        would_be=memory.would_be,
+        would_be_target=memory.would_be_target,
         preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
+        preheated_for=None if reading is None else note_preheat(reading),
     )
 
 
@@ -206,28 +226,28 @@ def _follow_air_dry_run(
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
     follow_up = replace(follow_up, optimal_start=_optimal_start(zone, memory, plan, cycle.now))
-    would_be = AirDecision(state=plan.state, target=_guarded(zone, plan.thermostat, conditions))
-    if would_be == memory.would_be:
+    target = _guarded(zone, plan.thermostat, conditions)
+    if outcome is ZoneCycleOutcome.DEVICE_UNAVAILABLE:
+        return hold_air_dry_run(follow_up, memory)
+
+    if target == memory.would_be_target:
         return replace(follow_up, memory=replace(follow_up.memory, air_state=plan.state))
 
-    if outcome is ZoneCycleOutcome.DEVICE_UNAVAILABLE or not write_allowed(zone.last_air_dry_run_at, cycle.now):
-        return replace(
-            follow_up,
-            memory=replace(follow_up.memory, air_state=memory.air_state_on(ControlPath.AIR_DRY_RUN)),
-        )
+    if not write_allowed(zone.last_air_dry_run_at, cycle.now):
+        return hold_air_dry_run(follow_up, memory)
 
     return replace(
         follow_up,
-        memory=replace(follow_up.memory, air_state=plan.state, would_be=would_be),
+        memory=replace(follow_up.memory, air_state=plan.state, would_be_target=target),
         air_dry_run=AirControlDryRun(
             zone=zone.slug,
             air=plan.air,
             target=plan.target,
             mode=plan.mode,
             state=plan.state,
-            previous_state=None if memory.would_be is None else memory.would_be.state,
-            power=would_be.target.power,
-            setpoint=would_be.target.setpoint,
+            previous_state=memory.air_state_on(ControlPath.AIR_DRY_RUN),
+            power=target.power,
+            setpoint=target.setpoint,
             early_stop_offset=plan.early_stop_offset,
             lead_minutes=None if plan.lead is None else plan.lead // MINUTE,
             occurred_at=cycle.now,
@@ -249,37 +269,40 @@ def _optimal_start(zone: ZoneSettings, memory: ZoneMemory, plan: AirPlan, now: d
     )
 
 
-def _observe_morning(
+def _morning_reading(
     zone: ZoneSettings,
     memory: ZoneMemory,
     decision: ZoneDecision,
     outcome: ZoneCycleOutcome,
     conditions: ZoneConditions,
     cycle: CycleConditions,
-) -> MorningProgress:
+) -> MorningReading | None:
     if zone.kind is not ZoneKind.AIR or zone.air_sensor_slug is None:
+        return None
+
+    return MorningReading(
+        at=cycle.now,
+        mode=decision.mode if cycle.clock_trusted else None,
+        previous_mode=memory.mode,
+        entering_air_mode=decision.path is ControlPath.AIR and memory.path is not ControlPath.AIR,
+        preheated_for=memory.preheated_for,
+        windows=zone.windows,
+        target=zone.air_targets.comfort,
+        air=conditions.air,
+        outdoor=cycle.outdoor,
+        heating=(
+            conditions.writes_live and zone.heating_enabled and cycle.clock_trusted and not zone.is_boosted(cycle.now)
+        ),
+        outcome=outcome,
+        air_state=_followed_air_state(memory, decision, outcome),
+    )
+
+
+def _observe_morning(morning: Morning | None, reading: MorningReading | None) -> MorningProgress:
+    if reading is None:
         return MorningProgress(morning=None, finished=None)
 
-    return observe_morning(
-        memory.morning,
-        MorningReading(
-            at=cycle.now,
-            mode=decision.mode,
-            previous_mode=memory.mode,
-            windows=zone.windows,
-            target=zone.air_targets.comfort,
-            air=conditions.air,
-            outdoor=cycle.outdoor,
-            heating=(
-                conditions.writes_live
-                and zone.heating_enabled
-                and cycle.clock_trusted
-                and not zone.is_boosted(cycle.now)
-            ),
-            outcome=outcome,
-            air_state=_followed_air_state(memory, decision, outcome),
-        ),
-    )
+    return observe_morning(morning, reading)
 
 
 def _followed_air_state(memory: ZoneMemory, decision: ZoneDecision, outcome: ZoneCycleOutcome) -> AirState | None:

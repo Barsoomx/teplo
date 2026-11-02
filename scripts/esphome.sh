@@ -5,6 +5,7 @@
 #   sh scripts/esphome.sh upload <node> <address>    build one node and flash it over the air
 # Without node names, config and compile take every esphome/teplo-*.yaml.
 # DOCKER and MOUNT_SOURCE override the docker binary and the bind-mount path (e.g. docker.exe and C:\... under WSL).
+# With docker.exe, upload forwards the node's OTA port from WSL: Docker Desktop's containers do not reach the LAN.
 # ESPHOME_JOBS caps the parallel compile jobs, 3 by default.
 set -eu
 
@@ -90,6 +91,16 @@ case $command in
         done
         ;;
     upload)
-        run "$image" run "/code/esphome/$1.yaml" --device "$2" --ota-platform esphome --no-logs
+        device=$2
+        case $docker in
+            *.exe)
+                python3 "$root/scripts/ota_forward.py" "$2" 3232 &
+                forward=$!
+                trap 'kill "$forward" 2>/dev/null' EXIT
+                sleep 1
+                device=host.docker.internal
+                ;;
+        esac
+        run "$image" run "/code/esphome/$1.yaml" --device "$device" --ota-platform esphome --no-logs
         ;;
 esac

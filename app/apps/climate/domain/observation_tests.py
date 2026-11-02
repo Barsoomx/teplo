@@ -13,6 +13,7 @@ from apps.climate.domain.observation import (
     StopProgress,
     StopReading,
     StopWatch,
+    note_preheat,
     observe_morning,
     observe_stop,
     start_stop_watch,
@@ -22,6 +23,7 @@ from apps.climate.domain.zone import ComfortWindow
 MOSCOW = ZoneInfo('Europe/Moscow')
 PREHEAT_START = datetime(2026, 11, 2, 3, 30, tzinfo=MOSCOW)
 COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
+YESTERDAYS_COMFORT_AT = COMFORT_AT - timedelta(days=1)
 STOPPED_AT = datetime(2026, 11, 2, 9, 0, tzinfo=MOSCOW)
 WINDOWS = tuple(ComfortWindow(weekday=weekday, start=time(6, 30), end=time(23, 30)) for weekday in range(7))
 TARGET = Decimal('22.0')
@@ -35,6 +37,8 @@ def _reading(at: datetime, *, air: str = '20.1', mode: ScheduleMode = ScheduleMo
         at=at,
         mode=mode,
         previous_mode=ScheduleMode.PREHEAT,
+        entering_air_mode=False,
+        preheated_for=None,
         windows=WINDOWS,
         target=TARGET,
         air=Decimal(air),
@@ -105,6 +109,8 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
         at=PREHEAT_START,
         mode=mode,
         previous_mode=previous_mode,
+        entering_air_mode=False,
+        preheated_for=None,
         windows=WINDOWS,
         target=TARGET,
         air=air,
@@ -118,6 +124,76 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
 
 
 @pytest.mark.parametrize(
+    ('at', 'preheated_for'),
+    [
+        (PREHEAT_START, YESTERDAYS_COMFORT_AT),
+        (PREHEAT_START + timedelta(minutes=16), None),
+    ],
+    ids=['preheated_for_yesterday', 'sensor_back_after_preheat_start'],
+)
+def test_morning_starts_for_a_comfort_start_not_preheated_for(
+    f_start_reading: MorningReading,
+    at: datetime,
+    preheated_for: datetime | None,
+) -> None:
+    reading = replace(f_start_reading, at=at, preheated_for=preheated_for)
+
+    assert observe_morning(None, reading) == MorningProgress(
+        morning=Morning(
+            comfort_at=COMFORT_AT,
+            target=TARGET,
+            outdoor=OUTDOOR,
+            samples=(AirSample(at=at, air=Decimal('20.0')),),
+        ),
+        finished=None,
+    )
+
+
+def test_no_morning_starts_for_a_comfort_start_already_preheated_for(f_start_reading: MorningReading) -> None:
+    reading = replace(
+        f_start_reading,
+        at=PREHEAT_START + timedelta(minutes=16),
+        preheated_for=COMFORT_AT,
+    )
+
+    assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
+
+
+@pytest.mark.parametrize(
+    ('mode', 'outcome', 'preheated_for'),
+    [
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.APPLIED, COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.UNCHANGED, COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.DRY_RUN, COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.THROTTLED, YESTERDAYS_COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.DEVICE_UNAVAILABLE, YESTERDAYS_COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.FAILED, YESTERDAYS_COMFORT_AT),
+        (ScheduleMode.NIGHT, ZoneCycleOutcome.APPLIED, YESTERDAYS_COMFORT_AT),
+        (None, ZoneCycleOutcome.APPLIED, YESTERDAYS_COMFORT_AT),
+    ],
+    ids=[
+        'written',
+        'already_held',
+        'journaled_in_dry_run',
+        'write_waits_its_turn',
+        'thermostat_unavailable',
+        'write_failed',
+        'night',
+        'clock_untrusted',
+    ],
+)
+def test_comfort_start_is_preheated_for_once_the_thermostat_follows_its_preheat(
+    f_start_reading: MorningReading,
+    mode: ScheduleMode | None,
+    outcome: ZoneCycleOutcome,
+    preheated_for: datetime,
+) -> None:
+    reading = replace(f_start_reading, mode=mode, outcome=outcome, preheated_for=YESTERDAYS_COMFORT_AT)
+
+    assert note_preheat(reading) == preheated_for
+
+
+@pytest.mark.parametrize(
     'outcome',
     [ZoneCycleOutcome.THROTTLED, ZoneCycleOutcome.DEVICE_UNAVAILABLE, ZoneCycleOutcome.FAILED],
     ids=['write_waits_its_turn', 'thermostat_unavailable', 'write_failed'],
@@ -127,6 +203,28 @@ def test_morning_starts_only_when_thermostat_takes_the_preheat(
     outcome: ZoneCycleOutcome,
 ) -> None:
     reading = replace(f_start_reading, outcome=outcome)
+
+    assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
+
+
+def test_zone_entering_air_mode_into_preheat_starts_morning_when_the_preheat_is_written(
+    f_start_reading: MorningReading,
+    f_morning: Morning,
+) -> None:
+    reading = replace(
+        f_start_reading,
+        entering_air_mode=True,
+        outcome=ZoneCycleOutcome.APPLIED,
+        air_state=AirState.HEAT,
+    )
+
+    assert observe_morning(None, reading) == MorningProgress(morning=f_morning, finished=None)
+
+
+def test_zone_entering_air_mode_into_preheat_its_thermostat_already_holds_starts_no_morning(
+    f_start_reading: MorningReading,
+) -> None:
+    reading = replace(f_start_reading, entering_air_mode=True, air_state=AirState.HEAT)
 
     assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
 
@@ -163,6 +261,8 @@ def test_morning_is_dropped_when_its_conditions_break(
         at=PREHEAT_START + timedelta(hours=1),
         mode=mode,
         previous_mode=ScheduleMode.PREHEAT,
+        entering_air_mode=False,
+        preheated_for=None,
         windows=WINDOWS,
         target=TARGET,
         air=air,

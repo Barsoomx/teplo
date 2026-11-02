@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.floor_policy import ThermostatTarget
@@ -9,20 +10,15 @@ from apps.climate.domain.optimal_start import PreheatStart
 
 
 @dataclass(frozen=True, kw_only=True)
-class AirDecision:
-    state: AirState
-    target: ThermostatTarget
-
-
-@dataclass(frozen=True, kw_only=True)
 class ZoneMemory:
     path: ControlPath | None = None
     mode: ScheduleMode | None = None
     air_state: AirState | None = None
     heat_target: Decimal | None = None
-    would_be: AirDecision | None = None
+    would_be_target: ThermostatTarget | None = None
     preheat: PreheatStart | None = None
     morning: Morning | None = None
+    preheated_for: datetime | None = None
     stop: StopWatch | None = None
 
     def air_state_on(self, path: ControlPath) -> AirState | None:

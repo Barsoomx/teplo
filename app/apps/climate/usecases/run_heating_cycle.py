@@ -4,6 +4,7 @@ from decimal import Decimal
 
 import structlog
 from django.conf import settings
+from django.db import OperationalError
 from django.utils import timezone
 
 from apps.climate.domain.change import ThermostatChange
@@ -20,7 +21,7 @@ from apps.climate.domain.learning import (
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.climate.domain.observation import StopWatch
-from apps.climate.domain.ports import LoadGate
+from apps.climate.domain.ports import LoadGate, ZoneLearningStore, ZoneStore
 from apps.climate.domain.second_floor_guard import decide_second_floor_guard
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import (
@@ -31,6 +32,7 @@ from apps.climate.domain.zone_cycle import (
     ZoneFollowUp,
     decide_zone,
     follow_zone,
+    hold_air_dry_run,
 )
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
@@ -75,9 +77,9 @@ class ZoneRun:
 class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycleOutputDTO]):
     def __init__(
         self,
-        zones: ZoneRepository,
+        zones: ZoneStore,
         climate_settings: ClimateSettingsRepository,
-        learning: ZoneLearningRepository,
+        learning: ZoneLearningStore,
         store: ThermostatStateStore,
         temperatures: TemperatureStateStore,
         provider: ThermostatProvider,
@@ -115,8 +117,8 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         now = timezone.localtime(input_dto.now)
         control = self._climate_settings.control()
         zones = self._zones.all_settings()
-        guarded_zone = self._run_guard(zones, control, now)
         learning = self._learning.all_records()
+        guarded_zone = self._run_guard(zones, control, now)
         cycle = CycleConditions(
             now=now,
             clock_trusted=input_dto.clock_trusted,
@@ -198,9 +200,20 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         return ZoneRun(zone=zone, memory=memory, conditions=conditions, decision=decision, drive=drive)
 
     def _run_zone(self, run: ZoneRun, answer: StartAnswer | None, cycle: CycleConditions) -> ZoneCycleOutcome:
+        try:
+            return self._control_zone(run, answer, cycle)
+        except OperationalError as error:
+            logger.warning(
+                'zone_cycle_failed',
+                zone=run.zone.slug,
+                error=str(error),
+            )
+            return ZoneCycleOutcome.FAILED
+
+    def _control_zone(self, run: ZoneRun, answer: StartAnswer | None, cycle: CycleConditions) -> ZoneCycleOutcome:
         outcome = self._drive(run, answer, cycle.now)
         follow_up = follow_zone(run.zone, run.memory, run.decision, outcome, run.conditions, cycle)
-        self._journal_air_dry_run(run.zone, follow_up, cycle.now)
+        follow_up = self._journal_air_dry_run(run.zone, run.memory, follow_up, cycle.now)
         self._learn(run.zone, follow_up, run.conditions.learning, cycle.control)
         self._book.remember_zone(run.zone.slug, follow_up.memory)
         return outcome
@@ -259,12 +272,30 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         if change.setpoint is not None:
             thermostat.set_setpoint(change.setpoint)
 
-    def _journal_air_dry_run(self, zone: ZoneSettings, follow_up: ZoneFollowUp, now: datetime) -> None:
+    def _journal_air_dry_run(
+        self,
+        zone: ZoneSettings,
+        memory: ZoneMemory,
+        follow_up: ZoneFollowUp,
+        now: datetime,
+    ) -> ZoneFollowUp:
         if follow_up.optimal_start is not None:
             self._event_store.add_event(follow_up.optimal_start)
-        if follow_up.air_dry_run is not None:
+        if follow_up.air_dry_run is None:
+            return follow_up
+
+        try:
             self._zones.mark_air_dry_run(zone.slug, now)
-            self._event_store.add_event(follow_up.air_dry_run)
+        except OperationalError as error:
+            logger.warning(
+                'zone_air_dry_run_stamp_failed',
+                zone=zone.slug,
+                error=str(error),
+            )
+            return hold_air_dry_run(follow_up, memory)
+
+        self._event_store.add_event(follow_up.air_dry_run)
+        return follow_up
 
     def _learn(
         self,
@@ -286,7 +317,16 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             return
 
         heat_up = learn_morning(learning.heat_up, estimate)
-        self._learning.save_heat_up(zone.slug, heat_up)
+        try:
+            self._learning.save_heat_up(zone.slug, heat_up)
+        except OperationalError as error:
+            logger.warning(
+                'zone_morning_save_failed',
+                zone=zone.slug,
+                error=str(error),
+            )
+            return
+
         logger.info(
             'zone_morning_learned',
             zone=zone.slug,
@@ -298,7 +338,16 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
 
     def _learn_stop(self, zone: ZoneSettings, watch: StopWatch, offset: Decimal) -> None:
         learned = learn_early_stop_offset(offset, peak=watch.peak, target=watch.target)
-        self._learning.save_early_stop_offset(zone.slug, learned)
+        try:
+            self._learning.save_early_stop_offset(zone.slug, learned)
+        except OperationalError as error:
+            logger.warning(
+                'zone_early_stop_offset_save_failed',
+                zone=zone.slug,
+                error=str(error),
+            )
+            return
+
         logger.info(
             'zone_early_stop_offset_learned',
             zone=zone.slug,
