@@ -421,8 +421,8 @@ password = '...'
 ## 14. Roadmap
 
 1. Thermostats in floor mode: schedules, night setback, timed pre-heat, boost, dry-run, dashboard and journal.
-2. Phase meter and load management.
-3. Air sensors, air regulation, learned optimal start.
+2. Phase meter and load management (the meter is already read and alerts when stale).
+3. Air sensors, air regulation, learned optimal start (the sensors are already read and alert when lost).
 4. Smart plugs: water heaters as sheddable loads (their plugs are already read and alert when lost), washing machine monitoring.
 
 Later: heat pump driver, EV charger driver, away and frost modes.
