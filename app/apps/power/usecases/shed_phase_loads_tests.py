@@ -754,7 +754,30 @@ def test_restore_in_dry_run_journals_what_it_would_switch_back(f_dry_run_house_a
                 name='Бойлер 1 этаж',
                 kind=LoadKind.PLUG,
                 phase=LoadPhase.L2,
-                amps=Decimal('10.0'),
+                amps=Decimal('4.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                occurred_at=_moment(125),
+            ),
+        ],
+    )
+
+
+def test_dry_run_restore_journals_the_current_of_the_dry_run_view_it_was_decided_on(
+    f_dry_run_house_after_a_shed: House,
+) -> None:
+    outputs = _seconds(f_dry_run_house_after_a_shed.guard, 121, '19.0')
+
+    assert (_restored_at(outputs, 5), f_dry_run_house_after_a_shed.events[2:]) == (
+        [(125, ('boiler-1f',))],
+        [
+            LoadRestoredDryRun(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('13.0'),
                 load_amps=Decimal('6.0'),
                 reason=ShedReason.OVERLOAD,
                 cause=RestoreCause.CALM,
@@ -1029,7 +1052,7 @@ def test_dry_run_journals_the_limp_house_once_a_meter_that_reported_is_lost_and_
                 name='Кухня',
                 kind=LoadKind.ZONE,
                 phase=LoadPhase.L2,
-                amps=Decimal('10.0'),
+                amps=Decimal('2.0'),
                 load_amps=Decimal('8.0'),
                 reason=ShedReason.METER_LOST,
                 cause=RestoreCause.CALM,

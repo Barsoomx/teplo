@@ -333,7 +333,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 LoadRestored if live else LoadRestoredDryRun,
                 record,
                 shed,
-                amps=state.phases.currents.get(shed.phase),
+                amps=view.currents.get(shed.phase),
                 cause=RestoreCause.CALM,
                 now=now,
             ),
