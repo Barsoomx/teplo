@@ -8,10 +8,11 @@
         <span class="phase-name">{{ phase.phase|upper }}</span>
         <span class="phase-bar" aria-hidden="true">{% if not phase.stale %}<span class="phase-fill"></span>{% endif %}</span>
         <span class="phase-value">{% if phase.stale %}<span class="phase-missing">—</span>{% else %}{% blocktranslate with amps=phase.amps|floatformat:1 %}{{ amps }} A{% endblocktranslate %}{% endif %}</span>
+        {% if phase.ev_amps is not None %}<span class="chip phase-ev">{% icon 'zap' %}{% blocktranslate with amps=phase.ev_amps|floatformat:0 %}EV charging: {{ amps }} A{% endblocktranslate %}</span>{% endif %}
       </li>
       {% endfor %}
     </ul>
-    <p class="phase-scale" aria-hidden="true"><span class="phase-tick phase-tick-start-ceiling">{{ phases.start_ceiling_amps|floatformat:'-1' }}</span><span class="phase-tick phase-tick-shed">{{ phases.shed_amps|floatformat:'-1' }}</span></p>
+    <p class="phase-scale" aria-hidden="true"><span class="phase-tick phase-tick-start-ceiling" title="{% translate 'Start ceiling' %}">{{ phases.start_ceiling_amps|floatformat:'-1' }}</span><span class="phase-tick phase-tick-shed" title="{% translate 'Shed threshold' %}">{{ phases.shed_amps|floatformat:'-1' }}</span></p>
     {% if meter.stale %}
     {% failure_note meter.error_code meter.error omit='device_unavailable' device='phase_meter' as note %}
     <p class="offline-note"{% if meter.error %} title="{{ meter.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% translate 'No fresh readings. Check that the phase meter has power and Wi-Fi.' %}{% if note %} <span class="offline-error">{{ note }}</span>{% endif %}</span></p>

@@ -89,6 +89,23 @@ def test_phases_partial_hatches_a_stale_meter_and_says_what_to_check(
     ) == (True, True, True, [True, True, False], 2, (1, True), 1)
 
 
+def test_phases_partial_badges_an_ev_on_its_phase_and_names_the_threshold_marks(
+    f_russian_client: Client,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/phases/')
+
+    content = response.content.decode()
+    l3 = content[content.index('>L3<') :]
+    assert (
+        content.count('class="chip phase-ev"'),
+        'Электромобиль: 16 А' in l3[: l3.index('</li>')],
+        'title="Порог включения">20<' in content,
+        'title="Порог отключения">24<' in content,
+        m_phases_use_case.init.call_count,
+    ) == (1, True, True, True, 1)
+
+
 def test_phases_partial_is_empty_without_a_phase_meter(f_client: Client, m_meterless_use_case: MagicMock) -> None:
     response = f_client.get('/phases/')
 

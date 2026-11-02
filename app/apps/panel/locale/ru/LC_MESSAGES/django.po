@@ -197,6 +197,16 @@ msgstr "%(amps)s А"
 msgid "No fresh readings. Check that the phase meter has power and Wi-Fi."
 msgstr "Нет свежих показаний. Проверьте питание фазометра и Wi-Fi."
 
+#, python-format
+msgid "EV charging: %(amps)s A"
+msgstr "Электромобиль: %(amps)s А"
+
+msgid "Start ceiling"
+msgstr "Порог включения"
+
+msgid "Shed threshold"
+msgstr "Порог отключения"
+
 msgid "Power cuts"
 msgstr "Отключения света"
 

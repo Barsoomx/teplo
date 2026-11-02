@@ -984,6 +984,17 @@ body {
   font-weight: 200;
 }
 
+.phase-ev {
+  grid-column: 2;
+  justify-self: start;
+  min-height: 1.5rem;
+  margin-top: 0.4rem;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 0.75rem;
+  white-space: normal;
+}
+
 .phase-scale {
   position: relative;
   height: 1rem;

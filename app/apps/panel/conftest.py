@@ -170,7 +170,7 @@ def phase_currents() -> GetPhaseCurrentsOutputDTO:
             phases=(
                 PhaseCurrent(phase='l1', amps=Decimal('12.40'), stale=False, age_seconds=1),
                 PhaseCurrent(phase='l2', amps=Decimal('3.05'), stale=False, age_seconds=1),
-                PhaseCurrent(phase='l3', amps=Decimal('27.81'), stale=False, age_seconds=2),
+                PhaseCurrent(phase='l3', amps=Decimal('27.81'), stale=False, age_seconds=2, ev_amps=Decimal('16.1')),
             ),
         ),
         scale_amps=Decimal(25),
