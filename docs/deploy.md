@@ -56,7 +56,7 @@ Releases ship without tests: `.gitattributes` marks `*_tests.py` and `conftest.p
 
 ## Telegram alerts
 
-teplo sends its alerts (a lost thermostat or plug, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
+teplo sends its alerts (a lost thermostat, plug or sensor, a stale phase meter, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
 
 ```toml
 [telegram]
@@ -134,7 +134,7 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
    password = 'choose-a-teplo-password'
    ```
 
-   `port` may be left out for 1883. Without the table, or with an empty `host`, `username` or `password`, teplo runs without the sensors.
+   `port` may be left out for 1883. Without the table, or with an empty `host`, `username` or `password`, teplo runs without the sensors, and each of them raises a device-lost alert 10 minutes after the start.
 
 6. Check that readings arrive:
 
