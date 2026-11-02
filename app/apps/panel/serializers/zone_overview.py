@@ -15,3 +15,6 @@ class ZoneOverviewSerializer(serializers.Serializer):
     target_setpoint = serializers.DecimalField(max_digits=4, decimal_places=1, allow_null=True)
     boosted = serializers.BooleanField()
     live_control = serializers.BooleanField()
+    air_control_live = serializers.BooleanField()
+    path = serializers.CharField()
+    air_target = serializers.DecimalField(max_digits=4, decimal_places=1, allow_null=True)
