@@ -9,6 +9,7 @@ from apps.power.domain.start_gate import StartRefusal
 
 class RestoreCause(StrEnum):
     CALM = 'calm'
+    LIMP = 'limp'
     RELEASED = 'released'
 
 

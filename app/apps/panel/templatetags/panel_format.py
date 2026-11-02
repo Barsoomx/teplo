@@ -116,6 +116,7 @@ SHED_ON_METER_LOST = gettext_lazy('No readings from the phase meter: one floor p
 RESTORED_ON_CALM = gettext_lazy('Phase %(phase)s back to normal: %(amps)s A')
 RESTORED_ON_CALM_PHASES = gettext_lazy('Phases back to normal')
 RESTORED_ON_RELEASE = gettext_lazy('Load management was switched in the settings')
+RESTORED_WHILE_METER_LOST = gettext_lazy('No readings from the phase meter: no other floor heats on this phase')
 LOAD_COMMANDS_FAILED = {
     ('shed', LoadKind.PLUG): gettext_lazy('%(name)s: could not switch the plug off'),
     ('restore', LoadKind.PLUG): gettext_lazy('%(name)s: could not switch the plug back on'),
@@ -365,6 +366,9 @@ def load_shed_note(entry: TimelineEntry) -> str:
 
     if cause == 'calm':
         return _calm_note(entry)
+
+    if cause == 'limp':
+        return str(RESTORED_WHILE_METER_LOST)
 
     reason = entry.payload.get('reason')
     if reason == 'meter_lost':

@@ -6,15 +6,17 @@ import pytest
 
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.load_status import LoadStatus
-from apps.power.domain.loads import LoadKind, LoadPhase
+from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 from apps.power.domain.meter_watch import (
     MeterCondition,
     MeterWatch,
+    choose_limp_restore,
     limp_sheds,
     meter_condition,
     phases_overlap,
     watch_meter,
 )
+from apps.power.domain.shedding import Shed
 
 THRESHOLDS = PhaseThresholds(
     start_ceiling=Decimal('20.0'),
@@ -44,6 +46,24 @@ BATHROOM_1F = replace(HALLWAY, slug='bathroom-1f', priority=3, phase=LoadPhase.U
 BATHROOM_2F = replace(HALLWAY, slug='bathroom-2f', priority=6, phase=LoadPhase.UNKNOWN)
 BOILER = replace(HALLWAY, slug='boiler-1f', kind=LoadKind.PLUG, priority=1, amps=Decimal('6.0'))
 EVERY_FLOOR = frozenset({'living-room', 'bathroom-2f', 'kitchen', 'hallway', 'bathroom-1f', 'guest-room'})
+RESTORED_AT = 1000.0
+KITCHEN_OFF = replace(KITCHEN, drawing=False, shed=True)
+HALLWAY_OFF = replace(HALLWAY, drawing=False, shed=True)
+BATHROOM_1F_OFF = replace(BATHROOM_1F, drawing=False, shed=True)
+BOILER_OFF = replace(BOILER, drawing=False, shed=True)
+KITCHEN_SHED = Shed(
+    load='kitchen',
+    phase=LoadPhase.L2,
+    amps=Decimal('8.0'),
+    live=True,
+    reason=ShedReason.OVERLOAD,
+    was_on=None,
+    at=STARTED_AT,
+    settled_at=STARTED_AT + 5,
+)
+HALLWAY_SHED = replace(KITCHEN_SHED, load='hallway', phase=LoadPhase.L1)
+BATHROOM_1F_SHED = replace(KITCHEN_SHED, load='bathroom-1f', amps=Decimal('6.0'))
+BOILER_SHED = replace(KITCHEN_SHED, load='boiler-1f', phase=LoadPhase.L1, amps=Decimal('6.0'), was_on=True)
 
 
 @pytest.fixture
@@ -135,3 +155,53 @@ def test_limp_house_counts_only_floors_that_draw_and_are_not_shed() -> None:
     ]
 
     assert limp_sheds(loads, EVERY_FLOOR) == ()
+
+
+def _limp_restore(sheds: list[Shed], loads: list[LoadStatus], last_restore_at: float | None = None) -> Shed | None:
+    return choose_limp_restore(
+        sheds,
+        loads,
+        last_restore_at=last_restore_at,
+        at=RESTORED_AT,
+        thresholds=THRESHOLDS,
+    )
+
+
+@pytest.mark.parametrize(
+    ('sheds', 'loads', 'expected'),
+    [
+        ([KITCHEN_SHED], [KITCHEN_OFF, LIVING_ROOM], KITCHEN_SHED),
+        ([KITCHEN_SHED], [KITCHEN_OFF, replace(LIVING_ROOM, phase=LoadPhase.L2)], None),
+        ([KITCHEN_SHED], [KITCHEN_OFF, BATHROOM_2F], None),
+        ([BATHROOM_1F_SHED], [BATHROOM_1F_OFF, LIVING_ROOM], None),
+        ([BATHROOM_1F_SHED], [BATHROOM_1F_OFF, replace(LIVING_ROOM, drawing=False)], BATHROOM_1F_SHED),
+        ([HALLWAY_SHED, KITCHEN_SHED], [HALLWAY_OFF, KITCHEN_OFF], KITCHEN_SHED),
+        ([BOILER_SHED], [BOILER_OFF], None),
+        ([KITCHEN_SHED], [replace(KITCHEN_OFF, available=False)], None),
+    ],
+    ids=[
+        'no_floor_draws_on_its_phase',
+        'a_floor_draws_on_its_phase',
+        'a_floor_of_unknown_phase_draws',
+        'floor_of_unknown_phase_beside_a_floor_drawing_on_any_phase',
+        'floor_of_unknown_phase_while_no_floor_draws',
+        'most_important_floor_first',
+        'plug',
+        'floor_whose_thermostat_is_unavailable',
+    ],
+)
+def test_lost_meter_brings_a_shed_floor_back_once_no_floor_that_may_share_its_phase_draws(
+    sheds: list[Shed],
+    loads: list[LoadStatus],
+    expected: Shed | None,
+) -> None:
+    assert _limp_restore(sheds, loads) == expected
+
+
+@pytest.mark.parametrize(
+    ('last_restore_at', 'expected'),
+    [(RESTORED_AT - 59, None), (RESTORED_AT - 60, KITCHEN_SHED)],
+    ids=['within_a_minute_of_the_last_restore', 'a_minute_after_the_last_restore'],
+)
+def test_lost_meter_brings_shed_floors_back_one_a_minute(last_restore_at: float, expected: Shed | None) -> None:
+    assert _limp_restore([KITCHEN_SHED], [KITCHEN_OFF], last_restore_at) == expected

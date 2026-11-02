@@ -28,7 +28,7 @@ from apps.power.domain.events import (
 from apps.power.domain.guard import GuardLoads, GuardState, ShedState, awaits_reading, guard_view
 from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
-from apps.power.domain.meter_watch import MeterCondition, limp_sheds, meter_condition
+from apps.power.domain.meter_watch import MeterCondition, choose_limp_restore, limp_sheds, meter_condition
 from apps.power.domain.moments import elapsed
 from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
@@ -333,26 +333,13 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
     def _restored(self, state: GuardState, shedding: ShedState, *, live: bool, at: float, now: datetime) -> ShedState:
         thresholds = state.loads.control.thresholds
-        if meter_condition(state.phases.meter, at, thresholds) is not MeterCondition.FRESH:
+        meter = meter_condition(state.phases.meter, at, thresholds)
+        if meter is MeterCondition.STALE:
             return shedding
 
         view = guard_view(state, shedding, live=live)
         times = shedding.times(live=live)
-        shed = choose_restore(
-            tuple(
-                shed
-                for shed in shedding.sheds.values()
-                if shed.live == live
-                and self._live_load(state.loads, shed.load) == live
-                and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
-            ),
-            view.loads,
-            calm=calm_phases(state.phases.watches, at, thresholds, live=live),
-            currents=view.currents,
-            last_restore_at=times.last_restore_at,
-            at=at,
-            thresholds=thresholds,
-        )
+        shed = self._restore_due(state, shedding, view, meter=meter, live=live, at=at)
         record = None if shed is None else state.loads.record(shed.load)
         if shed is None or record is None:
             return shedding
@@ -382,12 +369,44 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 record,
                 shed,
                 amps=view.currents.get(shed.phase),
-                cause=RestoreCause.CALM,
+                cause=RestoreCause.CALM if meter is MeterCondition.FRESH else RestoreCause.LIMP,
                 switched_on=live and record.kind is LoadKind.PLUG and shed.was_on is True,
                 now=now,
             ),
         )
         return _without(restored, {record.slug})
+
+    def _restore_due(
+        self,
+        state: GuardState,
+        shedding: ShedState,
+        view: GuardView,
+        *,
+        meter: MeterCondition,
+        live: bool,
+        at: float,
+    ) -> Shed | None:
+        thresholds = state.loads.control.thresholds
+        last_restore_at = shedding.times(live=live).last_restore_at
+        sheds = tuple(
+            shed
+            for shed in shedding.sheds.values()
+            if shed.live == live
+            and self._live_load(state.loads, shed.load) == live
+            and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
+        )
+        if meter is MeterCondition.LOST:
+            return choose_limp_restore(sheds, view.loads, last_restore_at=last_restore_at, at=at, thresholds=thresholds)
+
+        return choose_restore(
+            sheds,
+            view.loads,
+            calm=calm_phases(state.phases.watches, at, thresholds, live=live),
+            currents=view.currents,
+            last_restore_at=last_restore_at,
+            at=at,
+            thresholds=thresholds,
+        )
 
     def _candidates(
         self,

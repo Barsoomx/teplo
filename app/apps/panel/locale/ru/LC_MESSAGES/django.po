@@ -527,6 +527,9 @@ msgstr "Фазы в норме"
 msgid "Load management was switched in the settings"
 msgstr "Управление нагрузкой переключено в настройках"
 
+msgid "No readings from the phase meter: no other floor heats on this phase"
+msgstr "Нет данных от фазометра: на этой фазе не греет другой пол"
+
 #, python-format
 msgid "%(name)s: the plug was switched on by hand, the shed is dropped"
 msgstr "%(name)s: розетку включили вручную, отключение снято"

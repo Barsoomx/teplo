@@ -623,6 +623,11 @@ def test_phase_event_text_names_the_phase_and_its_current(
             {**KITCHEN_SHED, 'cause': 'released', 'switched_on': True},
             ('Кухня: снова включил термостат', 'Управление нагрузкой переключено в настройках'),
         ),
+        (
+            'load_restored',
+            {**KITCHEN_SHED, 'cause': 'limp', 'switched_on': False},
+            ('Кухня: вернул термостат расписанию', 'Нет данных от фазометра: на этой фазе не греет другой пол'),
+        ),
         ('load_shed', {}, ('Бойлер 1 этаж: выключил розетку', '')),
     ],
     ids=[
@@ -634,6 +639,7 @@ def test_phase_event_text_names_the_phase_and_its_current(
         'zone_restored_in_dry_run_on_calm_of_every_phase',
         'zone_released_to_its_schedule',
         'zone_released_with_its_thermostat_switched_back_on',
+        'zone_restored_while_the_meter_is_lost',
         'kind_from_the_device',
     ],
 )

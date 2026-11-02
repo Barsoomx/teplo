@@ -5,7 +5,8 @@ from enum import StrEnum
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind, LoadPhase
-from apps.power.domain.moments import held
+from apps.power.domain.moments import elapsed, held
+from apps.power.domain.shedding import Shed
 
 
 class MeterCondition(StrEnum):
@@ -58,3 +59,29 @@ def limp_sheds(loads: Sequence[LoadStatus], sheddable: Collection[str]) -> tuple
         else:
             kept.append(load)
     return tuple(reversed(shed))
+
+
+def choose_limp_restore(
+    sheds: Sequence[Shed],
+    loads: Sequence[LoadStatus],
+    *,
+    last_restore_at: float | None,
+    at: float,
+    thresholds: PhaseThresholds,
+) -> Shed | None:
+    if not elapsed(last_restore_at, at, thresholds.restore_interval):
+        return None
+
+    floors = drawing_floors(loads)
+    statuses = {load.slug: load for load in loads if load.kind is LoadKind.ZONE and load.available}
+    ready = sorted(
+        (
+            shed
+            for shed in sheds
+            if shed.load in statuses
+            and not any(phases_overlap(statuses[shed.load].phase, floor.phase) for floor in floors)
+        ),
+        key=lambda shed: (not shed.restore_failed, statuses[shed.load].priority),
+        reverse=True,
+    )
+    return next(iter(ready), None)

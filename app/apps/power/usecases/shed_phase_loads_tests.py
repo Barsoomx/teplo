@@ -409,6 +409,14 @@ def f_live_house_shedding_thirty_amperes(f_live_house: House) -> House:
 
 
 @pytest.fixture
+def f_live_house_with_every_floor_shed(f_live_house: House) -> House:
+    _seconds(f_live_house.guard, 6, '40.0')
+    _thermostat_read_off(f_live_house, 'thermostat-kitchen', 6)
+    _thermostat_read_off(f_live_house, 'thermostat-living-room', 6)
+    return f_live_house
+
+
+@pytest.fixture
 def f_boiler_shed_live() -> House:
     house = _house(_live(BOILER), LIVE_CONTROL, frozenset())
     _seconds(house.guard, 4, '26.0')
@@ -1312,6 +1320,84 @@ def test_live_shed_relieves_its_phase_until_the_meter_reads_the_phase_once_it_se
     assert (_shed_at(outputs, 6), f_live_house_shedding_thirty_amperes.zones.switched_off) == (
         [],
         [('kitchen', 'thermostat-kitchen', _moment(5))],
+    )
+
+
+def test_lost_meter_brings_the_floors_an_overload_shed_back_one_a_minute_and_leaves_the_plug_off(
+    f_live_house_with_every_floor_shed: House,
+) -> None:
+    outputs = _seconds(f_live_house_with_every_floor_shed.guard, 134, None)
+
+    assert (
+        _restored_at(outputs, 7),
+        f_live_house_with_every_floor_shed.boiler.switches,
+        f_live_house_with_every_floor_shed.book.held_zones(),
+        f_live_house_with_every_floor_shed.loads.writes[3:],
+        f_live_house_with_every_floor_shed.events[4:],
+    ) == (
+        [(77, ('living-room',)), (137, ('kitchen',))],
+        [False],
+        frozenset(),
+        [('clear_shed', 'living-room', None), ('clear_shed', 'kitchen', None)],
+        [
+            LoadRestored(
+                load='living-room',
+                name='Гостиная',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=None,
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.LIMP,
+                switched_on=False,
+                occurred_at=_moment(77),
+            ),
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=None,
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.LIMP,
+                switched_on=False,
+                occurred_at=_moment(137),
+            ),
+        ],
+    )
+
+
+def test_lost_meter_brings_a_shed_floor_back_only_once_the_floor_heating_on_its_phase_stops(
+    f_live_house_shedding_thirty_amperes: House,
+) -> None:
+    heating = _seconds(f_live_house_shedding_thirty_amperes.guard, 80, None)
+    _thermostat_read_off(f_live_house_shedding_thirty_amperes, 'thermostat-living-room', 86)
+    stopped = _seconds(f_live_house_shedding_thirty_amperes.guard, 1, None)
+
+    assert (
+        _restored_at(heating, 6),
+        _restored_at(stopped, 86),
+        f_live_house_shedding_thirty_amperes.book.held_zones(),
+        f_live_house_shedding_thirty_amperes.events[3:],
+    ) == (
+        [],
+        [(86, ('kitchen',))],
+        frozenset(),
+        [
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=None,
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.LIMP,
+                switched_on=False,
+                occurred_at=_moment(86),
+            ),
+        ],
     )
 
 
