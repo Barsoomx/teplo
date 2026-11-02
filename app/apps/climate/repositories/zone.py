@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.modes import ZoneKind
-from apps.climate.domain.zone import ComfortWindow, FloorSetpoints, ZoneSettings
+from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.models import Zone
 
 
@@ -23,8 +23,17 @@ class ZoneRepository:
         Zone.objects.filter(slug=slug).update(last_dry_run_at=at)
 
     @staticmethod
+    def mark_air_dry_run(slug: str, at: datetime) -> None:
+        Zone.objects.filter(slug=slug).update(last_air_dry_run_at=at)
+
+    @staticmethod
     def boost(slug: str, until: datetime) -> None:
-        updated = Zone.objects.filter(slug=slug).update(boost_until=until, last_command_at=None, last_dry_run_at=None)
+        updated = Zone.objects.filter(slug=slug).update(
+            boost_until=until,
+            last_command_at=None,
+            last_dry_run_at=None,
+            last_air_dry_run_at=None,
+        )
         if updated == 0:
             raise ZoneNotFoundError(slug)
 
@@ -38,11 +47,15 @@ def _to_settings(zone: Zone) -> ZoneSettings:
         air_sensor_slug=None if zone.air_sensor is None else zone.air_sensor.slug,
         heating_enabled=zone.heating_enabled,
         live_control=zone.live_control,
+        air_control_live=zone.air_control_live,
         setpoints=FloorSetpoints(
             comfort=zone.comfort_floor_setpoint,
             night=zone.night_floor_setpoint,
             boost=zone.boost_floor_setpoint,
+            idle=zone.idle_floor_setpoint,
+            limit=zone.floor_limit_setpoint,
         ),
+        air_targets=AirTargets(comfort=zone.comfort_air_target, night=zone.night_air_target),
         preheat_lead=timedelta(minutes=zone.preheat_lead_minutes),
         windows=tuple(
             ComfortWindow(weekday=period.weekday, start=period.start, end=period.end)
@@ -51,4 +64,5 @@ def _to_settings(zone: Zone) -> ZoneSettings:
         boost_until=zone.boost_until,
         last_command_at=zone.last_command_at,
         last_dry_run_at=zone.last_dry_run_at,
+        last_air_dry_run_at=zone.last_air_dry_run_at,
     )

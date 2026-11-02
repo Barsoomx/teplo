@@ -5,7 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.modes import ZoneKind
-from apps.climate.domain.zone import BOOST_DURATION, FloorSetpoints, ZoneSettings
+from apps.climate.domain.zone import BOOST_DURATION, AirTargets, FloorSetpoints, ZoneSettings
 
 NOW = datetime(2026, 10, 29, 2, 0, tzinfo=ZoneInfo('Europe/Moscow'))
 
@@ -20,12 +20,21 @@ def f_zone(request: pytest.FixtureRequest) -> ZoneSettings:
         air_sensor_slug=None,
         heating_enabled=True,
         live_control=True,
-        setpoints=FloorSetpoints(comfort=Decimal('28.0'), night=Decimal('22.0'), boost=Decimal('30.0')),
+        air_control_live=False,
+        setpoints=FloorSetpoints(
+            comfort=Decimal('28.0'),
+            night=Decimal('22.0'),
+            boost=Decimal('30.0'),
+            idle=Decimal('18.0'),
+            limit=Decimal('30.0'),
+        ),
+        air_targets=AirTargets(comfort=Decimal('22.0'), night=Decimal('19.5')),
         preheat_lead=timedelta(hours=3),
         windows=(),
         boost_until=request.param,
         last_command_at=None,
         last_dry_run_at=None,
+        last_air_dry_run_at=None,
     )
 
 

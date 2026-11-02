@@ -12,6 +12,14 @@ class FloorSetpoints:
     comfort: Decimal
     night: Decimal
     boost: Decimal
+    idle: Decimal
+    limit: Decimal
+
+
+@dataclass(frozen=True, kw_only=True)
+class AirTargets:
+    comfort: Decimal
+    night: Decimal
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -30,12 +38,15 @@ class ZoneSettings:
     air_sensor_slug: str | None
     heating_enabled: bool
     live_control: bool
+    air_control_live: bool
     setpoints: FloorSetpoints
+    air_targets: AirTargets
     preheat_lead: timedelta
     windows: tuple[ComfortWindow, ...]
     boost_until: datetime | None
     last_command_at: datetime | None
     last_dry_run_at: datetime | None
+    last_air_dry_run_at: datetime | None
 
     def is_boosted(self, now: datetime) -> bool:
         return self.boost_until is not None and now < self.boost_until <= now + BOOST_DURATION

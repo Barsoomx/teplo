@@ -28,6 +28,7 @@ class Zone(models.Model):
     )
     heating_enabled = models.BooleanField(default=True)
     live_control = models.BooleanField(default=False)
+    air_control_live = models.BooleanField(default=False)
     comfort_floor_setpoint = models.DecimalField(
         max_digits=3,
         decimal_places=1,
@@ -46,10 +47,35 @@ class Zone(models.Model):
         default=Decimal('30.0'),
         validators=SETPOINT_VALIDATORS,
     )
+    idle_floor_setpoint = models.DecimalField(
+        max_digits=3,
+        decimal_places=1,
+        default=Decimal('18.0'),
+        validators=SETPOINT_VALIDATORS,
+    )
+    floor_limit_setpoint = models.DecimalField(
+        max_digits=3,
+        decimal_places=1,
+        default=Decimal('30.0'),
+        validators=SETPOINT_VALIDATORS,
+    )
+    comfort_air_target = models.DecimalField(
+        max_digits=3,
+        decimal_places=1,
+        default=Decimal('22.0'),
+        validators=SETPOINT_VALIDATORS,
+    )
+    night_air_target = models.DecimalField(
+        max_digits=3,
+        decimal_places=1,
+        default=Decimal('19.5'),
+        validators=SETPOINT_VALIDATORS,
+    )
     preheat_lead_minutes = models.PositiveIntegerField(default=180, validators=[MaxValueValidator(240)])
     boost_until = models.DateTimeField(null=True, blank=True)
     last_command_at = models.DateTimeField(null=True, blank=True)
     last_dry_run_at = models.DateTimeField(null=True, blank=True)
+    last_air_dry_run_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
