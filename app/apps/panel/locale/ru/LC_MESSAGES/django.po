@@ -130,6 +130,25 @@ msgstr "%(amps)s А"
 msgid "No fresh readings. Check that the phase meter has power and Wi-Fi."
 msgstr "Нет свежих показаний. Проверьте питание фазометра и Wi-Fi."
 
+msgid "Power cuts"
+msgstr "Отключения света"
+
+#, python-format
+msgid "Power was out %(began)s–%(ended)s (%(duration)s). What was it?"
+msgstr "Свет пропадал %(began)s–%(ended)s (%(duration)s). Что это было?"
+
+msgid "What was it?"
+msgstr "Что это было?"
+
+msgid "Overload: our breaker tripped"
+msgstr "Перегруз: выбило наш автомат"
+
+msgid "Out in the village"
+msgstr "Пропало в посёлке"
+
+msgid "Not sure"
+msgstr "Не знаю"
+
 msgid "Sections"
 msgstr "Разделы"
 
@@ -193,6 +212,22 @@ msgstr "%(name)s: команда не прошла (%(summary)s)"
 #, python-format
 msgid "%(name)s: boost until %(until)s"
 msgstr "%(name)s: буст до %(until)s"
+
+#, python-format
+msgid "Power was out %(began)s–%(ended)s (%(duration)s)"
+msgstr "Свет пропадал %(began)s–%(ended)s (%(duration)s)"
+
+msgid "Cause not marked"
+msgstr "Причина не отмечена"
+
+msgid "Cause: overload, our breaker tripped"
+msgstr "Причина: перегруз, выбило наш автомат"
+
+msgid "Cause: out in the village"
+msgstr "Причина: пропало в посёлке"
+
+msgid "Cause: unknown"
+msgstr "Причина: неизвестна"
 
 #, python-format
 msgid "%(name)s: unknown event"

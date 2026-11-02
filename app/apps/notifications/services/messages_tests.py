@@ -13,11 +13,18 @@ from apps.notifications.services.messages import (
     alert_text,
     alert_text_from_payload,
     delivery_check_text,
+    interval_parts,
     outage_text,
 )
 
 SINCE = datetime(2026, 10, 31, 17, 24, 30, tzinfo=UTC)
 AT = datetime(2026, 10, 31, 17, 40, tzinfo=UTC)
+PANEL_URL = 'http://192.0.2.1:8088/'
+POWER_CUT = Outage(
+    began_at=datetime(2026, 10, 31, 17, 24, 50, tzinfo=UTC),
+    ended_at=datetime(2026, 10, 31, 17, 33, 10, tzinfo=UTC),
+    power_cut=True,
+)
 PAYLOAD = {
     'kind': 'device_lost',
     'subject': 'thermostat-kitchen',
@@ -56,8 +63,15 @@ def f_late_evening_outage() -> OutageContent:
         outage=Outage(
             began_at=datetime(2026, 10, 31, 20, 10, tzinfo=UTC),
             ended_at=datetime(2026, 10, 31, 20, 40, tzinfo=UTC),
+            power_cut=False,
         ),
+        panel_url=PANEL_URL,
     )
+
+
+@pytest.fixture
+def f_power_cut_content() -> OutageContent:
+    return OutageContent(outage=POWER_CUT, panel_url=PANEL_URL)
 
 
 @pytest.mark.usefixtures('russian')
@@ -212,7 +226,58 @@ def test_alert_follows_the_active_language() -> None:
     ],
 )
 def test_outage_reads_as_a_local_interval(began_at: datetime, ended_at: datetime, at: datetime, expected: str) -> None:
-    assert outage_text(Outage(began_at=began_at, ended_at=ended_at), at) == expected
+    assert outage_text(Outage(began_at=began_at, ended_at=ended_at, power_cut=False), at, PANEL_URL) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('panel_url', 'expected'),
+    [
+        (
+            PANEL_URL,
+            'teplo снова работает. Перерыв 20:24–20:33 (9 мин)\nОтметь причину в панели: http://192.0.2.1:8088/',
+        ),
+        ('', 'teplo снова работает. Перерыв 20:24–20:33 (9 мин)\nОтметь причину в панели.'),
+    ],
+    ids=['with_the_panel_url', 'without_the_panel_url'],
+)
+def test_power_cut_notice_asks_to_mark_the_cause_in_the_panel(panel_url: str, expected: str) -> None:
+    assert outage_text(POWER_CUT, AT, panel_url) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_power_cut_notice_follows_the_active_language() -> None:
+    assert outage_text(POWER_CUT, AT, PANEL_URL) == (
+        'teplo is running again. Outage 20:24–20:33 (9 min)\nMark the cause in the panel: http://192.0.2.1:8088/'
+    )
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('began_at', 'ended_at', 'at', 'expected'),
+    [
+        (
+            datetime(2026, 10, 31, 17, 24, 50, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 33, 10, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 40, tzinfo=UTC),
+            {'began': '20:24', 'ended': '20:33', 'duration': '9 мин'},
+        ),
+        (
+            datetime(2026, 10, 31, 20, 50, tzinfo=UTC),
+            datetime(2026, 10, 31, 21, 20, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, 0, tzinfo=UTC),
+            {'began': '31 октября 23:50', 'ended': '00:20', 'duration': '30 мин'},
+        ),
+    ],
+    ids=['today', 'on_an_earlier_day'],
+)
+def test_interval_parts_name_the_date_only_off_the_reference_day(
+    began_at: datetime,
+    ended_at: datetime,
+    at: datetime,
+    expected: dict[str, str],
+) -> None:
+    assert interval_parts(began_at, ended_at, at) == expected
 
 
 @pytest.mark.usefixtures('russian')
@@ -236,6 +301,13 @@ def test_outage_content_dates_the_interval_against_the_sending(f_late_evening_ou
     text = f_late_evening_outage.text(datetime(2026, 10, 31, 21, 20, tzinfo=UTC))
 
     assert text == 'teplo снова работает. Перерыв 31 октября 23:10–23:40 (30 мин)'
+
+
+@pytest.mark.usefixtures('russian')
+def test_power_cut_content_links_the_panel(f_power_cut_content: OutageContent) -> None:
+    assert f_power_cut_content.text(AT) == (
+        'teplo снова работает. Перерыв 20:24–20:33 (9 мин)\nОтметь причину в панели: http://192.0.2.1:8088/'
+    )
 
 
 @pytest.mark.usefixtures('russian')

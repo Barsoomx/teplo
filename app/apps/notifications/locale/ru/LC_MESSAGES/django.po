@@ -72,6 +72,13 @@ msgstr "%(name)s: термостат снова работает по распи
 msgid "teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)"
 msgstr "teplo снова работает. Перерыв %(began)s–%(ended)s (%(duration)s)"
 
+#, python-format
+msgid "Mark the cause in the panel: %(url)s"
+msgstr "Отметь причину в панели: %(url)s"
+
+msgid "Mark the cause in the panel."
+msgstr "Отметь причину в панели."
+
 msgid "teplo: test message. Alerts will arrive in this chat"
 msgstr "teplo: проверка связи. Оповещения будут приходить в этот чат"
 

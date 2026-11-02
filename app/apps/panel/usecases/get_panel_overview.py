@@ -24,6 +24,8 @@ from apps.devices.services.state_store import (
     temperature_state_store,
     thermostat_state_store,
 )
+from apps.power.domain.outage import OutageRecord
+from apps.power.repositories.outage import OutageRepository
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
 
@@ -95,6 +97,7 @@ class GetPanelOverviewOutputDTO:
     sensors: tuple[SensorOverview, ...]
     outdoor: SensorOverview | None
     standalone_sensors: tuple[SensorOverview, ...]
+    outages: tuple[OutageRecord, ...]
     clock: ClockStatus
     dry_run: bool
 
@@ -105,6 +108,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         zones: ZoneRepository,
         devices: DeviceRepository,
         climate_settings: ClimateSettingsRepository,
+        outages: OutageRepository,
         thermostat_store: ThermostatStateStore,
         plug_store: PlugStateStore,
         temperature_store: TemperatureStateStore,
@@ -115,6 +119,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self._zones = zones
         self._devices = devices
         self._climate_settings = climate_settings
+        self._outages = outages
         self._thermostat_store = thermostat_store
         self._plug_store = plug_store
         self._temperature_store = temperature_store
@@ -127,6 +132,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             zones=ZoneRepository(),
             devices=DeviceRepository(),
             climate_settings=ClimateSettingsRepository(),
+            outages=OutageRepository(),
             thermostat_store=thermostat_state_store,
             plug_store=plug_state_store,
             temperature_store=temperature_state_store,
@@ -150,6 +156,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             sensors=tuple(sensors.values()),
             outdoor=None if outdoor_slug is None else sensors.get(outdoor_slug),
             standalone_sensors=tuple(sensor for slug, sensor in sensors.items() if slug not in placed),
+            outages=tuple(self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
         )

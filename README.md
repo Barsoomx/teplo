@@ -37,6 +37,7 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Keeps heating when teplo stops.** Each thermostat regulates on its own at the last setpoint, and a cron watchdog restarts the process.
 - **A panel made for the phone.** Server-rendered Django with htmx, dark and light themes, English and Russian, a timeline journal and a JSON API under `api/v1`.
 - **Alerts in Telegram.** One chat hears about a thermostat, water heater plug or sensor that stops answering, a phase meter gone stale, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
+- **Power cuts on record.** After a power cut the panel asks whether our breaker tripped or the village lost power, so outages of the grid never count as overloads.
 - **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo only reads the plugs.
 - **Sensors in view.** ESPHome nodes report the air temperature and humidity of the rooms, the outdoor temperature and the current on each phase. The dashboard shows a room's air beside its floor reading, the outdoor temperature above the rooms and the phase currents as bars refreshed every 3 seconds; the history keeps them, and `api/v1/sensors` and `api/v1/phases` give them as JSON. teplo only reads them for now.
 - **Reusable.** A house is a site app with data migrations. Device keys, the panel password, the Telegram bot token and the MQTT credentials stay in a secrets file on the router.
@@ -136,6 +137,7 @@ app/
   apps/
     core/           BaseUseCase, DomainError, domain events, asyncio runtime
     climate/        zones, schedules, floor policy, heating cycle
+    power/          power cuts and their causes
     devices/        device registry, capability ports, Tuya and ESPHome drivers, state stores
     telemetry/      samples and the event journal
     notifications/  Telegram alerts: policy, outbox, Bot API client

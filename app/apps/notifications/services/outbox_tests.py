@@ -25,7 +25,10 @@ FOUND = AlertContent(
     device_kind=DeviceKind.THERMOSTAT,
     since=SINCE,
 )
-RESUMED = OutageContent(outage=Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC)))
+RESUMED = OutageContent(
+    outage=Outage(began_at=SINCE, ended_at=datetime(2026, 10, 31, 17, 33, tzinfo=UTC), power_cut=False),
+    panel_url='',
+)
 HOUR = 3600.0
 
 

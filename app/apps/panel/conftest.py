@@ -109,6 +109,7 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
         sensors=(air_second_floor, air_kitchen, outdoor),
         outdoor=outdoor,
         standalone_sensors=(air_second_floor,),
+        outages=(),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized'),
         dry_run=True,
     )

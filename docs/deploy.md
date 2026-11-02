@@ -11,7 +11,7 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
    ssh -p 222 root@192.168.1.1 sh /tmp/teplo-router/install.sh
    ```
 
-2. Edit `/opt/etc/teplo/teplo.env`: set `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS`. Keep `TEPLO_DRY_RUN=true` for the first run. The installer fills in a random `DJANGO_SECRET_KEY` when the file has none; teplo refuses to start without it.
+2. Edit `/opt/etc/teplo/teplo.env`: set `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS` and `TEPLO_PANEL_URL` (see [Telegram alerts](#telegram-alerts)). Keep `TEPLO_DRY_RUN=true` for the first run. The installer fills in a random `DJANGO_SECRET_KEY` when the file has none; teplo refuses to start without it.
 3. Create `/opt/etc/teplo/secrets.toml` from `deploy/router/secrets.toml.example`, one `[devices.<slug>]` table per Tuya device of the site, and `chmod 600` it. The `barsoom` site has five thermostats and the water heater plugs `plug-boiler-1f` and `plug-boiler-2f`. Tuya plugs need `protocol = '3.5'`: a table without it gets 3.3, the thermostats' protocol, and the plug shows as unavailable. A protocol other than `'3.1'`–`'3.5'`, e.g. `'3,5'`, or an empty `address` shows on the panel as a wrong address or protocol for that device only. A Tuya device without a table stays unavailable and raises a device-lost alert 10 minutes after the start. Local keys come from the Smart Life QR login described in `docs/design.md`. The ESPHome devices, the air and outdoor sensors and the phase meter, take no `[devices.<slug>]` table, as they have no address or key: teplo hears them through the broker, so they need only the `[mqtt]` table described in [MQTT broker](#mqtt-broker).
 4. For alerts, add the `[telegram]` table described in [Telegram alerts](#telegram-alerts).
 5. For the ESPHome sensors, set up the broker and add the `[mqtt]` table as described in [MQTT broker](#mqtt-broker).
@@ -82,6 +82,14 @@ It prints `ok` once Telegram has accepted the message, and otherwise fails with 
 - `telegram_not_configured`: the table is missing, or its `token` or `chat_id` is empty.
 - `alert_rejected`: Telegram refused the message. HTTP 401 or 404 means a wrong token; 400 or 403, a wrong `chat_id` or a chat the bot may not write to: open the chat with the bot and press Start.
 - `alert_delivery_failed`: Telegram could not be reached. `CERTIFICATE_VERIFY_FAILED` in the reason means the router lacks CA certificates: `opkg install ca-bundle`. A timeout points at the network or the `proxy`. `malformed proxy or API address` means the `proxy` is not a URL like `http://user:password@host:3128`; the reason leaves the value out, as it may carry the proxy's password.
+
+After a power cut the notice that teplo is back asks to mark the cause in the panel and links to it. Set the link in `teplo.env` to the panel's address as a phone on the home network opens it:
+
+```sh
+TEPLO_PANEL_URL=http://192.0.2.1:8088/
+```
+
+Left empty, the line reads «Отметь причину в панели.» without a link. A notice after a restart of teplo alone has no such line. teplo reads `teplo.env` at start, so restart it after setting the link.
 
 ## MQTT broker
 

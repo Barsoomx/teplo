@@ -1,3 +1,5 @@
+from django.conf import settings
+
 from apps.core.domain.events import domain_event_handler
 from apps.notifications.domain.alerts import AlertKey, AlertTransition
 from apps.notifications.domain.events import AlertCleared, AlertEvent, AlertRaised, TeploResumed
@@ -17,7 +19,7 @@ def queue_alert_cleared(event: AlertCleared) -> None:
 
 @domain_event_handler(TeploResumed)
 def queue_teplo_resumed(event: TeploResumed) -> None:
-    alert_outbox.put(OutageContent(outage=event.outage))
+    alert_outbox.put(OutageContent(outage=event.outage, panel_url=settings.TEPLO_PANEL_URL))
 
 
 def _queue_alert(event: AlertEvent, transition: AlertTransition) -> None:

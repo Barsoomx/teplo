@@ -60,7 +60,21 @@ STALE_METER = MonitoredDevice(
 METER_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='phase-meter')
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
 CLOCK_STEP = timedelta(hours=3)
-RESTART_NOTE = StartupNote(last_activity=NOW - timedelta(minutes=16), monotonic=NOTICED)
+RESTART_NOTE = StartupNote(
+    last_activity=NOW - timedelta(minutes=16),
+    monotonic=NOTICED,
+    router_uptime=timedelta(days=3),
+)
+POWER_CUT_NOTE = StartupNote(
+    last_activity=NOW - timedelta(minutes=2),
+    monotonic=NOTICED,
+    router_uptime=timedelta(minutes=1),
+)
+RESTART_AFTER_BOOT_NOTE = StartupNote(
+    last_activity=NOW - timedelta(seconds=30),
+    monotonic=NOTICED,
+    router_uptime=timedelta(minutes=7),
+)
 
 
 def _use_case(
@@ -165,6 +179,20 @@ def f_restarted_book() -> AlertBook:
 
 
 @pytest.fixture
+def power_cut_book() -> AlertBook:
+    book = AlertBook()
+    book.note_startup(POWER_CUT_NOTE)
+    return book
+
+
+@pytest.fixture
+def restarted_after_boot_book() -> AlertBook:
+    book = AlertBook()
+    book.note_startup(RESTART_AFTER_BOOT_NOTE)
+    return book
+
+
+@pytest.fixture
 def f_lost_use_case(
     f_noticed_book: AlertBook,
     f_zones: ZoneSourceStub,
@@ -209,6 +237,19 @@ def f_meter_stale_use_case(f_meter_noticed_book: AlertBook, f_dispatcher: EventD
 @pytest.fixture
 def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return _use_case([], ZoneSourceStub(zones=[]), f_restarted_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_power_cut_use_case(power_cut_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _use_case([], ZoneSourceStub(zones=[]), power_cut_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_restarted_after_boot_use_case(
+    restarted_after_boot_book: AlertBook,
+    f_dispatcher: EventDispatcher,
+) -> EvaluateAlertsUseCase:
+    return _use_case([], ZoneSourceStub(zones=[]), restarted_after_boot_book, f_dispatcher)
 
 
 @pytest.fixture
@@ -391,7 +432,7 @@ def test_outage_before_the_start_is_reported_once(
 ) -> None:
     output = f_restarted_use_case.execute(_input(timedelta(minutes=7)))
 
-    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW)
+    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW, power_cut=False)
     assert (output.outage, f_events, f_restarted_book.startup()) == (
         outage,
         [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
@@ -421,8 +462,30 @@ def test_outage_is_held_back_until_the_start_no_longer_precedes_the_last_activit
 ) -> None:
     output = f_restarted_held_back_use_case.execute(_input(timedelta(minutes=7)))
 
-    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW)
+    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW, power_cut=False)
     assert (output.outage, f_events) == (
         outage,
         [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
     )
+
+
+def test_power_cut_is_reported_even_after_a_gap_under_three_minutes(
+    f_power_cut_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_power_cut_use_case.execute(_input(timedelta(minutes=7)))
+
+    outage = Outage(began_at=NOW - timedelta(minutes=2), ended_at=NOW, power_cut=True)
+    assert (output.outage, f_events) == (
+        outage,
+        [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
+    )
+
+
+def test_restart_soon_after_a_boot_is_no_power_cut_once_teplo_was_active_since_the_boot(
+    f_restarted_after_boot_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_restarted_after_boot_use_case.execute(_input(timedelta(minutes=1)))
+
+    assert (output.outage, f_events) == (None, [])

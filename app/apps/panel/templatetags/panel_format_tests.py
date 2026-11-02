@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -25,11 +25,22 @@ from apps.panel.templatetags.panel_format import (
     failure_note,
     icon,
     local_time,
+    outage_question,
+    power_outage_text,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
+from apps.power.domain.outage import OutageCause, OutageRecord
 from apps.system.domain.clock import ClockStatusCode
 
 MOSCOW = ZoneInfo('Europe/Moscow')
+CUT = datetime(2026, 10, 31, 20, 24, 40, tzinfo=MOSCOW)
+OUTAGE = OutageRecord(
+    id=7,
+    began_at=CUT,
+    ended_at=CUT + timedelta(minutes=8, seconds=25),
+    cause=OutageCause.UNMARKED,
+    cause_marked_at=None,
+)
 ALERT_PAYLOAD = {
     'kind': 'device_lost',
     'subject': 'thermostat-kitchen',
@@ -42,6 +53,12 @@ ALERT_PAYLOAD = {
 @pytest.fixture
 def russian() -> Iterator[None]:
     with translation.override('ru'):
+        yield
+
+
+@pytest.fixture
+def english() -> Iterator[None]:
+    with translation.override('en'):
         yield
 
 
@@ -190,3 +207,66 @@ def test_alert_text_reads_journaled_alerts_like_the_messages(
     )
 
     assert alert_text(entry) == expected
+
+
+@freeze_time('2026-10-31T18:00:00Z')
+@pytest.mark.usefixtures('russian')
+def test_outage_question_names_no_date_for_an_outage_today() -> None:
+    assert outage_question(OUTAGE) == 'Свет пропадал 20:24–20:33 (9 мин). Что это было?'
+
+
+@freeze_time('2026-11-01T06:00:00Z')
+@pytest.mark.usefixtures('russian')
+def test_outage_question_names_the_date_of_an_outage_on_another_day() -> None:
+    assert outage_question(OUTAGE) == 'Свет пропадал 31 октября 20:24–20:33 (9 мин). Что это было?'
+
+
+@freeze_time('2026-10-31T18:00:00Z')
+@pytest.mark.usefixtures('english')
+def test_outage_question_follows_the_active_language() -> None:
+    assert outage_question(OUTAGE) == 'Power was out 20:24–20:33 (9 min). What was it?'
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'created_at', 'expected'),
+    [
+        (
+            {'outage_id': 7, 'began_at': '2026-10-31T17:24:40Z', 'ended_at': '2026-10-31T17:33:05Z'},
+            datetime(2026, 10, 31, 20, 40, tzinfo=MOSCOW),
+            'Свет пропадал 20:24–20:33 (9 мин)',
+        ),
+        (
+            {'outage_id': 7, 'began_at': '2026-10-31T20:50:00Z', 'ended_at': '2026-10-31T21:20:00Z'},
+            datetime(2026, 11, 1, 0, 30, tzinfo=MOSCOW),
+            'Свет пропадал 31 октября 23:50–00:20 (30 мин)',
+        ),
+        ({}, datetime(2026, 10, 31, 20, 40, tzinfo=MOSCOW), 'Неизвестное событие'),
+        (
+            {'outage_id': 7, 'began_at': 'yesterday', 'ended_at': '2026-10-31T17:33:05Z'},
+            datetime(2026, 10, 31, 20, 40, tzinfo=MOSCOW),
+            'Неизвестное событие',
+        ),
+        (
+            {'outage_id': 7, 'began_at': '2026-10-31T17:24:40', 'ended_at': '2026-10-31T17:33:05'},
+            datetime(2026, 10, 31, 20, 40, tzinfo=MOSCOW),
+            'Неизвестное событие',
+        ),
+    ],
+    ids=['same_day', 'across_midnight', 'empty', 'malformed', 'without_a_time_zone'],
+)
+def test_power_outage_text_reads_the_journaled_interval(
+    payload: dict[str, object],
+    created_at: datetime,
+    expected: str,
+) -> None:
+    entry = TimelineEntry(
+        kind='power_outage',
+        subject='',
+        subject_name='',
+        device_kind=None,
+        payload=payload,
+        created_at=created_at,
+    )
+
+    assert power_outage_text(entry) == expected

@@ -1,0 +1,4 @@
+{% load i18n %}<div class="outage-cause">
+  <p class="event-note">{% if outage.cause == 'overload' %}{% translate 'Cause: overload, our breaker tripped' %}{% elif outage.cause == 'grid' %}{% translate 'Cause: out in the village' %}{% elif outage.cause == 'unknown' %}{% translate 'Cause: unknown' %}{% else %}{% translate 'Cause not marked' %}{% endif %}</p>
+  {% url 'panel:journal-outage-cause' outage.id as action %}{% include 'panel/_outage_answers.html' with action=action target='closest .outage-cause' swap='outerHTML' %}
+</div>
