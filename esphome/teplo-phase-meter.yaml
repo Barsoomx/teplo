@@ -1,0 +1,64 @@
+# ESP32 DevKit with three SCT-013-050 clamps (1 V RMS at 50 A) biased at 1.65 V on ADC1.
+# multiply: 50 is the clamps' nominal ratio; docs/deploy.md calibrates it against a kettle.
+substitutions:
+  node_name: teplo-phase-meter
+  friendly_name: Phase meter
+
+packages:
+  node: !include common/node.yaml
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+
+sensor:
+  - platform: adc
+    id: l1_clamp
+    pin: GPIO34
+    attenuation: 12db
+    update_interval: never
+  - platform: adc
+    id: l2_clamp
+    pin: GPIO35
+    attenuation: 12db
+    update_interval: never
+  - platform: adc
+    id: l3_clamp
+    pin: GPIO32
+    attenuation: 12db
+    update_interval: never
+
+  - platform: ct_clamp
+    sensor: l1_clamp
+    name: L1 current
+    sample_duration: 200ms
+    update_interval: 1s
+    accuracy_decimals: 2
+    state_topic: teplo/${node_name}/sensor/l1_current/state
+    retain: false
+    qos: 0
+    filters:
+      - multiply: 50
+  - platform: ct_clamp
+    sensor: l2_clamp
+    name: L2 current
+    sample_duration: 200ms
+    update_interval: 1s
+    accuracy_decimals: 2
+    state_topic: teplo/${node_name}/sensor/l2_current/state
+    retain: false
+    qos: 0
+    filters:
+      - multiply: 50
+  - platform: ct_clamp
+    sensor: l3_clamp
+    name: L3 current
+    sample_duration: 200ms
+    update_interval: 1s
+    accuracy_decimals: 2
+    state_topic: teplo/${node_name}/sensor/l3_current/state
+    retain: false
+    qos: 0
+    filters:
+      - multiply: 50
