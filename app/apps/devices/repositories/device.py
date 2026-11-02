@@ -22,6 +22,10 @@ class DeviceRepository:
         return list(Device.objects.filter(kind=DeviceKind.PLUG).order_by('slug').values_list('slug', flat=True))
 
     @staticmethod
+    def slugs_of_kind(kind: DeviceKind) -> list[str]:
+        return list(Device.objects.filter(kind=kind).order_by('slug').values_list('slug', flat=True))
+
+    @staticmethod
     def slugs_with_driver(driver: DeviceDriver) -> list[str]:
         return list(Device.objects.filter(driver=driver).order_by('slug').values_list('slug', flat=True))
 

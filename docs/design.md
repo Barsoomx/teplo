@@ -132,6 +132,7 @@ teplo subscribes to `teplo/+/sensor/+/state` and `teplo/+/status`:
 - The phase meter's `l1_current`, `l2_current` and `l3_current` are the currents of phases A, B and C. Its store keeps the latest current of each phase with the moment it arrived on the monotonic clock, and the mean and maximum of each phase since they were last taken for history. The meter is stale while a phase has no current from the last 10 seconds, and its driver then refuses to read; the readings it gives are dated by the oldest of the three.
 - Values stay decimals. `nan` records the failure `sensor_reading_failed`, and a payload that is not a number `device_protocol_error`, instead of a reading; a failed humidity also leaves the latest reading without humidity. `offline` on the status topic records `device_unavailable`. A broker that teplo cannot reach, that refuses its credentials or that drops the connection records `broker_unavailable` for every ESPHome device. As for a Tuya device, a failure keeps the last reading until it ages out, and the next reading clears it. A failing reading is logged once, and again only after a good one.
 - Without an `[mqtt]` table teplo does not connect and logs `mqtt_not_configured` once at start; the ESPHome devices stay unavailable and everything else runs as before.
+- Nothing polls these devices, so a job of their own checks their stores every 30 seconds. Its first check waits a minute after the start, by when every node that is up has reported, so a restart does not journal working sensors as lost. Availability changes are journaled as for a thermostat, with the code of the recorded failure when there is one: a device that has not reported since the start is journaled unavailable at the first check, with the failure recorded for it, such as `broker_unavailable`, or else `no reading` as the reason. The phase meter becomes unavailable, like any device, 10 minutes after its newest current; its staleness is not journaled.
 
 ## 5. Architecture
 
@@ -139,7 +140,7 @@ teplo subscribes to `teplo/+/sensor/+/state` and `teplo/+/status`:
 
 One process on the router runs an asyncio runtime:
 
-- device drivers and the MQTT client feed a **state store** per device kind (latest readings and availability): jobs poll the Tuya devices, and the MQTT client writes the ESPHome readings as they arrive (section 4);
+- device drivers and the MQTT client feed a **state store** per device kind (latest readings and availability): jobs poll the Tuya devices, the MQTT client writes the ESPHome readings as they arrive, and a job checks the ESPHome stores for availability changes (section 4);
 - the MQTT client runs in paho's network thread from just after the start journal entry until after the last sample flush. It subscribes again on every connection and reconnects on its own, 1 second after a failure and then doubling the wait up to 30 seconds. A message that fails in handling is logged and dropped, so it never ends the thread;
 - control loops read the state stores, decide, and send commands through drivers;
 - a recorder batches history to SQLite;

@@ -60,6 +60,14 @@ def test_plug_slugs_lists_only_plugs_in_order(f_devices: list[Device]) -> None:
     assert DeviceRepository.plug_slugs() == [f_devices[3].slug, f_devices[2].slug]
 
 
+def test_slugs_of_kind_lists_only_that_kind_in_order(f_sensors: list[Device]) -> None:
+    assert (
+        DeviceRepository.slugs_of_kind(DeviceKind.TEMPERATURE_SENSOR),
+        DeviceRepository.slugs_of_kind(DeviceKind.PHASE_METER),
+        DeviceRepository.slugs_of_kind(DeviceKind.PLUG),
+    ) == ([f_sensors[2].slug, f_sensors[0].slug], [f_sensors[1].slug], [])
+
+
 def test_slugs_with_driver_lists_only_that_driver_in_order(f_sensors: list[Device]) -> None:
     assert (
         DeviceRepository.slugs_with_driver(DeviceDriver.ESPHOME_TEMPERATURE),
