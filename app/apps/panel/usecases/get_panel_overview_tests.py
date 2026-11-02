@@ -106,6 +106,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
             mode=ThermostatMode.HOLD,
             setpoint=Decimal('22.0'),
             floor_temperature=Decimal('21.5'),
+            heating=True,
             read_at=MORNING,
         ),
     )

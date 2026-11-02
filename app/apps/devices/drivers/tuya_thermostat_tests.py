@@ -11,7 +11,7 @@ from apps.devices.drivers.tuya_client import TuyaPayload
 from apps.devices.drivers.tuya_thermostat import TuyaThermostatDriver
 
 NOW = datetime(2026, 10, 29, 5, 0, tzinfo=UTC)
-KITCHEN_DPS = {'1': True, '2': 'hold', '16': 305, '24': 224, '104': 0}
+KITCHEN_DPS = {'1': True, '2': 'hold', '3': 'heating', '16': 305, '24': 224, '104': 0}
 
 
 class TuyaClientStub:
@@ -80,6 +80,11 @@ def f_driver(f_client: TuyaClientStub) -> TuyaThermostatDriver:
 
 
 @pytest.fixture
+def f_relay_driver(request: pytest.FixtureRequest) -> TuyaThermostatDriver:
+    return TuyaThermostatDriver(client=TuyaClientStub(status_payload={'dps': request.param}), clock=_now)
+
+
+@pytest.fixture
 def f_unknown_mode_driver() -> TuyaThermostatDriver:
     return TuyaThermostatDriver(client=TuyaClientStub(status_payload={'dps': {**KITCHEN_DPS, '2': 'eco'}}), clock=_now)
 
@@ -112,6 +117,32 @@ def test_read_state_maps_data_points(f_driver: TuyaThermostatDriver) -> None:
         mode=ThermostatMode.HOLD,
         setpoint=Decimal('30.5'),
         floor_temperature=Decimal('22.4'),
+        heating=True,
+        read_at=NOW,
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_relay_driver', 'heating'),
+    [
+        ({**KITCHEN_DPS, '3': 'warming'}, False),
+        ({key: value for key, value in KITCHEN_DPS.items() if key != '3'}, None),
+        ({**KITCHEN_DPS, '3': 'cooling'}, None),
+        ({**KITCHEN_DPS, '3': True}, None),
+    ],
+    ids=['idle', 'missing', 'unknown_word', 'not_a_word'],
+    indirect=['f_relay_driver'],
+)
+def test_read_state_takes_the_relay_from_dp_3_and_never_fails_on_it(
+    f_relay_driver: TuyaThermostatDriver,
+    heating: bool | None,
+) -> None:
+    assert f_relay_driver.read_state() == ThermostatState(
+        power=True,
+        mode=ThermostatMode.HOLD,
+        setpoint=Decimal('30.5'),
+        floor_temperature=Decimal('22.4'),
+        heating=heating,
         read_at=NOW,
     )
 

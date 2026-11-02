@@ -215,6 +215,7 @@ def _keep_readings_fresh() -> None:
                     mode=ThermostatMode.HOLD,
                     setpoint=Decimal(target),
                     floor_temperature=Decimal(floor),
+                    heating=Decimal(floor) < Decimal(target),
                     read_at=read_at,
                 ),
             )

@@ -70,12 +70,18 @@ STOP_AIR = (
 )
 
 
-def _state(setpoint: str, mode: ThermostatMode = ThermostatMode.HOLD, read_at: datetime = MORNING) -> ThermostatState:
+def _state(
+    setpoint: str,
+    mode: ThermostatMode = ThermostatMode.HOLD,
+    read_at: datetime = MORNING,
+    heating: bool | None = None,
+) -> ThermostatState:
     return ThermostatState(
         power=True,
         mode=mode,
         setpoint=Decimal(setpoint),
         floor_temperature=Decimal('21.0'),
+        heating=heating,
         read_at=read_at,
     )
 
@@ -260,6 +266,16 @@ def f_cycle(f_zone: Zone, f_thermostat: FloorThermostatStub, dispatcher: EventDi
 
 
 @pytest.fixture
+def f_relay_cycle(
+    request: pytest.FixtureRequest,
+    f_zone: Zone,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    return _cycle(f_zone, _state('22.0', heating=request.param), f_thermostat, dispatcher)
+
+
+@pytest.fixture
 def f_dry_run_cycle(
     f_zone: Zone,
     f_thermostat: FloorThermostatStub,
@@ -359,6 +375,30 @@ def test_cycle_applies_comfort_setpoint(
     f_zone: Zone,
 ) -> None:
     output = f_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
+
+    assert (output.outcomes, f_thermostat.commands, f_events, Zone.objects.get(pk=f_zone.pk).last_command_at) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+        [
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(setpoint=Decimal('28.0')),
+                dry_run=False,
+                occurred_at=MORNING,
+            ),
+        ],
+        MORNING,
+    )
+
+
+@pytest.mark.parametrize('f_relay_cycle', [True, False, None], ids=['heating', 'idle', 'unknown'], indirect=True)
+def test_cycle_writes_the_same_whatever_the_relay_reads(
+    f_relay_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    f_zone: Zone,
+) -> None:
+    output = f_relay_cycle.execute(RunHeatingCycleInputDTO(now=MORNING, clock_trusted=True))
 
     assert (output.outcomes, f_thermostat.commands, f_events, Zone.objects.get(pk=f_zone.pk).last_command_at) == (
         {'kitchen': ZoneCycleOutcome.APPLIED},

@@ -29,6 +29,7 @@ class ThermostatState:
     mode: ThermostatMode
     setpoint: Decimal
     floor_temperature: Decimal
+    heating: bool | None
     read_at: datetime
 
 

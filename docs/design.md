@@ -50,7 +50,7 @@ The domain talks to devices through capability ports. A driver implements one or
 
 | Capability | Reads | Commands |
 |---|---|---|
-| `FloorThermostat` | power, setpoint, floor temperature | power, setpoint |
+| `FloorThermostat` | power, setpoint, floor temperature, relay | power, setpoint |
 | `MeteredPlug` | on/off, power, current, voltage | — |
 | `SwitchablePlug` | as `MeteredPlug` | on/off |
 | `TemperatureSensor` | temperature, optional humidity | — |
@@ -73,11 +73,12 @@ Every reading carries a timestamp. A device is **unavailable** after 10 minutes 
 |---|---|---|
 | 1 | power | bool |
 | 2 | mode | `hold` (manual), `smart` (weekly program), `holiday` |
+| 3 | relay | `heating` while the relay is closed, `warming` while the thermostat idles |
 | 16 | setpoint | int, 0.1 °C, 50–400 |
 | 24 | floor temperature | int, 0.1 °C |
 | 121 | probably the floor limit | int, 0.1 °C, reads 450 |
 
-DP 3 always reads `warming` and does not reflect the relay. DPs 104–117 are vendor-specific and unmapped; 116 is not a temperature. teplo keeps the thermostat in `hold` mode.
+The driver reads DP 3 into the thermostat state as heating, idle or, when DP 3 is missing or reads anything else, unknown, so the relay never makes a thermostat unreadable. Load management tells a heating floor from an idle one by it (section 7); nothing the heating cycle writes depends on it. DPs 104–117 are vendor-specific and unmapped; 116 is not a temperature. teplo keeps the thermostat in `hold` mode.
 
 - **Write budget:** one state change per zone per 30 minutes. Whether the device persists every write to flash is unknown, so writes stay rare. Dry-run journals at the same cadence on its own timestamp and does not spend the budget, so a zone switched to live control writes at the next cycle. Air mode in dry-run keeps its would-be changes 30 minutes apart on a third timestamp (section 6).
 
