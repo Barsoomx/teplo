@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from django.db import OperationalError
+from structlog.testing import capture_logs
 
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.events import (
@@ -1615,9 +1616,16 @@ def test_morning_that_fails_to_save_is_lost_while_the_cycle_goes_on(
     f_events: list[DomainEvent],
     f_book: ControlBook,
 ) -> None:
-    output = f_unsaved_morning_cycle.execute(_at(COMFORT_AT))
+    with capture_logs() as logs:
+        output = f_unsaved_morning_cycle.execute(_at(COMFORT_AT))
 
-    assert (output.outcomes, f_living_room_thermostat.commands, f_events, f_book.zone('kitchen')) == (
+    assert (
+        output.outcomes,
+        f_living_room_thermostat.commands,
+        f_events,
+        f_book.zone('kitchen'),
+        [(log['event'], log['log_level'], log['zone'], log['error']) for log in logs],
+    ) == (
         {
             'bathroom-2f': ZoneCycleOutcome.APPLIED,
             'kitchen': ZoneCycleOutcome.APPLIED,
@@ -1630,6 +1638,7 @@ def test_morning_that_fails_to_save_is_lost_while_the_cycle_goes_on(
             _issued('living-room', '28.0', COMFORT_AT),
         ],
         ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT, last_morning_comfort_at=COMFORT_AT),
+        [('zone_morning_save_failed', 'warning', 'kitchen', LOCKED)],
     )
 
 
@@ -1641,9 +1650,16 @@ def test_stop_that_fails_to_save_is_lost_while_the_cycle_goes_on(
 ) -> None:
     now = MORNING + timedelta(hours=2, minutes=1)
 
-    output = f_unsaved_stop_cycle.execute(_at(now))
+    with capture_logs() as logs:
+        output = f_unsaved_stop_cycle.execute(_at(now))
 
-    assert (output.outcomes, f_living_room_thermostat.commands, f_events, f_book.zone('kitchen')) == (
+    assert (
+        output.outcomes,
+        f_living_room_thermostat.commands,
+        f_events,
+        f_book.zone('kitchen'),
+        [(log['event'], log['log_level'], log['zone'], log['error']) for log in logs],
+    ) == (
         {
             'bathroom-2f': ZoneCycleOutcome.APPLIED,
             'kitchen': ZoneCycleOutcome.APPLIED,
@@ -1657,6 +1673,7 @@ def test_stop_that_fails_to_save_is_lost_while_the_cycle_goes_on(
             air_state=AirState.IDLE,
             heat_target=Decimal('22.0'),
         ),
+        [('zone_early_stop_offset_save_failed', 'warning', 'kitchen', LOCKED)],
     )
 
 
@@ -1667,7 +1684,8 @@ def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on
     f_events: list[DomainEvent],
     f_book: ControlBook,
 ) -> None:
-    output = f_unstamped_air_dry_run_cycle.execute(_at(MORNING))
+    with capture_logs() as logs:
+        output = f_unstamped_air_dry_run_cycle.execute(_at(MORNING))
 
     assert (
         output.outcomes,
@@ -1675,6 +1693,7 @@ def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on
         f_locked_air_stamp_zones.stamps,
         f_events,
         f_book.zone('kitchen'),
+        [(log['event'], log['log_level'], log['zone'], log['error']) for log in logs],
     ) == (
         {
             'bathroom-2f': ZoneCycleOutcome.APPLIED,
@@ -1706,6 +1725,7 @@ def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on
             air_state=AirState.HEAT,
             would_be_target=ThermostatTarget(power=True, setpoint=Decimal('30.0')),
         ),
+        [('zone_air_dry_run_stamp_failed', 'warning', 'kitchen', LOCKED)],
     )
 
 
@@ -1717,7 +1737,8 @@ def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
     f_events: list[DomainEvent],
     f_book: ControlBook,
 ) -> None:
-    output = f_unstamped_command_cycle.execute(_at(MORNING))
+    with capture_logs() as logs:
+        output = f_unstamped_command_cycle.execute(_at(MORNING))
 
     assert (
         output.outcomes,
@@ -1727,6 +1748,7 @@ def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
         f_events,
         f_book.zone('kitchen'),
         f_book.zone('living-room'),
+        [(log['event'], log['log_level'], log['zone'], log['error']) for log in logs],
     ) == (
         {
             'bathroom-2f': ZoneCycleOutcome.APPLIED,
@@ -1739,6 +1761,7 @@ def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
         [_issued('bathroom-2f', '30.0', MORNING), _issued('living-room', '28.0', MORNING)],
         ZoneMemory(),
         ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT),
+        [('zone_cycle_failed', 'warning', 'kitchen', LOCKED)],
     )
 
 
