@@ -1,0 +1,28 @@
+from datetime import datetime
+
+from apps.devices.domain.capabilities import SwitchablePlugProvider
+from apps.devices.services.driver_registry import driver_registry
+from apps.power.domain.loads import LoadRecord
+from apps.power.domain.ports import ZoneShutoff
+from apps.power.services.zone_shutoff import ThermostatZoneShutoff
+
+
+class LoadSwitcher:
+    def __init__(self, plugs: SwitchablePlugProvider, zones: ZoneShutoff) -> None:
+        self._plugs = plugs
+        self._zones = zones
+
+    @classmethod
+    def init(cls) -> 'LoadSwitcher':
+        return cls(plugs=driver_registry, zones=ThermostatZoneShutoff.init())
+
+    def shed(self, load: LoadRecord, at: datetime) -> None:
+        if load.zone_slug is None:
+            self._plugs.switchable_plug(load.device_slug).set_on(False)
+            return
+
+        self._zones.switch_off(load.zone_slug, load.device_slug, at)
+
+    def restore(self, load: LoadRecord, *, was_on: bool | None) -> None:
+        if load.zone_slug is None and was_on is True:
+            self._plugs.switchable_plug(load.device_slug).set_on(True)
