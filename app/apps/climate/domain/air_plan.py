@@ -16,6 +16,7 @@ from apps.climate.domain.zone import ZoneSettings
 class AirPlan:
     air: Decimal
     preheat: PreheatStart | None
+    schedule_lead: timedelta
     mode: ScheduleMode
     target: Decimal
     early_stop_offset: Decimal
@@ -55,7 +56,8 @@ def plan_air(
         if clock_trusted
         else None
     )
-    mode = resolve_mode(zone.windows, now, lead if preheat is None else preheat.lead)
+    schedule_lead = lead if preheat is None else preheat.lead
+    mode = resolve_mode(zone.windows, now, schedule_lead)
     target = resolve_air_target(zone, mode, clock_trusted=clock_trusted)
     early_stop_offset = learning.early_stop_offset_or(control.regulation.initial_early_stop_offset)
     state = decide_air_state(
@@ -68,6 +70,7 @@ def plan_air(
     return AirPlan(
         air=air,
         preheat=preheat,
+        schedule_lead=schedule_lead,
         mode=mode,
         target=target,
         early_stop_offset=early_stop_offset,

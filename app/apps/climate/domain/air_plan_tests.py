@@ -107,6 +107,7 @@ def test_plan_heats_below_start_threshold_in_comfort(f_zone: ZoneSettings) -> No
     assert _plan(f_zone, MORNING, '21.6') == AirPlan(
         air=Decimal('21.6'),
         preheat=None,
+        schedule_lead=timedelta(hours=3),
         mode=ScheduleMode.COMFORT,
         target=Decimal('22.0'),
         early_stop_offset=Decimal('0.3'),
@@ -119,6 +120,7 @@ def test_plan_idles_at_night_air_target(f_zone: ZoneSettings) -> None:
     assert _plan(f_zone, NIGHT, '19.4') == AirPlan(
         air=Decimal('19.4'),
         preheat=None,
+        schedule_lead=timedelta(hours=3),
         mode=ScheduleMode.NIGHT,
         target=Decimal('19.5'),
         early_stop_offset=Decimal('0.3'),
@@ -196,12 +198,28 @@ def test_latched_preheat_holds_while_room_warms(f_zone: ZoneSettings, f_latched:
         learning=LEARNED,
     )
 
-    assert (plan.mode, plan.preheat, plan.target, plan.state) == (
+    assert (plan.mode, plan.preheat, plan.schedule_lead, plan.target, plan.state) == (
         ScheduleMode.PREHEAT,
         f_latched,
+        LEARNED_LEAD,
         Decimal('22.0'),
         AirState.HEAT,
     )
+
+
+@pytest.mark.parametrize(
+    ('learning', 'schedule_lead'),
+    [(UNLEARNED, timedelta(hours=3)), (LEARNED, LEARNED_LEAD)],
+    ids=['fixed_lead', 'optimal_lead'],
+)
+def test_plan_schedules_the_night_on_the_lead_of_the_minute(
+    f_zone: ZoneSettings,
+    learning: ZoneLearningRecord,
+    schedule_lead: timedelta,
+) -> None:
+    plan = _plan(f_zone, NIGHT, '20.4', learning=learning)
+
+    assert (plan.mode, plan.preheat, plan.schedule_lead) == (ScheduleMode.NIGHT, None, schedule_lead)
 
 
 @pytest.mark.parametrize(
