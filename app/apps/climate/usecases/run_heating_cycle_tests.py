@@ -148,6 +148,16 @@ HALLWAY_HEATING = SeenReading(
 House = Callable[[ThermostatStateStore, TemperatureStateStore], None]
 
 
+class ConcurrentWriteThermostatStub(FloorThermostatStub):
+    def __init__(self, meanwhile: Callable[[], None]) -> None:
+        super().__init__(state=None)
+        self._meanwhile = meanwhile
+
+    def set_setpoint(self, setpoint: Decimal) -> None:
+        super().set_setpoint(setpoint)
+        self._meanwhile()
+
+
 def _state(
     setpoint: str,
     mode: ThermostatMode = ThermostatMode.HOLD,
@@ -193,7 +203,7 @@ def _use_case(
         temperatures=temperatures,
         provider=ThermostatProviderStub(thermostats=thermostats),
         book=book,
-        gate=LoadGateStub(held=frozenset(), answers={}) if gate is None else gate,
+        gate=LoadGateStub(held=frozenset(), gated=frozenset(), answers={}) if gate is None else gate,
         dry_run=dry_run,
         dispatcher=dispatcher,
     )
@@ -2188,7 +2198,7 @@ def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(
 
 @pytest.fixture
 def f_held_gate() -> LoadGateStub:
-    return LoadGateStub(held=frozenset({'kitchen', 'bathroom-2f'}), answers={})
+    return LoadGateStub(held=frozenset({'kitchen', 'bathroom-2f'}), gated=frozenset(), answers={})
 
 
 @pytest.fixture
@@ -2648,4 +2658,171 @@ def test_start_that_would_wait_is_journaled_when_its_zone_then_fails_on_the_data
             },
             {'event': 'zone_cycle_failed', 'log_level': 'warning', 'zone': 'kitchen', 'error': LOCKED},
         ],
+    )
+
+
+@pytest.fixture
+def f_kitchen_written_while_living_room_is_polled(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+) -> ConcurrentWriteThermostatStub:
+    polled: ThermostatState = request.param
+    return ConcurrentWriteThermostatStub(meanwhile=lambda: store.record_state(LIVING_ROOM, polled))
+
+
+@pytest.fixture
+def f_poll_between_writes_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_kitchen_written_while_living_room_is_polled: ConcurrentWriteThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    load_gate: GuardLoadGate,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    management_live, cached = request.param
+    _floor_zone('kitchen', KITCHEN)
+    _floor_zone('living-room', LIVING_ROOM)
+    store.record_state(KITCHEN, _state('22.0'))
+    store.record_state(LIVING_ROOM, cached)
+    _watch(f_guard_book, management_live=management_live, load_live=management_live)
+    thermostats: dict[str, FloorThermostat] = {
+        KITCHEN: f_kitchen_written_while_living_room_is_polled,
+        LIVING_ROOM: f_living_room_thermostat,
+    }
+    return _use_case(store, temperatures, thermostats, book, dispatcher, gate=load_gate)
+
+
+@pytest.fixture
+def open_gate() -> LoadGateStub:
+    return LoadGateStub(held=frozenset(), gated=frozenset(), answers={})
+
+
+@pytest.fixture
+def f_shed_between_writes_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    open_gate: LoadGateStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _floor_zone('kitchen', KITCHEN)
+    _floor_zone('living-room', LIVING_ROOM)
+    store.record_state(KITCHEN, _state('22.0'))
+    store.record_state(LIVING_ROOM, _state('22.0'))
+    thermostats: dict[str, FloorThermostat] = {
+        KITCHEN: ConcurrentWriteThermostatStub(meanwhile=lambda: open_gate.hold('living-room')),
+        LIVING_ROOM: f_living_room_thermostat,
+    }
+    return _use_case(store, temperatures, thermostats, book, dispatcher, gate=open_gate)
+
+
+@pytest.mark.parametrize(
+    (
+        'f_poll_between_writes_cycle',
+        'f_kitchen_written_while_living_room_is_polled',
+        'outcome',
+        'commands',
+        'stamp',
+        'events',
+    ),
+    [
+        (
+            (False, _state('22.0', heating=False)),
+            _state('28.0', heating=False),
+            ZoneCycleOutcome.UNCHANGED,
+            [],
+            None,
+            [_issued('kitchen', '28.0', MORNING)],
+        ),
+        (
+            (False, _state('28.0')),
+            _state('25.0', heating=False),
+            ZoneCycleOutcome.APPLIED,
+            [('setpoint', Decimal('28.0'))],
+            MORNING,
+            [_issued('kitchen', '28.0', MORNING), _issued('living-room', '28.0', MORNING)],
+        ),
+    ],
+    ids=['poll_finds_the_target_already_set', 'poll_finds_the_setpoint_moved_by_hand'],
+    indirect=['f_poll_between_writes_cycle', 'f_kitchen_written_while_living_room_is_polled'],
+)
+def test_cycle_with_load_management_off_drives_each_zone_on_its_thermostat_as_polled_by_its_turn(
+    f_poll_between_writes_cycle: RunHeatingCycleUseCase,
+    f_kitchen_written_while_living_room_is_polled: ConcurrentWriteThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    f_events: list[DomainEvent],
+    outcome: ZoneCycleOutcome,
+    commands: list[tuple[str, object]],
+    stamp: datetime | None,
+    events: list[DomainEvent],
+) -> None:
+    output = f_poll_between_writes_cycle.execute(_at(MORNING))
+
+    assert (
+        output.outcomes,
+        f_kitchen_written_while_living_room_is_polled.commands,
+        f_living_room_thermostat.commands,
+        {zone.slug: (zone.last_command_at, zone.last_dry_run_at) for zone in Zone.objects.all()},
+        f_events,
+        f_guard_book.last_permit_at(),
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED, 'living-room': outcome},
+        [('setpoint', Decimal('28.0'))],
+        commands,
+        {'kitchen': (MORNING, None), 'living-room': (stamp, None)},
+        events,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_poll_between_writes_cycle', 'f_kitchen_written_while_living_room_is_polled'),
+    [((True, _state('28.0')), _state('25.0', heating=False))],
+    indirect=True,
+)
+def test_live_start_a_poll_reveals_by_its_turn_waits_for_a_permit_it_did_not_ask_for(
+    f_poll_between_writes_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_poll_between_writes_cycle.execute(_at(MORNING))
+
+    assert (
+        output.outcomes,
+        f_living_room_thermostat.commands,
+        Zone.objects.get(slug='living-room').last_command_at,
+        f_events,
+        f_guard_book.last_permit_at(),
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED, 'living-room': ZoneCycleOutcome.WAITING},
+        [],
+        None,
+        [_issued('kitchen', '28.0', MORNING)],
+        None,
+    )
+
+
+def test_zone_shed_while_the_cycle_writes_another_is_held_from_its_turn(
+    f_shed_between_writes_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_shed_between_writes_cycle.execute(_at(MORNING))
+
+    assert (
+        output.outcomes,
+        f_living_room_thermostat.commands,
+        Zone.objects.get(slug='living-room').last_command_at,
+        f_events,
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED, 'living-room': ZoneCycleOutcome.SHED},
+        [],
+        None,
+        [_issued('kitchen', '28.0', MORNING)],
     )

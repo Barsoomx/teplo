@@ -29,6 +29,17 @@ class GuardLoadGate:
     def held_zones(self) -> frozenset[str]:
         return self._book.held_zones()
 
+    def gated_zones(self) -> frozenset[str]:
+        state = self._book.state()
+        if state is None:
+            return frozenset()
+
+        return frozenset(
+            record.zone_slug
+            for record in state.loads.records
+            if record.zone_slug is not None and starts_live(state.loads.control, record, writes_live=True)
+        )
+
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]:
         state = self._book.state()
         if state is None:

@@ -9,7 +9,7 @@ from django.utils import timezone
 
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.control import ClimateControl
-from apps.climate.domain.drive import StartAnswer, ZoneDrive, ZoneStart, plan_drive
+from apps.climate.domain.drive import StartPermits, ZoneDrive, ZoneStart, plan_drive
 from apps.climate.domain.events import SecondFloorGuardDryRun, ZoneCommandFailed, ZoneCommandIssued
 from apps.climate.domain.learning import (
     Morning,
@@ -130,12 +130,12 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             self._plan(zone, self._conditions(zone, learning, guarded_zone), cycle, held=zone.slug in held)
             for zone in zones
         ]
-        answers = self._gate.ask_starts(
-            [ZoneStart(zone=run.zone.slug, writes_live=run.conditions.writes_live) for run in runs if run.drive.starts],
-            now,
-        )
+        permits = StartPermits(answers=self._gate.ask_starts(_starts(runs), now), gated=self._gate.gated_zones())
         return RunHeatingCycleOutputDTO(
-            outcomes={run.zone.slug: self._run_zone(run, answers.get(run.zone.slug), cycle) for run in runs},
+            outcomes={
+                zone.slug: self._run_zone(zone, self._conditions(zone, learning, guarded_zone), cycle, permits)
+                for zone in zones
+            },
         )
 
     def _conditions(
@@ -199,32 +199,46 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         )
         return ZoneRun(zone=zone, memory=memory, conditions=conditions, decision=decision, drive=drive)
 
-    def _run_zone(self, run: ZoneRun, answer: StartAnswer | None, cycle: CycleConditions) -> ZoneCycleOutcome:
+    def _run_zone(
+        self,
+        zone: ZoneSettings,
+        conditions: ZoneConditions,
+        cycle: CycleConditions,
+        permits: StartPermits,
+    ) -> ZoneCycleOutcome:
         try:
-            return self._control_zone(run, answer, cycle)
+            return self._control_zone(zone, conditions, cycle, permits)
         except OperationalError as error:
             logger.warning(
                 'zone_cycle_failed',
-                zone=run.zone.slug,
+                zone=zone.slug,
                 error=str(error),
             )
             return ZoneCycleOutcome.FAILED
 
-    def _control_zone(self, run: ZoneRun, answer: StartAnswer | None, cycle: CycleConditions) -> ZoneCycleOutcome:
-        outcome = self._drive(run, answer, cycle.now)
-        follow_up = follow_zone(run.zone, run.memory, run.decision, outcome, run.conditions, cycle)
-        follow_up = self._journal_air_dry_run(run.zone, run.memory, follow_up, cycle.now)
-        self._learn(run.zone, follow_up, run.conditions.learning, cycle.control)
-        self._book.remember_zone(run.zone.slug, follow_up.memory)
+    def _control_zone(
+        self,
+        zone: ZoneSettings,
+        conditions: ZoneConditions,
+        cycle: CycleConditions,
+        permits: StartPermits,
+    ) -> ZoneCycleOutcome:
+        run = self._plan(zone, conditions, cycle, held=zone.slug in self._gate.held_zones())
+        outcome = self._drive(run, permits, cycle.now)
+        follow_up = follow_zone(zone, run.memory, run.decision, outcome, conditions, cycle)
+        follow_up = self._journal_air_dry_run(zone, run.memory, follow_up, cycle.now)
+        self._learn(zone, follow_up, conditions.learning, cycle.control)
+        self._book.remember_zone(zone.slug, follow_up.memory)
         return outcome
 
-    def _drive(self, run: ZoneRun, answer: StartAnswer | None, now: datetime) -> ZoneCycleOutcome:
+    def _drive(self, run: ZoneRun, permits: StartPermits, now: datetime) -> ZoneCycleOutcome:
+        note = permits.note(run.zone.slug)
+        if note is not None:
+            self._event_store.add_event(note)
         if run.drive.outcome is not None:
             return run.drive.outcome
 
-        if answer is not None and answer.note is not None:
-            self._event_store.add_event(answer.note)
-        if answer is not None and not answer.granted:
+        if run.drive.starts and not permits.granted(run.zone.slug, writes_live=run.conditions.writes_live):
             return ZoneCycleOutcome.WAITING
 
         if not run.conditions.writes_live:
@@ -365,3 +379,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             return None
 
         return snapshot.state.temperature
+
+
+def _starts(runs: list[ZoneRun]) -> list[ZoneStart]:
+    return [ZoneStart(zone=run.zone.slug, writes_live=run.conditions.writes_live) for run in runs if run.drive.starts]

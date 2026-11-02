@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.domain.change import ThermostatChange
-from apps.climate.domain.drive import ZoneDrive, plan_drive
+from apps.climate.domain.drive import StartAnswer, StartPermits, ZoneDrive, plan_drive
 from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
@@ -24,6 +24,13 @@ IDLE = ThermostatState(
 )
 HEATING = replace(IDLE, setpoint=Decimal('25.0'), heating=True)
 SWITCHED_OFF = replace(IDLE, power=False)
+PERMITS = StartPermits(
+    answers={
+        'kitchen': StartAnswer(granted=True, note=None),
+        'hallway': StartAnswer(granted=False, note=None),
+    },
+    gated=frozenset({'kitchen', 'hallway', 'living-room'}),
+)
 
 
 def _settled(outcome: ZoneCycleOutcome) -> ZoneDrive:
@@ -109,3 +116,28 @@ def test_write_starts_a_zone_that_draws_nothing_and_would_heat(
     expected: ZoneDrive,
 ) -> None:
     assert plan_drive(target, state, last_write_at=None, now=NOW, held=False) == expected
+
+
+@pytest.mark.parametrize(
+    ('zone', 'writes_live', 'expected'),
+    [
+        ('kitchen', True, True),
+        ('hallway', True, False),
+        ('living-room', True, False),
+        ('living-room', False, True),
+        ('bathroom-1f', True, True),
+    ],
+    ids=[
+        'start_granted_when_asked',
+        'start_refused_when_asked',
+        'gated_start_it_did_not_ask_for',
+        'start_it_did_not_ask_for_whose_writes_are_held_back',
+        'start_load_management_does_not_gate',
+    ],
+)
+def test_start_goes_with_the_answer_it_got_and_without_one_only_when_no_live_permit_gates_it(
+    zone: str,
+    writes_live: bool,
+    expected: bool,
+) -> None:
+    assert PERMITS.granted(zone, writes_live=writes_live) is expected

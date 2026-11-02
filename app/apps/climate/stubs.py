@@ -81,8 +81,9 @@ class ZoneLearningStoreStub:
 
 
 class LoadGateStub:
-    def __init__(self, held: frozenset[str], answers: dict[str, StartAnswer]) -> None:
+    def __init__(self, held: frozenset[str], gated: frozenset[str], answers: dict[str, StartAnswer]) -> None:
         self._held = held
+        self._gated = gated
         self._answers = answers
         self._asked: list[tuple[ZoneStart, ...]] = []
 
@@ -90,11 +91,17 @@ class LoadGateStub:
     def asked(self) -> list[tuple[ZoneStart, ...]]:
         return self._asked
 
+    def hold(self, zone: str) -> None:
+        self._held = self._held | {zone}
+
     def release(self, zone: str) -> None:
         self._held = self._held - {zone}
 
     def held_zones(self) -> frozenset[str]:
         return self._held
+
+    def gated_zones(self) -> frozenset[str]:
+        return self._gated
 
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]:  # noqa: ARG002
         self._asked.append(tuple(starts))

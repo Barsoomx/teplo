@@ -209,6 +209,19 @@ def test_gate_holds_the_zones_of_live_sheds(f_shed_gate: GuardLoadGate) -> None:
     assert f_shed_gate.held_zones() == frozenset({'kitchen'})
 
 
+@pytest.mark.parametrize('f_live_gate', ['10.0'], indirect=True)
+def test_gate_names_the_zones_whose_live_starts_need_a_permit(f_live_gate: GuardLoadGate) -> None:
+    assert f_live_gate.gated_zones() == frozenset({'hallway', 'kitchen', 'living-room'})
+
+
+def test_gate_names_no_zone_while_load_management_is_not_live(f_dry_run_gate: GuardLoadGate) -> None:
+    assert f_dry_run_gate.gated_zones() == frozenset()
+
+
+def test_gate_names_no_zone_before_the_guard_has_watched_a_second(f_gate: GuardLoadGate) -> None:
+    assert f_gate.gated_zones() == frozenset()
+
+
 def test_every_start_goes_before_the_guard_has_watched_a_second(f_gate: GuardLoadGate, f_book: GuardBook) -> None:
     answers = f_gate.ask_starts([KITCHEN_START], NOW)
 

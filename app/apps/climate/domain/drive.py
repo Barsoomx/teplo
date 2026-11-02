@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -26,6 +27,23 @@ class ZoneStart:
 class StartAnswer:
     granted: bool
     note: DomainEvent | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class StartPermits:
+    answers: Mapping[str, StartAnswer]
+    gated: frozenset[str]
+
+    def note(self, zone: str) -> DomainEvent | None:
+        answer = self.answers.get(zone)
+        return None if answer is None else answer.note
+
+    def granted(self, zone: str, *, writes_live: bool) -> bool:
+        answer = self.answers.get(zone)
+        if answer is not None:
+            return answer.granted
+
+        return not writes_live or zone not in self.gated
 
 
 def plan_drive(
