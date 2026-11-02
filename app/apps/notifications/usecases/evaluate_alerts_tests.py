@@ -155,7 +155,7 @@ def f_restarted_book() -> AlertBook:
 
 
 @pytest.fixture
-def f_power_cut_book() -> AlertBook:
+def power_cut_book() -> AlertBook:
     book = AlertBook()
     book.note_startup(POWER_CUT_NOTE)
     return book
@@ -211,8 +211,8 @@ def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatc
 
 
 @pytest.fixture
-def f_power_cut_use_case(f_power_cut_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
-    return _use_case([], ZoneSourceStub(zones=[]), f_power_cut_book, f_dispatcher)
+def f_power_cut_use_case(power_cut_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _use_case([], ZoneSourceStub(zones=[]), power_cut_book, f_dispatcher)
 
 
 @pytest.fixture
