@@ -40,6 +40,9 @@ class LoadAdmin(admin.ModelAdmin):
         'shed_was_on',
     )
 
+    def has_delete_permission(self, request: HttpRequest, obj: Load | None = None) -> bool:
+        return (obj is None or obj.shed_at is None) and super().has_delete_permission(request, obj)
+
 
 @admin.register(LoadSettings)
 class LoadSettingsAdmin(admin.ModelAdmin):

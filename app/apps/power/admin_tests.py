@@ -1,16 +1,21 @@
+from datetime import UTC, datetime
+
 import pytest
 from django.contrib import admin
 from django.contrib.auth.models import User
 from django.http import HttpRequest
 from django.test import RequestFactory
 
+from apps.devices.admin import DeviceAdmin
+from apps.devices.models import Device
 from apps.power.admin import LoadAdmin, LoadSettingsAdmin, OutageAdmin
-from apps.power.factories import LoadSettingsFactory, OutageFactory
+from apps.power.factories import LoadSettingsFactory, OutageFactory, PlugLoadFactory
 from apps.power.models import Load, LoadSettings, Outage
 
 pytestmark = pytest.mark.django_db
 
 BOOT_ID = '5d1c2a7e-0b4f-4c8a-9e3d-6f2b1a0c9d8e'
+SHED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 GUARD_FIELDS = {
     'learned_phase',
     'learned_amps',
@@ -47,6 +52,16 @@ def f_load_admin() -> LoadAdmin:
 @pytest.fixture
 def f_load_settings_admin() -> LoadSettingsAdmin:
     return LoadSettingsAdmin(LoadSettings, admin.site)
+
+
+@pytest.fixture
+def f_device_admin() -> DeviceAdmin:
+    return DeviceAdmin(Device, admin.site)
+
+
+@pytest.fixture
+def f_load(request: pytest.FixtureRequest) -> Load:
+    return PlugLoadFactory.create(device__slug='plug-boiler-1f', shed_at=request.param)
 
 
 @pytest.fixture
@@ -121,3 +136,29 @@ def test_load_settings_admin_adds_no_second_settings(
     f_owner_request: HttpRequest,
 ) -> None:
     assert f_load_settings_admin.has_add_permission(f_owner_request) is False
+
+
+@pytest.mark.parametrize(
+    ('f_load', 'deletable'),
+    [(None, True), (SHED_AT, False)],
+    ids=['not_shed', 'shed_live'],
+    indirect=['f_load'],
+)
+def test_admin_deletes_a_load_only_while_it_is_not_shed_live(
+    f_load_admin: LoadAdmin,
+    f_owner_request: HttpRequest,
+    f_load: Load,
+    deletable: bool,
+) -> None:
+    assert f_load_admin.has_delete_permission(f_owner_request, f_load) is deletable
+
+
+@pytest.mark.parametrize('f_load', [SHED_AT], indirect=True)
+def test_admin_refuses_to_delete_the_plug_of_a_load_shed_live(
+    f_device_admin: DeviceAdmin,
+    f_owner_request: HttpRequest,
+    f_load: Load,
+) -> None:
+    _, _, perms_needed, _ = f_device_admin.get_deleted_objects(Device.objects.filter(load=f_load), f_owner_request)
+
+    assert perms_needed == {'load'}
