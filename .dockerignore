@@ -7,3 +7,5 @@ spike
 .mypy_cache
 .ruff_cache
 .pytest_cache
+esphome/.esphome
+esphome/secrets.yaml

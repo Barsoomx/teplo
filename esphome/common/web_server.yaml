@@ -1,0 +1,8 @@
+# Version 2: the version 3 page fetches entity icons from api.iconify.design.
+# ota: false keeps firmware uploads behind the OTA password; the captive portal
+# still accepts one while the fallback access point is up.
+web_server:
+  port: 80
+  version: 2
+  local: true
+  ota: false

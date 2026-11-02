@@ -1,0 +1,41 @@
+# SHT30 on I2C. A failed read publishes nothing, so once a reading has gone out the timeout publishes nan after two
+# missed updates.
+i2c:
+  sda: GPIO0
+  scl: GPIO1
+  scan: true
+
+sensor:
+  - platform: sht3xd
+    id: sht30
+    address: 0x44
+    update_interval: 30s
+    temperature:
+      id: air_temperature
+      name: Temperature
+      accuracy_decimals: 1
+      state_topic: teplo/${node_name}/sensor/temperature/state
+      retain: false
+      qos: 0
+      filters:
+        - timeout: 75s
+    humidity:
+      id: air_humidity
+      name: Humidity
+      accuracy_decimals: 1
+      state_topic: teplo/${node_name}/sensor/humidity/state
+      retain: false
+      qos: 0
+      filters:
+        - timeout: 75s
+
+# An SHT30 that does not answer at boot leaves sht3xd failed: it reads nothing until the node restarts, and without a
+# first reading the timeout never starts.
+interval:
+  - interval: 30s
+    then:
+      - lambda: |-
+          if (id(sht30).is_failed()) {
+            id(air_temperature).publish_state(NAN);
+            id(air_humidity).publish_state(NAN);
+          }

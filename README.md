@@ -206,7 +206,7 @@ Each stage first runs in dry-run, journaling the decisions it would make, before
 ## Documentation
 
 - [`docs/design.md`](docs/design.md): goals, invariants, control logic, failure modes and the data model.
-- [`docs/deploy.md`](docs/deploy.md): router install, releases, operation and rollback.
+- [`docs/deploy.md`](docs/deploy.md): router install, releases, operation, rollback and the ESPHome nodes.
 - [`CLAUDE.md`](CLAUDE.md): code conventions for people and coding agents.
 
 ## License

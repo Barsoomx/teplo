@@ -1,0 +1,33 @@
+# IR bridge for the Ballu BSYI-10HN8_V4 split in the second floor bedroom, probably a Midea OEM.
+# The protocol is unconfirmed: read the remote's codes in the receiver dump before teplo drives
+# the unit (docs/deploy.md). midea_ir, like coolix, modulates at 38 kHz.
+substitutions:
+  node_name: teplo-ir-bedroom
+  friendly_name: Bedroom IR
+
+packages:
+  node: !include common/node.yaml
+  supermini: !include common/supermini.yaml
+
+remote_transmitter:
+  id: ir_transmitter
+  pin: GPIO3
+  carrier_duty_percent: 50%
+  non_blocking: true
+
+remote_receiver:
+  id: ir_receiver
+  pin:
+    number: GPIO4
+    inverted: true
+    mode:
+      input: true
+      pullup: true
+  dump: all
+
+climate:
+  - platform: midea_ir
+    name: Air conditioner
+    transmitter_id: ir_transmitter
+    receiver_id: ir_receiver
+    retain: false

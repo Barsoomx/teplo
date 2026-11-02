@@ -1,0 +1,5 @@
+status_led:
+  pin:
+    number: GPIO8
+    inverted: true
+    ignore_strapping_warning: true

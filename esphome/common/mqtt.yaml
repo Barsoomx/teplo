@@ -1,0 +1,22 @@
+mqtt:
+  broker: !secret mqtt_broker
+  port: 1883
+  username: !secret mqtt_username
+  password: !secret mqtt_password
+  topic_prefix: teplo/${node_name}
+  discovery: false
+  log_topic: null
+  publish_nan_as_none: false
+  reboot_timeout: 0s
+  birth_message:
+    topic: teplo/${node_name}/status
+    payload: online
+    retain: false
+  will_message:
+    topic: teplo/${node_name}/status
+    payload: offline
+    retain: false
+  shutdown_message:
+    topic: teplo/${node_name}/status
+    payload: offline
+    retain: false
