@@ -51,6 +51,7 @@ def _plan(
     latched: PreheatStart | None = None,
     learning: ZoneLearningRecord = UNLEARNED,
     clock_trusted: bool = True,
+    dry_run: bool = False,
 ) -> AirPlan:
     return plan_air(
         zone,
@@ -62,6 +63,7 @@ def _plan(
         control=CONTROL,
         now=now,
         clock_trusted=clock_trusted,
+        dry_run=dry_run,
     )
 
 
@@ -186,6 +188,21 @@ def test_learned_zone_preheats_on_optimal_lead(
         None if preheat is None else LEARNED_LEAD,
         state,
     )
+
+
+@pytest.mark.parametrize(
+    ('dry_run', 'preheat'),
+    [(False, None), (True, PreheatStart(comfort_at=COMFORT_AT, lead=LEARNED_LEAD))],
+    ids=['air_mode_waits_for_optimal_start', 'dry_run_holds_optimal_start_from_floor_mode_preheat'],
+)
+def test_dry_run_plan_holds_later_optimal_start_once_floor_mode_preheats(
+    f_zone: ZoneSettings,
+    dry_run: bool,
+    preheat: PreheatStart | None,
+) -> None:
+    plan = _plan(f_zone, COMFORT_AT - timedelta(hours=3), '20.4', learning=LEARNED, dry_run=dry_run)
+
+    assert (plan.mode, plan.preheat, plan.lead, plan.state) == (ScheduleMode.NIGHT, preheat, None, AirState.IDLE)
 
 
 def test_latched_preheat_holds_while_room_warms(f_zone: ZoneSettings, f_latched: PreheatStart) -> None:

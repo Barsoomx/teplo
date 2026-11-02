@@ -271,6 +271,7 @@ teplo starts heating early enough to reach the comfort target at the start of th
 - Until a zone has 3 learned mornings (climate settings), or without an air or an outdoor reading, the lead is the zone's fixed pre-heat lead, 3 hours by default. Every lead is capped at 4 hours (climate settings) and is never below the dead time.
 - Optimal start drives the pre-heat only of an air zone in air mode. Floor zones, and air zones in floor mode or in air mode in dry-run, keep their fixed lead.
 - The lead is computed every minute until the pre-heat starts; from then the start is held until the comfort period begins, so a room that warms faster than planned stays in pre-heat. teplo keeps the start in memory: a cycle after a restart computes it again from the room as it is, and a sensor that drops out and returns finds it held.
+- In air mode in dry-run, floor mode pre-heats on the fixed lead and warms the air the lead is computed from, which would push a later would-be start further back every minute. So the would-be start is held from the start of floor mode's pre-heat as well, on the lead computed then, before the floor has warmed the air; the would-be pre-heat still begins at its own start.
 - An untrusted clock pauses optimal start along with the schedules.
 
 ### Learning
@@ -295,7 +296,7 @@ The dry-run paths journal what they would do only when it changes, never every m
 | Entry | Written when | Payload |
 |---|---|---|
 | `air_control_dry_run` | the would-be air state or thermostat target of a zone in air mode in dry-run changes | air, target, schedule mode, would-be state, would-be power and setpoint, early-stop offset, and in pre-heat the lead in minutes |
-| `optimal_start_dry_run` | the pre-heat a zone in air mode in dry-run would use begins, once per morning | lead in minutes, would-be start, start of the fixed lead |
+| `optimal_start_dry_run` | the start of the pre-heat a zone in air mode in dry-run would use is held, once per morning: when that pre-heat begins, or when floor mode's pre-heat begins if that comes first | lead in minutes, would-be start, start of the fixed lead |
 | `second_floor_guard_dry_run` | the guard, with its gate off, would turn on or off | second-floor air, whether the guard would be on, the comfort floor setpoint it would hold |
 
 A zone in air mode in dry-run runs the air regulation and the optimal start of air mode on its own would-be state, so the journal shows what live air control would really do. Its would-be changes keep 30 minutes apart on a stamp of their own, `last_air_dry_run_at`, apart from the write stamp and `last_dry_run_at`; a change held back keeps the previous would-be state, as a held-back write keeps the live one, and a boost clears the stamp as it clears the write stamp. teplo keeps the last would-be state journaled and the would-be start in memory, so after a restart the next cycles journal them again. Each entry names the zone as its subject, and the panel's journal puts it in words (section 10).

@@ -7,7 +7,7 @@ from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import ZoneLearningRecord
 from apps.climate.domain.modes import AirState, ScheduleMode
-from apps.climate.domain.optimal_start import PreheatStart, latch_preheat, optimal_lead
+from apps.climate.domain.optimal_start import NO_LEAD, PreheatStart, latch_preheat, optimal_lead
 from apps.climate.domain.schedule import next_comfort_start, resolve_mode
 from apps.climate.domain.zone import ZoneSettings
 
@@ -42,6 +42,7 @@ def plan_air(
     control: ClimateControl,
     now: datetime,
     clock_trusted: bool,
+    dry_run: bool,
 ) -> AirPlan:
     lead = optimal_lead(
         learning.heat_up,
@@ -52,7 +53,13 @@ def plan_air(
         settings=control.optimal_start,
     )
     preheat = (
-        latch_preheat(latched, comfort_at=next_comfort_start(zone.windows, now), lead=lead, now=now)
+        latch_preheat(
+            latched,
+            comfort_at=next_comfort_start(zone.windows, now),
+            lead=lead,
+            now=now,
+            latch_by=zone.preheat_lead if dry_run else NO_LEAD,
+        )
         if clock_trusted
         else None
     )

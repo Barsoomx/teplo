@@ -371,6 +371,29 @@ def test_air_dry_run_journals_optimal_start_when_preheat_would_begin(f_zone: Zon
     )
 
 
+def test_air_dry_run_journals_later_optimal_start_when_floor_mode_preheat_begins(f_zone: ZoneSettings) -> None:
+    memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.NIGHT)
+
+    follow_up = _follow(
+        f_zone,
+        memory,
+        _conditions('20.4', learning=LEARNED),
+        _cycle(FIXED_START),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.optimal_start, follow_up.memory.preheat) == (
+        OptimalStartDryRun(
+            zone='kitchen',
+            lead_minutes=160,
+            start=OPTIMAL_START,
+            fixed_start=FIXED_START,
+            occurred_at=FIXED_START,
+        ),
+        PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=2, minutes=40)),
+    )
+
+
 def test_air_dry_run_journals_optimal_start_once_per_morning(
     f_zone: ZoneSettings,
     f_latched_memory: ZoneMemory,

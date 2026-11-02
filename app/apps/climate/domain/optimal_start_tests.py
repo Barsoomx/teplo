@@ -19,6 +19,7 @@ TARGET = Decimal('22.0')
 DEAD_TIME = timedelta(minutes=40)
 COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=ZoneInfo('Europe/Moscow'))
 LEAD = timedelta(hours=2, minutes=40)
+LONG_LEAD = timedelta(hours=3, minutes=30)
 
 
 @pytest.fixture
@@ -187,6 +188,23 @@ def test_preheat_starts_its_lead_before_comfort_period(f_latched: PreheatStart) 
 )
 def test_preheat_latches_once_lead_reaches_comfort_period(now: datetime, expected: PreheatStart | None) -> None:
     assert latch_preheat(None, comfort_at=COMFORT_AT, lead=LEAD, now=now) == expected
+
+
+@pytest.mark.parametrize(
+    ('lead', 'now', 'expected'),
+    [
+        (LEAD, COMFORT_AT - FIXED_LEAD - timedelta(minutes=1), None),
+        (LEAD, COMFORT_AT - FIXED_LEAD, PreheatStart(comfort_at=COMFORT_AT, lead=LEAD)),
+        (LONG_LEAD, COMFORT_AT - LONG_LEAD, PreheatStart(comfort_at=COMFORT_AT, lead=LONG_LEAD)),
+    ],
+    ids=['before_latch_lead', 'latch_lead_ahead_of_own_start', 'own_start_ahead_of_latch_lead'],
+)
+def test_preheat_latches_by_earlier_lead_keeping_its_own(
+    lead: timedelta,
+    now: datetime,
+    expected: PreheatStart | None,
+) -> None:
+    assert latch_preheat(None, comfort_at=COMFORT_AT, lead=lead, now=now, latch_by=FIXED_LEAD) == expected
 
 
 def test_latched_preheat_keeps_its_lead_while_room_warms(f_latched: PreheatStart) -> None:

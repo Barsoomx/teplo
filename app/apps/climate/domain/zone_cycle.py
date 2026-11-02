@@ -130,6 +130,7 @@ def _plan(
         control=cycle.control,
         now=cycle.now,
         clock_trusted=cycle.clock_trusted,
+        dry_run=path is ControlPath.AIR_DRY_RUN,
     )
 
 

@@ -146,7 +146,7 @@ def _seed_journal(now: datetime) -> None:
         (at(4, 20), 'second_floor_guard_dry_run', 'bathroom-2f', guard(active=True, air='18.8')),
         (at(5, 30), 'zone_command_issued', 'kitchen', setpoint('kitchen', '28.0')),
         (
-            at(6, 10),
+            at(5, 30),
             'optimal_start_dry_run',
             'kitchen',
             {

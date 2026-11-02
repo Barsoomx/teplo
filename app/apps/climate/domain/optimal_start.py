@@ -5,6 +5,7 @@ from decimal import ROUND_CEILING, Decimal
 from apps.climate.domain.learning import HeatUpModel, outdoor_bucket
 
 SECONDS_PER_HOUR = Decimal(3600)
+NO_LEAD = timedelta(0)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -59,6 +60,7 @@ def latch_preheat(
     comfort_at: datetime | None,
     lead: timedelta,
     now: datetime,
+    latch_by: timedelta = NO_LEAD,
 ) -> PreheatStart | None:
     if comfort_at is None:
         return None
@@ -66,7 +68,7 @@ def latch_preheat(
     if latched is not None and latched.comfort_at == comfort_at:
         return latched
 
-    if now < comfort_at - lead:
+    if now < comfort_at - max(lead, latch_by):
         return None
 
     return PreheatStart(comfort_at=comfort_at, lead=lead)

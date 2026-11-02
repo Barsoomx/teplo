@@ -644,6 +644,19 @@ def f_optimal_start_journaled_cycle(
 
 
 @pytest.fixture
+def f_floor_preheat_cycle(
+    night_journaled_thermostats: dict[str, FloorThermostat],
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _use_case(store, temperatures, night_journaled_thermostats, book, EventDispatcher()).execute(_at(FIXED_START))
+    temperatures.record_state('air-kitchen', _reading('20.8'))
+    return _use_case(store, temperatures, night_journaled_thermostats, book, dispatcher)
+
+
+@pytest.fixture
 def f_live_air_cycle(
     request: pytest.FixtureRequest,
     store: ThermostatStateStore,
@@ -991,6 +1004,49 @@ def test_air_dry_run_journals_optimal_start_once_per_morning(
     f_optimal_start_journaled_cycle.execute(_at(OPTIMAL_START + MINUTE))
 
     assert f_events == []
+
+
+def test_air_dry_run_journals_later_optimal_start_when_floor_mode_preheat_begins(
+    f_optimal_start_dry_run_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    f_optimal_start_dry_run_cycle.execute(_at(FIXED_START))
+
+    assert (f_thermostat.commands, f_events) == (
+        [('setpoint', Decimal('22.0'))],
+        [
+            OptimalStartDryRun(
+                zone='kitchen',
+                lead_minutes=160,
+                start=OPTIMAL_START,
+                fixed_start=FIXED_START,
+                occurred_at=FIXED_START,
+            ),
+        ],
+    )
+
+
+def test_air_dry_run_preheats_on_start_held_before_floor_mode_warmed_room(
+    f_floor_preheat_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_floor_preheat_cycle.execute(_at(OPTIMAL_START))
+
+    assert f_events == [
+        AirControlDryRun(
+            zone='kitchen',
+            air=Decimal('20.8'),
+            target=Decimal('22.0'),
+            mode=ScheduleMode.PREHEAT,
+            state=AirState.HEAT,
+            power=True,
+            setpoint=Decimal('30.0'),
+            early_stop_offset=Decimal('0.30'),
+            lead_minutes=160,
+            occurred_at=OPTIMAL_START,
+        ),
+    ]
 
 
 @pytest.mark.parametrize(
