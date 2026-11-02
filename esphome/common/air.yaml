@@ -1,0 +1,26 @@
+# SHT30 on I2C. The sensor reports nothing when a read fails, so the timeout publishes nan after two missed updates.
+i2c:
+  sda: GPIO0
+  scl: GPIO1
+  scan: true
+
+sensor:
+  - platform: sht3xd
+    address: 0x44
+    update_interval: 30s
+    temperature:
+      name: Temperature
+      accuracy_decimals: 1
+      state_topic: teplo/${node_name}/sensor/temperature/state
+      retain: false
+      qos: 0
+      filters:
+        - timeout: 75s
+    humidity:
+      name: Humidity
+      accuracy_decimals: 1
+      state_topic: teplo/${node_name}/sensor/humidity/state
+      retain: false
+      qos: 0
+      filters:
+        - timeout: 75s

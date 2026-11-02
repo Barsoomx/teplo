@@ -1,0 +1,11 @@
+esphome:
+  name: ${node_name}
+  friendly_name: ${friendly_name}
+
+packages:
+  wifi: !include wifi.yaml
+  mqtt: !include mqtt.yaml
+  ota: !include ota.yaml
+  logger: !include logger.yaml
+  web_server: !include web_server.yaml
+  diagnostics: !include diagnostics.yaml

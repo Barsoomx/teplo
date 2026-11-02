@@ -1,0 +1,11 @@
+# ESP32-C3 SuperMini. Its crystal sits next to the antenna, and the link drops at full transmit power.
+packages:
+  status_led: !include status_led.yaml
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+wifi:
+  output_power: 8.5dB

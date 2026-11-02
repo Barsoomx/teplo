@@ -1,0 +1,13 @@
+sensor:
+  - platform: wifi_signal
+    name: Wi-Fi signal
+    update_interval: 60s
+    state_topic: teplo/${node_name}/sensor/wifi_signal/state
+    retain: false
+    qos: 0
+  - platform: uptime
+    name: Uptime
+    update_interval: 60s
+    state_topic: teplo/${node_name}/sensor/uptime/state
+    retain: false
+    qos: 0
