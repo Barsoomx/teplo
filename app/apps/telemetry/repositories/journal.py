@@ -8,6 +8,7 @@ from apps.telemetry.domain.starts import TeploStart
 from apps.telemetry.models import JournalEntry
 
 TEPLO_STARTED = 'teplo_started'
+STARTS_PER_QUERY = 20
 
 
 class JournalRepository:
@@ -34,10 +35,13 @@ class JournalRepository:
     @staticmethod
     def starts_newest_first() -> Iterator[TeploStart]:
         starts = JournalEntry.objects.filter(kind=TEPLO_STARTED).order_by('-pk')
-        started = starts.first()
-        while started is not None:
-            yield _start(started.payload)
-            started = starts.filter(pk__lt=started.pk).first()
+        batch = list(starts[:STARTS_PER_QUERY])
+        while batch:
+            yield from (_start(started.payload) for started in batch)
+            if len(batch) < STARTS_PER_QUERY:
+                return
+
+            batch = list(starts.filter(pk__lt=batch[-1].pk)[:STARTS_PER_QUERY])
 
 
 def _start(payload: object) -> TeploStart:

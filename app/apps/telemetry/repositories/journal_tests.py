@@ -1,11 +1,12 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from pytest_django import DjangoAssertNumQueries
 
 from apps.telemetry.domain.starts import TeploStart
 from apps.telemetry.factories import JournalEntryFactory
 from apps.telemetry.models import JournalEntry
-from apps.telemetry.repositories.journal import JournalRepository
+from apps.telemetry.repositories.journal import STARTS_PER_QUERY, JournalRepository
 
 pytestmark = pytest.mark.django_db
 
@@ -68,6 +69,18 @@ def starts_in_two_boots() -> None:
     )
 
 
+@pytest.fixture
+def starts_beyond_one_query() -> None:
+    for uptime in range(STARTS_PER_QUERY + 1):
+        JournalEntryFactory.create(
+            kind='teplo_started',
+            subject='',
+            payload={'last_activity': None, 'boot_id': BOOT_ID, 'router_uptime': uptime},
+            created_at=NOW + timedelta(minutes=uptime),
+        )
+        JournalEntryFactory.create(kind='zone_boosted', created_at=NOW + timedelta(minutes=uptime, seconds=30))
+
+
 def test_latest_returns_newest_first(f_entries: list[JournalEntry]) -> None:
     assert JournalRepository.latest(limit=1) == [f_entries[1]]
 
@@ -128,6 +141,17 @@ def test_starts_are_read_newest_first_with_their_boot_and_router_uptime() -> Non
             last_activity=datetime(2026, 10, 27, 8, 0, tzinfo=UTC),
             router_uptime=timedelta(days=1),
         ),
+    ]
+
+
+@pytest.mark.usefixtures('starts_beyond_one_query')
+def test_starts_are_read_newest_first_a_batch_per_query(django_assert_num_queries: DjangoAssertNumQueries) -> None:
+    with django_assert_num_queries(2):
+        starts = list(JournalRepository.starts_newest_first())
+
+    assert starts == [
+        TeploStart(boot_id=BOOT_ID, last_activity=None, router_uptime=timedelta(seconds=uptime))
+        for uptime in range(STARTS_PER_QUERY, -1, -1)
     ]
 
 
