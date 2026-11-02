@@ -1,0 +1,6 @@
+{% load i18n %}<fieldset class="answers" hx-target="{{ target }}" hx-swap="{{ swap }}" hx-disabled-elt="this">
+  <legend class="visually-hidden">{% translate 'What was it?' %}</legend>
+  <button class="answer" type="button" name="cause" value="overload" hx-post="{{ action }}"{% if outage.cause == 'overload' %} aria-pressed="true"{% endif %}>{% translate 'Overload: our breaker tripped' %}</button>
+  <button class="answer" type="button" name="cause" value="grid" hx-post="{{ action }}"{% if outage.cause == 'grid' %} aria-pressed="true"{% endif %}>{% translate 'Out in the village' %}</button>
+  <button class="answer" type="button" name="cause" value="unknown" hx-post="{{ action }}"{% if outage.cause == 'unknown' %} aria-pressed="true"{% endif %}>{% translate 'Not sure' %}</button>
+</fieldset>

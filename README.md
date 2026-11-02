@@ -37,6 +37,7 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Keeps heating when teplo stops.** Each thermostat regulates on its own at the last setpoint, and a cron watchdog restarts the process.
 - **A panel made for the phone.** Server-rendered Django with htmx, dark and light themes, English and Russian, a timeline journal and a JSON API under `api/v1`.
 - **Alerts in Telegram.** One chat hears about a thermostat or water heater plug that stops answering, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
+- **Power cuts on record.** After a power cut the panel asks whether our breaker tripped or the village lost power, so outages of the grid never count as overloads.
 - **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo only reads the plugs.
 - **Reusable.** A house is a site app with data migrations. Device keys, the panel password and the Telegram bot token stay in a secrets file on the router.
 

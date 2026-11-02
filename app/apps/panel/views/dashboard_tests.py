@@ -1,18 +1,23 @@
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import datetime, timedelta
 from unittest import mock
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.test import Client
 
 from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO
+from apps.power.domain.outage import OutageCause, OutageRecord
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 pytestmark = pytest.mark.django_db
 
 RAW_DETAILS = ('Network Error: Device Unreachable', 'secret missing: thermostat-hallway', 'ndmc failed: timed out')
 PLUG_DETAIL = 'unexpected plug payload: {}'
+CUT = datetime(2026, 10, 31, 20, 24, 40, tzinfo=ZoneInfo('Europe/Moscow'))
+ANSWERS = ('overload', 'grid', 'unknown')
 
 
 @pytest.fixture
@@ -37,6 +42,29 @@ def failing_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
 def m_failing_overview_use_case(failing_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = failing_overview
+        yield use_case
+
+
+@pytest.fixture
+def outage_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverviewOutputDTO:
+    return replace(
+        panel_overview,
+        outages=(
+            OutageRecord(
+                id=7,
+                began_at=CUT,
+                ended_at=CUT + timedelta(minutes=9),
+                cause=OutageCause.UNMARKED,
+                cause_marked_at=None,
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def m_outage_overview_use_case(outage_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = outage_overview
         yield use_case
 
 
@@ -84,6 +112,33 @@ def test_dashboard_shows_loads_and_explains_a_lost_plug(
         (content.count(PLUG_DETAIL), f'title="{PLUG_DETAIL}"' in content),
         m_overview_use_case.init.call_count,
     ) == (True, True, True, True, True, True, True, (1, True), 1)
+
+
+def test_dashboard_asks_what_an_unmarked_outage_was(
+    f_russian_client: Client,
+    m_outage_overview_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Свет пропадал' in content,
+        '20:24–20:33 (9 мин). Что это было?' in content,
+        [content.count(f'value="{answer}" hx-post="/outages/7/cause/"') for answer in ANSWERS],
+        ('Перегруз: выбило наш автомат' in content, 'Пропало в посёлке' in content, 'Не знаю' in content),
+        '<fieldset class="answers" hx-target="#zones" hx-swap="innerHTML"' in content,
+        m_outage_overview_use_case.init.call_count,
+    ) == (True, True, [1, 1, 1], (True, True, True), True, 1)
+
+
+def test_dashboard_without_unmarked_outages_asks_nothing(
+    f_russian_client: Client,
+    m_overview_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert ('Что это было?' in content, '/cause/' in content, m_overview_use_case.init.call_count) == (False, False, 1)
 
 
 def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

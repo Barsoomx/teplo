@@ -13,6 +13,16 @@
   <li class="fact fact-warn" title="{{ overview.clock.reason }}">{% icon 'triangle-alert' %}{% if reason %}{% blocktranslate %}{{ house_time }}, clock not synced ({{ reason }}): holding comfort{% endblocktranslate %}{% else %}{% blocktranslate %}{{ house_time }}, clock not synced: holding comfort{% endblocktranslate %}{% endif %}</li>
   {% endif %}
 </ul>
+{% if overview.outages %}
+<section class="outages" aria-label="{% translate 'Power cuts' %}">
+  {% for outage in overview.outages %}
+  <article class="outage">
+    <p class="outage-text">{% icon 'power-off' %}<span>{{ outage|outage_question }}</span></p>
+    {% url 'panel:mark-outage-cause' outage.id as action %}{% include 'panel/_outage_answers.html' with action=action target='#zones' swap='innerHTML' %}
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
 <div class="tiles">
   {% for zone in overview.zones %}
   <article class="tile{% if not zone.available %} is-offline{% endif %}"{% if zone.available %} style="--t: {{ zone.floor_temperature|unlocalize }};{% if zone.target_setpoint is not None %} --target: {{ zone.target_setpoint|unlocalize }};{% endif %}"{% endif %}>

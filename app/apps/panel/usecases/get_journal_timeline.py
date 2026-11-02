@@ -8,7 +8,12 @@ from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
+from apps.power.domain.outage import OutageRecord
+from apps.power.repositories.outage import OutageRepository
+from apps.telemetry.models import JournalEntry
 from apps.telemetry.repositories.journal import JournalRepository
+
+POWER_OUTAGE = 'power_outage'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -24,6 +29,7 @@ class TimelineEntry:
     device_kind: DeviceKind | None
     payload: dict[str, object]
     created_at: datetime
+    outage: OutageRecord | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -38,21 +44,36 @@ class GetJournalTimelineOutputDTO:
 
 
 class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJournalTimelineOutputDTO]):
-    def __init__(self, journal: JournalRepository, zones: ZoneRepository, devices: DeviceRepository) -> None:
+    def __init__(
+        self,
+        journal: JournalRepository,
+        zones: ZoneRepository,
+        devices: DeviceRepository,
+        outages: OutageRepository,
+    ) -> None:
         super().__init__()
         self._journal = journal
         self._zones = zones
         self._devices = devices
+        self._outages = outages
 
     @classmethod
     def init(cls) -> 'GetJournalTimelineUseCase':
-        return cls(journal=JournalRepository(), zones=ZoneRepository(), devices=DeviceRepository())
+        return cls(
+            journal=JournalRepository(),
+            zones=ZoneRepository(),
+            devices=DeviceRepository(),
+            outages=OutageRepository(),
+        )
 
     def _execute(self, input_dto: GetJournalTimelineInputDTO) -> GetJournalTimelineOutputDTO:
         devices = {device.slug: device for device in self._devices.all_settings()}
         names = self._subject_names(devices)
+        journal = self._journal.latest(limit=input_dto.limit)
+        outage_ids = [_outage_id(entry) for entry in journal]
+        outages = self._outages.by_ids([outage_id for outage_id in outage_ids if outage_id is not None])
         days: dict[date, list[TimelineEntry]] = {}
-        for entry in self._journal.latest(limit=input_dto.limit):
+        for entry, outage_id in zip(journal, outage_ids, strict=True):
             device = devices.get(entry.subject)
             days.setdefault(timezone.localdate(entry.created_at), []).append(
                 TimelineEntry(
@@ -62,6 +83,7 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
                     device_kind=device.kind if device else None,
                     payload=entry.payload,
                     created_at=entry.created_at,
+                    outage=None if outage_id is None else outages.get(outage_id),
                 ),
             )
         return GetJournalTimelineOutputDTO(
@@ -74,3 +96,11 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
             names[zone.slug] = zone.name
             names[zone.thermostat_slug] = zone.name
         return names
+
+
+def _outage_id(entry: JournalEntry) -> int | None:
+    if entry.kind != POWER_OUTAGE or not isinstance(entry.payload, dict):
+        return None
+
+    outage_id = entry.payload.get('outage_id')
+    return outage_id if isinstance(outage_id, int) else None

@@ -21,6 +21,10 @@ from apps.panel.usecases.get_panel_overview import (
     ZoneOverview,
     ZoneRegime,
 )
+from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.factories import OutageFactory
+from apps.power.models import Outage
+from apps.power.repositories.outage import OutageRepository
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 from apps.system.stubs import ClockStub
 
@@ -28,6 +32,9 @@ pytestmark = pytest.mark.django_db
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 MORNING = datetime(2026, 10, 29, 7, 0, tzinfo=MOSCOW)
+EVENING_CUT = datetime(2026, 10, 28, 20, 24, tzinfo=MOSCOW)
+MARKED_CUT = EVENING_CUT - timedelta(days=1)
+NIGHT_CUT = datetime(2026, 10, 29, 3, 10, tzinfo=MOSCOW)
 
 
 @pytest.fixture
@@ -48,6 +55,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        outages=OutageRepository(),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         clock=ClockStub(trusted=True),
@@ -64,6 +72,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        outages=OutageRepository(),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         clock=ClockStub(trusted=False),
@@ -83,6 +92,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         clock=ClockStub(trusted=True),
@@ -102,6 +112,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         clock=ClockStub(trusted=True),
@@ -116,6 +127,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         clock=ClockStub(trusted=True),
@@ -153,8 +165,36 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=plug_store,
+        clock=ClockStub(trusted=True),
+        dry_run=True,
+    )
+
+
+@pytest.fixture
+def f_outages() -> list[Outage]:
+    return [
+        OutageFactory.create(began_at=EVENING_CUT, ended_at=EVENING_CUT + timedelta(minutes=9)),
+        OutageFactory.create(
+            began_at=MARKED_CUT,
+            ended_at=MARKED_CUT + timedelta(minutes=5),
+            cause=OutageCause.GRID,
+            cause_marked_at=MORNING,
+        ),
+        OutageFactory.create(began_at=NIGHT_CUT, ended_at=NIGHT_CUT + timedelta(minutes=2)),
+    ]
+
+
+@pytest.fixture
+def f_outages_use_case() -> GetPanelOverviewUseCase:
+    return GetPanelOverviewUseCase(
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        outages=OutageRepository(),
+        thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
+        plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -188,6 +228,7 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
             ),
         ),
         plugs=(),
+        outages=(),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='stub'),
         dry_run=True,
     )
@@ -218,6 +259,7 @@ def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: Get
             ),
         ),
         plugs=(),
+        outages=(),
         clock=ClockStatus(trusted=False, code=ClockStatusCode.NTP_NOT_SYNCHRONIZED, reason='stub'),
         dry_run=False,
     )
@@ -271,5 +313,29 @@ def test_overview_lists_plugs_by_name_with_their_readings(f_plugs_use_case: GetP
             power_watts=None,
             current_amps=None,
             voltage_volts=None,
+        ),
+    )
+
+
+def test_overview_asks_about_unmarked_outages_newest_first(
+    f_outages_use_case: GetPanelOverviewUseCase,
+    f_outages: list[Outage],
+) -> None:
+    output = f_outages_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert output.outages == (
+        OutageRecord(
+            id=f_outages[2].pk,
+            began_at=NIGHT_CUT,
+            ended_at=NIGHT_CUT + timedelta(minutes=2),
+            cause=OutageCause.UNMARKED,
+            cause_marked_at=None,
+        ),
+        OutageRecord(
+            id=f_outages[0].pk,
+            began_at=EVENING_CUT,
+            ended_at=EVENING_CUT + timedelta(minutes=9),
+            cause=OutageCause.UNMARKED,
+            cause_marked_at=None,
         ),
     )

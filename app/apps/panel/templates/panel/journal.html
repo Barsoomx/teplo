@@ -46,6 +46,12 @@
         {% elif entry.kind == 'alert_cleared' %}
         <span class="event-mark event-mark-online">{% if entry.payload.kind == 'zone_off' %}{% icon 'power' %}{% else %}{% icon 'wifi' %}{% endif %}</span>
         <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>
+        {% elif entry.kind == 'power_outage' %}
+        <span class="event-mark event-mark-warn">{% icon 'power-off' %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|power_outage_text }}</p>
+          {% if entry.outage %}{% include 'panel/_outage_cause.html' with outage=entry.outage %}{% endif %}
+        </div>
         {% else %}
         <span class="event-mark">{% icon 'scroll-text' %}</span>
         <div class="event-body" title="{{ entry.kind }}"><p class="event-text">{% if entry.subject_name %}{% blocktranslate with name=entry.subject_name %}{{ name }}: unknown event{% endblocktranslate %}{% else %}{% translate 'Unknown event' %}{% endif %}</p></div>

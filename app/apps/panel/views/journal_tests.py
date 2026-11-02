@@ -13,12 +13,17 @@ from apps.panel.usecases.get_journal_timeline import (
     TimelineDay,
     TimelineEntry,
 )
+from apps.power.domain.outage import OutageCause, OutageRecord
 
 pytestmark = pytest.mark.django_db
 
 MORNING = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
 RAW_DETAILS = ('timed out after 5 s', 'Network Error: Device Unreachable', 'thermostat did not answer', 'teplo_stopped')
 PLUG_DETAIL = 'unexpected plug payload: {}'
+CUT = MORNING - timedelta(minutes=40)
+CUT_PAYLOAD = {'began_at': '2026-10-29T05:20:00Z', 'ended_at': '2026-10-29T05:29:00Z'}
+NIGHT_CUT_PAYLOAD = {'outage_id': 8, 'began_at': '2026-10-28T21:50:00Z', 'ended_at': '2026-10-28T22:02:00Z'}
+ACTION = 'hx-post="/journal/outages/7/cause/"'
 
 
 @pytest.fixture
@@ -180,6 +185,44 @@ def m_alerts_timeline_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+@pytest.fixture
+def m_outage_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=(
+                        TimelineEntry(
+                            kind='power_outage',
+                            subject='',
+                            subject_name='',
+                            device_kind=None,
+                            payload={'outage_id': 7, **CUT_PAYLOAD},
+                            created_at=MORNING,
+                            outage=OutageRecord(
+                                id=7,
+                                began_at=CUT,
+                                ended_at=CUT + timedelta(minutes=9),
+                                cause=OutageCause.OVERLOAD,
+                                cause_marked_at=MORNING,
+                            ),
+                        ),
+                        TimelineEntry(
+                            kind='power_outage',
+                            subject='',
+                            subject_name='',
+                            device_kind=None,
+                            payload=NIGHT_CUT_PAYLOAD,
+                            created_at=MORNING - timedelta(minutes=5),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
 def test_journal_describes_entries_in_words(f_client: Client, m_timeline_use_case: MagicMock) -> None:
     response = f_client.get('/journal/')
 
@@ -240,6 +283,25 @@ def test_journal_reads_alerts_like_the_telegram_messages(
         'неизвестное событие' in content,
         m_alerts_timeline_use_case.init.call_count,
     ) == (True, True, True, False, 1)
+
+
+def test_journal_shows_a_power_outage_with_its_cause_and_the_answers_to_change_it(
+    f_russian_client: Client,
+    m_outage_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        'Свет пропадал 08:20–08:29 (9 мин)' in content,
+        'Причина: перегруз, выбило наш автомат' in content,
+        content.count(ACTION),
+        'value="overload" hx-post="/journal/outages/7/cause/" aria-pressed="true"' in content,
+        'hx-target="closest .outage-cause" hx-swap="outerHTML"' in content,
+        'Свет пропадал 00:50–01:02 (12 мин)' in content,
+        '/journal/outages/8/cause/' in content,
+        m_outage_timeline_use_case.init.call_count,
+    ) == (True, True, 3, True, True, True, False, 1)
 
 
 def test_journal_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

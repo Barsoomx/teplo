@@ -14,12 +14,17 @@ from apps.panel.usecases.get_journal_timeline import (
     TimelineDay,
     TimelineEntry,
 )
+from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.factories import OutageFactory
+from apps.power.models import Outage
+from apps.power.repositories.outage import OutageRepository
 from apps.telemetry.factories import JournalEntryFactory
 from apps.telemetry.repositories.journal import JournalRepository
 
 pytestmark = pytest.mark.django_db
 
 MORNING = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+CUT = MORNING - timedelta(minutes=40)
 
 
 @pytest.fixture
@@ -38,7 +43,12 @@ def f_use_case() -> GetJournalTimelineUseCase:
         payload={'until': '2026-10-29T08:00:00Z'},
         created_at=MORNING,
     )
-    return GetJournalTimelineUseCase(journal=JournalRepository(), zones=ZoneRepository(), devices=DeviceRepository())
+    return GetJournalTimelineUseCase(
+        journal=JournalRepository(),
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        outages=OutageRepository(),
+    )
 
 
 @pytest.fixture
@@ -55,7 +65,40 @@ def f_plug_use_case() -> GetJournalTimelineUseCase:
         payload={'available': False},
         created_at=MORNING,
     )
-    return GetJournalTimelineUseCase(journal=JournalRepository(), zones=ZoneRepository(), devices=DeviceRepository())
+    return GetJournalTimelineUseCase(
+        journal=JournalRepository(),
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        outages=OutageRepository(),
+    )
+
+
+@pytest.fixture
+def f_outage() -> Outage:
+    return OutageFactory.create(
+        began_at=CUT,
+        ended_at=CUT + timedelta(minutes=9),
+        cause=OutageCause.GRID,
+        cause_marked_at=MORNING,
+    )
+
+
+@pytest.fixture
+def f_outage_use_case(f_outage: Outage) -> GetJournalTimelineUseCase:
+    payload = {'began_at': '2026-10-29T05:20:00Z', 'ended_at': '2026-10-29T05:29:00Z'}
+    JournalEntryFactory.create(kind='power_outage', subject='', payload={'outage_id': 9999, **payload}, created_at=CUT)
+    JournalEntryFactory.create(
+        kind='power_outage',
+        subject='',
+        payload={'outage_id': f_outage.pk, **payload},
+        created_at=MORNING,
+    )
+    return GetJournalTimelineUseCase(
+        journal=JournalRepository(),
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        outages=OutageRepository(),
+    )
 
 
 def test_timeline_names_subjects_and_groups_entries_by_local_day(f_use_case: GetJournalTimelineUseCase) -> None:
@@ -125,3 +168,21 @@ def test_timeline_names_a_plug_by_its_device(f_plug_use_case: GetJournalTimeline
             ),
         ),
     )
+
+
+def test_timeline_carries_the_current_cause_of_a_journaled_power_outage(
+    f_outage_use_case: GetJournalTimelineUseCase,
+    f_outage: Outage,
+) -> None:
+    output = f_outage_use_case.execute(GetJournalTimelineInputDTO(limit=10))
+
+    assert [entry.outage for day in output.days for entry in day.entries] == [
+        OutageRecord(
+            id=f_outage.pk,
+            began_at=CUT,
+            ended_at=CUT + timedelta(minutes=9),
+            cause=OutageCause.GRID,
+            cause_marked_at=MORNING,
+        ),
+        None,
+    ]

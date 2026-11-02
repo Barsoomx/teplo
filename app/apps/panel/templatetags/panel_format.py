@@ -11,8 +11,9 @@ from django.utils.translation import gettext, gettext_lazy
 
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
-from apps.notifications.services.messages import alert_text_from_payload
+from apps.notifications.services.messages import alert_text_from_payload, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
+from apps.power.domain.outage import OutageRecord
 from apps.system.domain.clock import ClockStatusCode
 
 register = template.Library()
@@ -38,6 +39,8 @@ CLOCK_NOTES = {
     ClockStatusCode.NTP_STATUS_FAILED: gettext_lazy('could not read the NTP status from the router'),
 }
 ALERT_TRANSITIONS = {'alert_raised': AlertTransition.RAISED, 'alert_cleared': AlertTransition.CLEARED}
+OUTAGE_QUESTION = gettext_lazy('Power was out %(began)s–%(ended)s (%(duration)s). What was it?')
+POWER_OUTAGE = gettext_lazy('Power was out %(began)s–%(ended)s (%(duration)s)')
 
 
 @register.simple_tag
@@ -107,3 +110,22 @@ def alert_text(entry: TimelineEntry) -> str:
         return gettext('%(name)s: unknown event') % {'name': entry.subject_name}
 
     return text
+
+
+@register.filter
+def outage_question(outage: OutageRecord) -> str:
+    return str(OUTAGE_QUESTION) % interval_parts(outage.began_at, outage.ended_at, timezone.now())
+
+
+@register.filter
+def power_outage_text(entry: TimelineEntry) -> str:
+    try:
+        parts = interval_parts(
+            datetime.fromisoformat(str(entry.payload['began_at'])),
+            datetime.fromisoformat(str(entry.payload['ended_at'])),
+            entry.created_at,
+        )
+    except (KeyError, TypeError, ValueError):
+        return gettext('Unknown event')
+
+    return str(POWER_OUTAGE) % parts

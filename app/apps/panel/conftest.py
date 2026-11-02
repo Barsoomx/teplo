@@ -64,6 +64,7 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
                 voltage_volts=None,
             ),
         ),
+        outages=(),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized'),
         dry_run=True,
     )

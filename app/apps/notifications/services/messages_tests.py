@@ -13,6 +13,7 @@ from apps.notifications.services.messages import (
     alert_text,
     alert_text_from_payload,
     delivery_check_text,
+    interval_parts,
     outage_text,
 )
 
@@ -186,6 +187,34 @@ def test_alert_follows_the_active_language() -> None:
 )
 def test_outage_reads_as_a_local_interval(began_at: datetime, ended_at: datetime, at: datetime, expected: str) -> None:
     assert outage_text(Outage(began_at=began_at, ended_at=ended_at, power_cut=False), at) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('began_at', 'ended_at', 'at', 'expected'),
+    [
+        (
+            datetime(2026, 10, 31, 17, 24, 50, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 33, 10, tzinfo=UTC),
+            datetime(2026, 10, 31, 17, 40, tzinfo=UTC),
+            {'began': '20:24', 'ended': '20:33', 'duration': '9 мин'},
+        ),
+        (
+            datetime(2026, 10, 31, 20, 50, tzinfo=UTC),
+            datetime(2026, 10, 31, 21, 20, tzinfo=UTC),
+            datetime(2026, 11, 1, 9, 0, tzinfo=UTC),
+            {'began': '31 октября 23:50', 'ended': '00:20', 'duration': '30 мин'},
+        ),
+    ],
+    ids=['today', 'on_an_earlier_day'],
+)
+def test_interval_parts_name_the_date_only_off_the_reference_day(
+    began_at: datetime,
+    ended_at: datetime,
+    at: datetime,
+    expected: dict[str, str],
+) -> None:
+    assert interval_parts(began_at, ended_at, at) == expected
 
 
 @pytest.mark.usefixtures('russian')

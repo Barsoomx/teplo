@@ -21,6 +21,8 @@ from apps.devices.services.state_store import (
     plug_state_store,
     thermostat_state_store,
 )
+from apps.power.domain.outage import OutageRecord
+from apps.power.repositories.outage import OutageRepository
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
 
@@ -75,6 +77,7 @@ class PlugOverview:
 class GetPanelOverviewOutputDTO:
     zones: tuple[ZoneOverview, ...]
     plugs: tuple[PlugOverview, ...]
+    outages: tuple[OutageRecord, ...]
     clock: ClockStatus
     dry_run: bool
 
@@ -84,6 +87,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self,
         zones: ZoneRepository,
         devices: DeviceRepository,
+        outages: OutageRepository,
         thermostat_store: ThermostatStateStore,
         plug_store: PlugStateStore,
         clock: ClockTrustSource,
@@ -92,6 +96,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         super().__init__()
         self._zones = zones
         self._devices = devices
+        self._outages = outages
         self._thermostat_store = thermostat_store
         self._plug_store = plug_store
         self._clock = clock
@@ -102,6 +107,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         return cls(
             zones=ZoneRepository(),
             devices=DeviceRepository(),
+            outages=OutageRepository(),
             thermostat_store=thermostat_state_store,
             plug_store=plug_state_store,
             clock=clock_trust_source(),
@@ -121,6 +127,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 for device in sorted(self._devices.all_settings(), key=lambda device: device.name)
                 if device.kind == DeviceKind.PLUG
             ),
+            outages=tuple(self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
         )

@@ -86,9 +86,13 @@ def alert_text_from_payload(transition: AlertTransition, payload: Mapping[str, o
 
 
 def outage_text(outage: Outage, at: datetime) -> str:
-    began = outage.began_at.replace(second=0, microsecond=0)
-    ended = outage.ended_at.replace(second=0, microsecond=0)
-    return str(TEPLO_RESUMED) % {
+    return str(TEPLO_RESUMED) % interval_parts(outage.began_at, outage.ended_at, at)
+
+
+def interval_parts(began_at: datetime, ended_at: datetime, at: datetime) -> dict[str, str]:
+    began = began_at.replace(second=0, microsecond=0)
+    ended = ended_at.replace(second=0, microsecond=0)
+    return {
         'began': _moment(began, at),
         'ended': _interval_end(ended, began, at),
         'duration': _duration(ended - began),
