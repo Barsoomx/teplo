@@ -27,8 +27,16 @@ from apps.power.domain.events import (
     PhaseCalmed,
     PhaseOverloaded,
 )
-from apps.power.domain.guard import GuardLoads, GuardState, PhaseState, SeenReading, follow_samples, phase_amps
-from apps.power.domain.load_status import plug_reading, thermostat_reading
+from apps.power.domain.guard import (
+    GuardLoads,
+    GuardState,
+    PhaseState,
+    SeenReading,
+    follow_samples,
+    load_statuses,
+    phase_amps,
+)
+from apps.power.domain.load_status import LoadStatus, plug_reading, thermostat_reading
 from apps.power.domain.loads import (
     MEASURED_PHASES,
     METER_PHASES,
@@ -110,7 +118,8 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         phases, steps = self._watch(state, currents, read_at, at, input_dto.now)
         learning = follow_learning(state.learning, changes, phases.samples, at)
         learned = self._learned(loads, learning.learned, input_dto.now)
-        ev = self._follow_ev(state, phases, learning.state.changes, at, input_dto.now)
+        statuses = load_statuses(learned, readings, state.shedding, live=True)
+        ev = self._follow_ev(state, phases, learning.state.changes, statuses, at, input_dto.now)
         self._book.remember(
             replace(state, loads=learned, phases=phases, readings=readings, learning=learning.state, ev=ev),
         )
@@ -274,13 +283,21 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         state: GuardState,
         phases: PhaseState,
         changes: Sequence[LoadChange],
+        loads: Sequence[LoadStatus],
         at: float,
         now: datetime,
     ) -> tuple[EvWatch, ...]:
         if not _fresh(phases.currents):
             return state.ev
 
-        detection = detect_ev(state.ev, phases.samples, changes, at, sheds=tuple(state.shedding.sheds.values()))
+        detection = detect_ev(
+            state.ev,
+            phases.samples,
+            changes,
+            at,
+            sheds=tuple(state.shedding.sheds.values()),
+            loads=loads,
+        )
         for watch in detection.started:
             logger.info('ev_charging_started', phase=watch.phase, amps=str(watch.step))
             self._event_store.add_event(_ev_event(EvChargingStarted, watch, now))

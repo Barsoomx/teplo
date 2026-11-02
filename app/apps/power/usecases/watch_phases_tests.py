@@ -217,11 +217,13 @@ def test_learned_phase_the_database_fails_to_store_is_left_for_the_next_vote(
     ) == ([], [], [])
 
 
-def test_rise_no_load_explains_held_five_minutes_is_an_ev_charging_until_it_drops_back(f_rig: GuardRig) -> None:
-    for second in range(1, 331):
+def test_rise_no_load_explains_held_five_minutes_is_an_ev_charging_until_it_drops_back_unexplained(
+    f_rig: GuardRig,
+) -> None:
+    for second in range(1, 361):
         _second(f_rig, {LoadPhase.L3: '20.0' if second in EV_CHARGING else '4.0'})
 
     assert f_rig.events == [
         EvChargingStarted(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(306)),
-        EvChargingStopped(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(322)),
+        EvChargingStopped(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(357)),
     ]

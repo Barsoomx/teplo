@@ -3,9 +3,10 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from decimal import Decimal
 
+from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LoadPhase
 from apps.power.domain.moments import held
-from apps.power.domain.phase_learning import STEP_MARGIN, LoadChange, covered
+from apps.power.domain.phase_learning import STEP_MARGIN, VOTE_DELAY, LoadChange, covered
 from apps.power.domain.phase_samples import PhaseSample, level_at
 from apps.power.domain.shedding import SETTLE, Shed
 
@@ -25,6 +26,8 @@ class EvWatch:
     step: Decimal
     charging: bool
     relief: Decimal = Decimal(0)
+    switched_off: Decimal = Decimal(0)
+    drop_seen_at: float | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -46,6 +49,7 @@ class _GuardSheds:
     added: Decimal
     settling: bool
     recent: bool
+    loads: frozenset[str]
 
 
 def detect_ev(
@@ -55,10 +59,11 @@ def detect_ev(
     at: float,
     *,
     sheds: Sequence[Shed],
+    loads: Sequence[LoadStatus],
 ) -> EvDetection:
     previous = {watch.phase: watch for watch in watches}
     current = {
-        phase: _follow(phase, previous.get(phase), samples, changes, _guard_sheds(sheds, phase, at), at)
+        phase: _follow(phase, previous.get(phase), samples, changes, _guard_sheds(sheds, phase, at), loads, at)
         for phase in MEASURED_PHASES
     }
     return EvDetection(
@@ -78,6 +83,7 @@ def _follow(
     samples: Sequence[PhaseSample],
     changes: Sequence[LoadChange],
     sheds: _GuardSheds,
+    loads: Sequence[LoadStatus],
     at: float,
 ) -> EvWatch | None:
     now = level_at(samples, phase, at)
@@ -88,8 +94,11 @@ def _follow(
     if watch is None:
         return _rise(phase, levels, samples, changes, sheds, at)
 
+    if watch.drop_seen_at is not None:
+        return _after_drop(watch, watch.drop_seen_at, levels, changes, sheds, loads, at)
+
     if _dropped(watch, levels, sheds):
-        return None
+        return replace(watch, drop_seen_at=at)
 
     return watch if watch.charging else _held(watch, levels, changes, sheds, at)
 
@@ -128,6 +137,46 @@ def _dropped(watch: EvWatch, levels: _Levels, sheds: _GuardSheds) -> bool:
     return not sheds.recent and levels.then is not None and levels.then - levels.now >= watch.step - EV_BACK
 
 
+def _after_drop(
+    watch: EvWatch,
+    drop_seen_at: float,
+    levels: _Levels,
+    changes: Sequence[LoadChange],
+    sheds: _GuardSheds,
+    loads: Sequence[LoadStatus],
+    at: float,
+) -> EvWatch | None:
+    if at - drop_seen_at < VOTE_DELAY.total_seconds():
+        return watch
+
+    switched_off = _switched_off(watch.phase, drop_seen_at, changes, sheds, loads)
+    if switched_off == 0:
+        return None
+
+    kept = replace(watch, switched_off=watch.switched_off + switched_off, drop_seen_at=None)
+    return None if levels.now <= _base(kept, sheds) + EV_BACK else kept
+
+
+def _switched_off(
+    phase: LoadPhase,
+    drop_seen_at: float,
+    changes: Sequence[LoadChange],
+    sheds: _GuardSheds,
+    loads: Sequence[LoadStatus],
+) -> Decimal:
+    margin = STEP_MARGIN.total_seconds()
+    since = drop_seen_at - EV_RISE.total_seconds() - margin
+    off = {
+        change.load
+        for change in changes
+        if not change.up and change.overlaps(since, drop_seen_at + margin) and change.load not in sheds.loads
+    }
+    return sum(
+        (load.amps for load in loads if load.slug in off and load.phase in (phase, LoadPhase.UNKNOWN)),
+        Decimal(0),
+    )
+
+
 def _held(
     watch: EvWatch,
     levels: _Levels,
@@ -151,11 +200,12 @@ def _guard_sheds(sheds: Sequence[Shed], phase: LoadPhase, at: float) -> _GuardSh
         added=sum((shed.amps for shed in live if shed.at > at - EV_RISE.total_seconds()), Decimal(0)),
         settling=any(shed.at > at - SETTLE.total_seconds() for shed in live),
         recent=any(shed.at > at - (EV_RISE + STEP_MARGIN).total_seconds() for shed in live),
+        loads=frozenset(shed.load for shed in sheds if shed.live),
     )
 
 
 def _base(watch: EvWatch, sheds: _GuardSheds) -> Decimal:
-    return watch.before - (sheds.relief - watch.relief)
+    return watch.before - watch.switched_off - (sheds.relief - watch.relief)
 
 
 def _covered(samples: Sequence[PhaseSample], since: float, at: float) -> bool:

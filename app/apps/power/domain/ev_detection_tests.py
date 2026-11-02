@@ -4,7 +4,8 @@ from decimal import Decimal
 import pytest
 
 from apps.power.domain.ev_detection import EvDetection, EvWatch, detect_ev
-from apps.power.domain.loads import LoadPhase, ShedReason
+from apps.power.domain.load_status import LoadStatus
+from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 from apps.power.domain.phase_learning import LoadChange
 from apps.power.domain.phase_samples import PhaseSample
 from apps.power.domain.shedding import Shed
@@ -23,6 +24,18 @@ WATCHED = EvWatch(
 RISING = replace(WATCHED, until=1001.0, step=Decimal('11.0'))
 CHARGING = replace(WATCHED, charging=True)
 CHARGING_ON_A_BUSY_PHASE = replace(CHARGING, before=Decimal('18.0'))
+CHARGING_BESIDE_A_FLOOR = replace(CHARGING, before=Decimal('12.5'), step=Decimal('11.0'), drop_seen_at=2003.0)
+KITCHEN = LoadStatus(
+    slug='kitchen',
+    kind=LoadKind.ZONE,
+    priority=5,
+    phase=LoadPhase.L3,
+    amps=Decimal('8.5'),
+    available=True,
+    drawing=False,
+    shed=False,
+)
+KITCHEN_SWITCHED_OFF = LoadChange(load='kitchen', since=1990.0, until=2020.0, up=False)
 NOTHING = EvDetection(watches=(), started=(), stopped=())
 BOILER_SHED = Shed(
     load='boiler-2f',
@@ -68,7 +81,22 @@ def f_level_after_the_rise() -> list[PhaseSample]:
 
 @pytest.fixture
 def f_early_drop() -> list[PhaseSample]:
-    return _samples(1080, 1103, {1080: '20.0', 1100: '5.0'})
+    return _samples(1080, 1138, {1080: '20.0', 1100: '5.0'})
+
+
+@pytest.fixture
+def f_drop_held_until_the_loads_were_read() -> list[PhaseSample]:
+    return _samples(1980, 2038, {1980: '20.0', 2000: '6.5'})
+
+
+@pytest.fixture
+def f_floor_switching_off_beside_a_charge() -> list[PhaseSample]:
+    return _samples(1980, 2038, {1980: '23.5', 2000: '15.0'})
+
+
+@pytest.fixture
+def f_charge_and_floor_stopping_together() -> list[PhaseSample]:
+    return _samples(1980, 2038, {1980: '23.5', 2000: '4.0'})
 
 
 @pytest.fixture
@@ -107,7 +135,7 @@ def f_samples(request: pytest.FixtureRequest) -> list[PhaseSample]:
 
 
 def test_a_rise_no_load_change_explains_is_watched(f_rise_on_l3: list[PhaseSample]) -> None:
-    assert detect_ev([], f_rise_on_l3, [], RISE_SEEN_AT, sheds=()) == EvDetection(
+    assert detect_ev([], f_rise_on_l3, [], RISE_SEEN_AT, sheds=(), loads=()) == EvDetection(
         watches=(WATCHED,),
         started=(),
         stopped=(),
@@ -117,7 +145,7 @@ def test_a_rise_no_load_change_explains_is_watched(f_rise_on_l3: list[PhaseSampl
 def test_a_rise_a_load_change_explains_is_not_watched(f_rise_on_l3: list[PhaseSample]) -> None:
     changes = [LoadChange(load='boiler-2f', since=990.0, until=1020.0, up=True)]
 
-    assert detect_ev([], f_rise_on_l3, changes, RISE_SEEN_AT, sheds=()) == NOTHING
+    assert detect_ev([], f_rise_on_l3, changes, RISE_SEEN_AT, sheds=(), loads=()) == NOTHING
 
 
 @pytest.mark.parametrize(
@@ -127,11 +155,11 @@ def test_a_rise_a_load_change_explains_is_not_watched(f_rise_on_l3: list[PhaseSa
     indirect=True,
 )
 def test_a_rise_outside_the_charging_currents_is_not_watched(f_samples: list[PhaseSample]) -> None:
-    assert detect_ev([], f_samples, [], RISE_SEEN_AT, sheds=()) == NOTHING
+    assert detect_ev([], f_samples, [], RISE_SEEN_AT, sheds=(), loads=()) == NOTHING
 
 
 def test_a_rise_held_for_five_minutes_is_an_ev_charging(f_level_five_minutes_on: list[PhaseSample]) -> None:
-    assert detect_ev([WATCHED], f_level_five_minutes_on, [], 1288.0, sheds=()) == EvDetection(
+    assert detect_ev([WATCHED], f_level_five_minutes_on, [], 1288.0, sheds=(), loads=()) == EvDetection(
         watches=(CHARGING,),
         started=(CHARGING,),
         stopped=(),
@@ -144,34 +172,104 @@ def test_a_rise_held_for_five_minutes_is_an_ev_charging(f_level_five_minutes_on:
     ids=['back_within_three_amperes', 'down_by_a_similar_step'],
     indirect=True,
 )
-def test_charging_stops_when_the_phase_drops_back(f_samples: list[PhaseSample]) -> None:
-    assert detect_ev([CHARGING], f_samples, [], 2003.0, sheds=()) == EvDetection(
-        watches=(),
+def test_a_drop_back_is_held_until_every_load_has_been_read_after_it(f_samples: list[PhaseSample]) -> None:
+    assert detect_ev([CHARGING], f_samples, [], 2003.0, sheds=(), loads=()) == EvDetection(
+        watches=(replace(CHARGING, drop_seen_at=2003.0),),
         started=(),
-        stopped=(CHARGING,),
+        stopped=(),
     )
 
 
+def test_charging_stops_once_no_load_seen_switching_off_explains_the_drop(
+    f_drop_held_until_the_loads_were_read: list[PhaseSample],
+) -> None:
+    held = replace(CHARGING, drop_seen_at=2003.0)
+
+    assert detect_ev([held], f_drop_held_until_the_loads_were_read, [], 2038.0, sheds=(), loads=()) == EvDetection(
+        watches=(),
+        started=(),
+        stopped=(held,),
+    )
+
+
+def test_charging_goes_on_when_a_floor_seen_switching_off_on_the_phase_explains_the_drop(
+    f_floor_switching_off_beside_a_charge: list[PhaseSample],
+) -> None:
+    detection = detect_ev(
+        [CHARGING_BESIDE_A_FLOOR],
+        f_floor_switching_off_beside_a_charge,
+        [KITCHEN_SWITCHED_OFF],
+        2038.0,
+        sheds=(),
+        loads=(KITCHEN,),
+    )
+
+    assert detection == EvDetection(
+        watches=(replace(CHARGING_BESIDE_A_FLOOR, switched_off=Decimal('8.5'), drop_seen_at=None),),
+        started=(),
+        stopped=(),
+    )
+
+
+def test_charging_stops_when_the_phase_falls_below_what_a_floor_switching_off_explains(
+    f_charge_and_floor_stopping_together: list[PhaseSample],
+) -> None:
+    detection = detect_ev(
+        [CHARGING_BESIDE_A_FLOOR],
+        f_charge_and_floor_stopping_together,
+        [KITCHEN_SWITCHED_OFF],
+        2038.0,
+        sheds=(),
+        loads=(KITCHEN,),
+    )
+
+    assert detection == EvDetection(watches=(), started=(), stopped=(CHARGING_BESIDE_A_FLOOR,))
+
+
+@pytest.mark.parametrize(
+    ('loads', 'sheds'),
+    [((replace(KITCHEN, phase=LoadPhase.L1),), ()), ((KITCHEN,), (KITCHEN_SHED,))],
+    ids=['floor_on_another_phase', 'floor_the_guard_shed'],
+)
+def test_a_floor_switching_off_explains_no_drop_it_cannot_cause(
+    f_floor_switching_off_beside_a_charge: list[PhaseSample],
+    loads: tuple[LoadStatus, ...],
+    sheds: tuple[Shed, ...],
+) -> None:
+    detection = detect_ev(
+        [CHARGING_BESIDE_A_FLOOR],
+        f_floor_switching_off_beside_a_charge,
+        [KITCHEN_SWITCHED_OFF],
+        2038.0,
+        sheds=sheds,
+        loads=loads,
+    )
+
+    assert detection == EvDetection(watches=(), started=(), stopped=(CHARGING_BESIDE_A_FLOOR,))
+
+
 def test_charging_goes_on_through_a_smaller_drop(f_smaller_drop: list[PhaseSample]) -> None:
-    assert detect_ev([CHARGING], f_smaller_drop, [], 2003.0, sheds=()) == EvDetection(
+    assert detect_ev([CHARGING], f_smaller_drop, [], 2003.0, sheds=(), loads=()) == EvDetection(
         watches=(CHARGING,),
         started=(),
         stopped=(),
     )
 
 
-def test_a_rise_that_drops_back_within_five_minutes_is_forgotten(f_early_drop: list[PhaseSample]) -> None:
-    assert detect_ev([WATCHED], f_early_drop, [], 1103.0, sheds=()) == NOTHING
+def test_a_rise_that_drops_back_within_five_minutes_is_forgotten_once_no_load_explains_the_drop(
+    f_early_drop: list[PhaseSample],
+) -> None:
+    assert detect_ev([replace(WATCHED, drop_seen_at=1103.0)], f_early_drop, [], 1138.0, sheds=(), loads=()) == NOTHING
 
 
 def test_a_rise_a_load_change_seen_later_explains_is_forgotten(f_level_after_the_rise: list[PhaseSample]) -> None:
     changes = [LoadChange(load='kitchen', since=995.0, until=1025.0, up=True)]
 
-    assert detect_ev([WATCHED], f_level_after_the_rise, changes, 1030.0, sheds=()) == NOTHING
+    assert detect_ev([WATCHED], f_level_after_the_rise, changes, 1030.0, sheds=(), loads=()) == NOTHING
 
 
 def test_a_slow_rise_grows_its_step(f_slow_rise: list[PhaseSample]) -> None:
-    assert detect_ev([RISING], f_slow_rise, [], 1010.0, sheds=()) == EvDetection(
+    assert detect_ev([RISING], f_slow_rise, [], 1010.0, sheds=(), loads=()) == EvDetection(
         watches=(replace(RISING, until=1010.0, step=Decimal('16.0')),),
         started=(),
         stopped=(),
@@ -179,13 +277,17 @@ def test_a_slow_rise_grows_its_step(f_slow_rise: list[PhaseSample]) -> None:
 
 
 def test_watch_waits_for_samples() -> None:
-    assert detect_ev([CHARGING], [], [], 2003.0, sheds=()) == EvDetection(watches=(CHARGING,), started=(), stopped=())
+    assert detect_ev([CHARGING], [], [], 2003.0, sheds=(), loads=()) == EvDetection(
+        watches=(CHARGING,),
+        started=(),
+        stopped=(),
+    )
 
 
 def test_a_rise_only_a_load_switching_off_overlaps_is_watched(f_rise_on_l3: list[PhaseSample]) -> None:
     changes = [LoadChange(load='kitchen', since=990.0, until=1020.0, up=False)]
 
-    assert detect_ev([], f_rise_on_l3, changes, RISE_SEEN_AT, sheds=()) == EvDetection(
+    assert detect_ev([], f_rise_on_l3, changes, RISE_SEEN_AT, sheds=(), loads=()) == EvDetection(
         watches=(WATCHED,),
         started=(),
         stopped=(),
@@ -193,7 +295,7 @@ def test_a_rise_only_a_load_switching_off_overlaps_is_watched(f_rise_on_l3: list
 
 
 def test_a_rise_across_a_gap_in_the_samples_is_not_watched(f_rise_across_a_gap: list[PhaseSample]) -> None:
-    assert detect_ev([], f_rise_across_a_gap, [], RISE_SEEN_AT, sheds=()) == NOTHING
+    assert detect_ev([], f_rise_across_a_gap, [], RISE_SEEN_AT, sheds=(), loads=()) == NOTHING
 
 
 def test_a_rise_the_guards_sheds_cut_into_is_watched_at_its_full_step(
@@ -201,7 +303,7 @@ def test_a_rise_the_guards_sheds_cut_into_is_watched_at_its_full_step(
 ) -> None:
     sheds = (replace(BOILER_SHED, at=1001.0), replace(KITCHEN_SHED, at=1002.0))
 
-    assert detect_ev([], f_rise_the_guard_sheds_into, [], 1010.0, sheds=sheds) == EvDetection(
+    assert detect_ev([], f_rise_the_guard_sheds_into, [], 1010.0, sheds=sheds, loads=()) == EvDetection(
         watches=(replace(WATCHED, since=995.0, until=1010.0, before=Decimal('18.0')),),
         started=(),
         stopped=(),
@@ -209,7 +311,16 @@ def test_a_rise_the_guards_sheds_cut_into_is_watched_at_its_full_step(
 
 
 def test_a_rise_waits_while_a_shed_of_the_guard_settles(f_rise_while_a_shed_settles: list[PhaseSample]) -> None:
-    assert detect_ev([], f_rise_while_a_shed_settles, [], 1002.0, sheds=(replace(BOILER_SHED, at=1001.0),)) == NOTHING
+    detection = detect_ev(
+        [],
+        f_rise_while_a_shed_settles,
+        [],
+        1002.0,
+        sheds=(replace(BOILER_SHED, at=1001.0),),
+        loads=(),
+    )
+
+    assert detection == NOTHING
 
 
 @pytest.mark.parametrize(
@@ -222,12 +333,12 @@ def test_a_rise_waits_while_a_shed_of_the_guard_settles(f_rise_while_a_shed_sett
     indirect=['f_samples'],
 )
 def test_charging_goes_on_through_the_guards_own_sheds(f_samples: list[PhaseSample], at: float) -> None:
-    detection = detect_ev([CHARGING_ON_A_BUSY_PHASE], f_samples, [], at, sheds=(BOILER_SHED, KITCHEN_SHED))
+    detection = detect_ev([CHARGING_ON_A_BUSY_PHASE], f_samples, [], at, sheds=(BOILER_SHED, KITCHEN_SHED), loads=())
 
     assert detection == EvDetection(watches=(CHARGING_ON_A_BUSY_PHASE,), started=(), stopped=())
 
 
-def test_charging_stops_at_the_level_before_the_rise_less_the_guards_sheds(
+def test_a_drop_to_the_level_before_the_rise_less_the_guards_sheds_is_held_as_a_stop(
     f_charge_after_the_guards_sheds: list[PhaseSample],
 ) -> None:
     detection = detect_ev(
@@ -236,6 +347,11 @@ def test_charging_stops_at_the_level_before_the_rise_less_the_guards_sheds(
         [],
         2043.0,
         sheds=(BOILER_SHED, KITCHEN_SHED),
+        loads=(),
     )
 
-    assert detection == EvDetection(watches=(), started=(), stopped=(CHARGING_ON_A_BUSY_PHASE,))
+    assert detection == EvDetection(
+        watches=(replace(CHARGING_ON_A_BUSY_PHASE, drop_seen_at=2043.0),),
+        started=(),
+        stopped=(),
+    )
