@@ -18,6 +18,7 @@ from apps.climate.domain.learning import (
     learn_early_stop_offset,
     learn_morning,
 )
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.ports import ZoneLearningStore, ZoneStore
@@ -31,6 +32,7 @@ from apps.climate.domain.zone_cycle import (
     ZoneFollowUp,
     decide_zone,
     follow_zone,
+    hold_air_dry_run,
 )
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
@@ -180,7 +182,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         decision = decide_zone(zone, memory, conditions, cycle)
         outcome = self._drive(zone, decision.target, cycle.now, live=conditions.writes_live)
         follow_up = follow_zone(zone, memory, decision, outcome, conditions, cycle)
-        self._journal_air_dry_run(zone, follow_up, cycle.now)
+        follow_up = self._journal_air_dry_run(zone, memory, follow_up, cycle.now)
         self._learn(zone, follow_up, conditions.learning, cycle.control)
         self._book.remember_zone(zone.slug, follow_up.memory)
         return outcome
@@ -242,14 +244,18 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         if change.setpoint is not None:
             thermostat.set_setpoint(change.setpoint)
 
-    def _journal_air_dry_run(self, zone: ZoneSettings, follow_up: ZoneFollowUp, now: datetime) -> None:
+    def _journal_air_dry_run(
+        self,
+        zone: ZoneSettings,
+        memory: ZoneMemory,
+        follow_up: ZoneFollowUp,
+        now: datetime,
+    ) -> ZoneFollowUp:
         if follow_up.optimal_start is not None:
             self._event_store.add_event(follow_up.optimal_start)
-        if follow_up.air_dry_run is not None:
-            self._stamp_air_dry_run(zone, now)
-            self._event_store.add_event(follow_up.air_dry_run)
+        if follow_up.air_dry_run is None:
+            return follow_up
 
-    def _stamp_air_dry_run(self, zone: ZoneSettings, now: datetime) -> None:
         try:
             self._zones.mark_air_dry_run(zone.slug, now)
         except OperationalError as error:
@@ -258,6 +264,10 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
                 zone=zone.slug,
                 error=str(error),
             )
+            return hold_air_dry_run(follow_up, memory)
+
+        self._event_store.add_event(follow_up.air_dry_run)
+        return follow_up
 
     def _learn(
         self,

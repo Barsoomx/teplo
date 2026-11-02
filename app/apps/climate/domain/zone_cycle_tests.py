@@ -24,6 +24,7 @@ from apps.climate.domain.zone_cycle import (
     ZoneFollowUp,
     decide_zone,
     follow_zone,
+    hold_air_dry_run,
 )
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -412,6 +413,24 @@ def test_air_dry_run_change_waits_thirty_minutes_after_last_one(
     follow_up = _follow(zone, f_journaled_memory, _conditions('22.0'), _cycle(MORNING), ZoneCycleOutcome.UNCHANGED)
 
     assert (follow_up.memory.air_state, follow_up.air_dry_run is not None) == (state, state is AirState.IDLE)
+
+
+@pytest.fixture
+def f_idle_journaled_follow_up(f_zone: ZoneSettings, f_journaled_memory: ZoneMemory) -> ZoneFollowUp:
+    return _follow(f_zone, f_journaled_memory, _conditions('22.0'), _cycle(MORNING), ZoneCycleOutcome.UNCHANGED)
+
+
+def test_held_air_dry_run_change_drops_its_entry_and_keeps_what_the_zone_followed(
+    f_idle_journaled_follow_up: ZoneFollowUp,
+    f_journaled_memory: ZoneMemory,
+) -> None:
+    held = hold_air_dry_run(f_idle_journaled_follow_up, f_journaled_memory)
+
+    assert (f_idle_journaled_follow_up.air_dry_run is None, held.air_dry_run, held.memory) == (
+        False,
+        None,
+        f_journaled_memory,
+    )
 
 
 def test_air_dry_run_change_waits_for_available_thermostat(

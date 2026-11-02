@@ -14,7 +14,6 @@ from apps.climate.domain.events import (
     ZoneCommandFailed,
     ZoneCommandIssued,
 )
-from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import AirSample, Morning
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
@@ -1591,6 +1590,24 @@ def f_unstamped_air_dry_run_cycle(
 
 
 @pytest.fixture
+def f_air_dry_run_after_unstamped_change(
+    house_thermostats: dict[str, FloorThermostat],
+    f_locked_air_stamp_zones: ZoneStoreStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    store.record_state(KITCHEN, _state('28.0'))
+    temperatures.record_state('air-kitchen', _reading('20.4'))
+    _use_case(store, temperatures, house_thermostats, f_book, dispatcher, zones=f_locked_air_stamp_zones).execute(
+        _at(MORNING),
+    )
+    temperatures.record_state('air-kitchen', _reading('22.0'))
+    return _use_case(store, temperatures, house_thermostats, f_book, dispatcher)
+
+
+@pytest.fixture
 def f_locked_command_stamp_zones(house_zones: list[ZoneSettings]) -> ZoneStoreStub:
     return ZoneStoreStub(
         zones=house_zones,
@@ -1677,7 +1694,7 @@ def test_stop_that_fails_to_save_is_lost_while_the_cycle_goes_on(
     )
 
 
-def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on(
+def test_air_dry_run_change_whose_stamp_fails_is_held_while_the_cycle_goes_on(
     f_unstamped_air_dry_run_cycle: RunHeatingCycleUseCase,
     f_locked_air_stamp_zones: ZoneStoreStub,
     f_living_room_thermostat: FloorThermostatStub,
@@ -1702,30 +1719,40 @@ def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on
         },
         [('setpoint', Decimal('28.0'))],
         [('last_command_at', 'bathroom-2f', MORNING), ('last_command_at', 'living-room', MORNING)],
+        [_issued('bathroom-2f', '30.0', MORNING), _issued('living-room', '28.0', MORNING)],
+        ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.COMFORT),
+        [('zone_air_dry_run_stamp_failed', 'warning', 'kitchen', LOCKED)],
+    )
+
+
+def test_air_dry_run_change_whose_stamp_failed_holds_back_no_later_change(
+    f_air_dry_run_after_unstamped_change: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    now = MORNING + MINUTE
+
+    f_air_dry_run_after_unstamped_change.execute(_at(now))
+
+    assert (
+        [event for event in f_events if isinstance(event, AirControlDryRun)],
+        Zone.objects.get(slug='kitchen').last_air_dry_run_at,
+    ) == (
         [
-            _issued('bathroom-2f', '30.0', MORNING),
             AirControlDryRun(
                 zone='kitchen',
-                air=Decimal('20.4'),
+                air=Decimal('22.0'),
                 target=Decimal('22.0'),
                 mode=ScheduleMode.COMFORT,
-                state=AirState.HEAT,
+                state=AirState.IDLE,
                 previous_state=None,
                 power=True,
-                setpoint=Decimal('30.0'),
+                setpoint=Decimal('18.0'),
                 early_stop_offset=Decimal('0.30'),
                 lead_minutes=None,
-                occurred_at=MORNING,
+                occurred_at=now,
             ),
-            _issued('living-room', '28.0', MORNING),
         ],
-        ZoneMemory(
-            path=ControlPath.AIR_DRY_RUN,
-            mode=ScheduleMode.COMFORT,
-            air_state=AirState.HEAT,
-            would_be_target=ThermostatTarget(power=True, setpoint=Decimal('30.0')),
-        ),
-        [('zone_air_dry_run_stamp_failed', 'warning', 'kitchen', LOCKED)],
+        now,
     )
 
 

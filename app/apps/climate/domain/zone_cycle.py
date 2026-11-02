@@ -111,6 +111,18 @@ def follow_zone(
     return _follow_air_dry_run(follow_up, zone, memory, decision.plan, outcome, conditions, cycle)
 
 
+def hold_air_dry_run(follow_up: ZoneFollowUp, memory: ZoneMemory) -> ZoneFollowUp:
+    return replace(
+        follow_up,
+        memory=replace(
+            follow_up.memory,
+            air_state=memory.air_state_on(ControlPath.AIR_DRY_RUN),
+            would_be_target=memory.would_be_target,
+        ),
+        air_dry_run=None,
+    )
+
+
 def _plan(
     zone: ZoneSettings,
     memory: ZoneMemory,
@@ -197,16 +209,15 @@ def _follow_air_dry_run(
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
     follow_up = replace(follow_up, optimal_start=_optimal_start(zone, memory, plan, cycle.now))
-    followed = memory.air_state_on(ControlPath.AIR_DRY_RUN)
     target = _guarded(zone, plan.thermostat, conditions)
     if outcome is ZoneCycleOutcome.DEVICE_UNAVAILABLE:
-        return replace(follow_up, memory=replace(follow_up.memory, air_state=followed))
+        return hold_air_dry_run(follow_up, memory)
 
     if target == memory.would_be_target:
         return replace(follow_up, memory=replace(follow_up.memory, air_state=plan.state))
 
     if not write_allowed(zone.last_air_dry_run_at, cycle.now):
-        return replace(follow_up, memory=replace(follow_up.memory, air_state=followed))
+        return hold_air_dry_run(follow_up, memory)
 
     return replace(
         follow_up,
@@ -217,7 +228,7 @@ def _follow_air_dry_run(
             target=plan.target,
             mode=plan.mode,
             state=plan.state,
-            previous_state=followed,
+            previous_state=memory.air_state_on(ControlPath.AIR_DRY_RUN),
             power=target.power,
             setpoint=target.setpoint,
             early_stop_offset=plan.early_stop_offset,
