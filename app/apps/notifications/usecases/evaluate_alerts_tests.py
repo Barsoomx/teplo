@@ -5,8 +5,7 @@ import pytest
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertKey, AlertKind, MonitoredDevice, ZoneHeating
-from apps.notifications.domain.events import AlertCleared, AlertRaised, TeploResumed
-from apps.notifications.domain.outage import Outage, StartupNote
+from apps.notifications.domain.events import AlertCleared, AlertRaised
 from apps.notifications.services.alert_book import AlertBook
 from apps.notifications.stubs import DeviceSourceStub, ZoneSourceStub
 from apps.notifications.usecases.evaluate_alerts import (
@@ -60,21 +59,6 @@ STALE_METER = MonitoredDevice(
 METER_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='phase-meter')
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
 CLOCK_STEP = timedelta(hours=3)
-RESTART_NOTE = StartupNote(
-    last_activity=NOW - timedelta(minutes=16),
-    monotonic=NOTICED,
-    router_uptime=timedelta(days=3),
-)
-POWER_CUT_NOTE = StartupNote(
-    last_activity=NOW - timedelta(minutes=2),
-    monotonic=NOTICED,
-    router_uptime=timedelta(minutes=1),
-)
-RESTART_AFTER_BOOT_NOTE = StartupNote(
-    last_activity=NOW - timedelta(seconds=30),
-    monotonic=NOTICED,
-    router_uptime=timedelta(minutes=7),
-)
 
 
 def _use_case(
@@ -125,7 +109,7 @@ def f_events() -> list[DomainEvent]:
 @pytest.fixture
 def f_dispatcher(f_events: list[DomainEvent]) -> EventDispatcher:
     dispatcher = EventDispatcher()
-    for event_type in (AlertRaised, AlertCleared, TeploResumed):
+    for event_type in (AlertRaised, AlertCleared):
         dispatcher.register(event_type, f_events.append)
     return dispatcher
 
@@ -172,27 +156,6 @@ def f_meter_noticed_book() -> AlertBook:
 
 
 @pytest.fixture
-def f_restarted_book() -> AlertBook:
-    book = AlertBook()
-    book.note_startup(RESTART_NOTE)
-    return book
-
-
-@pytest.fixture
-def power_cut_book() -> AlertBook:
-    book = AlertBook()
-    book.note_startup(POWER_CUT_NOTE)
-    return book
-
-
-@pytest.fixture
-def restarted_after_boot_book() -> AlertBook:
-    book = AlertBook()
-    book.note_startup(RESTART_AFTER_BOOT_NOTE)
-    return book
-
-
-@pytest.fixture
 def f_lost_use_case(
     f_noticed_book: AlertBook,
     f_zones: ZoneSourceStub,
@@ -234,45 +197,6 @@ def f_meter_stale_use_case(f_meter_noticed_book: AlertBook, f_dispatcher: EventD
     return _thermostat_and_meter_use_case(f_meter_noticed_book, f_dispatcher)
 
 
-@pytest.fixture
-def f_restarted_use_case(f_restarted_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
-    return _use_case([], ZoneSourceStub(zones=[]), f_restarted_book, f_dispatcher)
-
-
-@pytest.fixture
-def f_power_cut_use_case(power_cut_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
-    return _use_case([], ZoneSourceStub(zones=[]), power_cut_book, f_dispatcher)
-
-
-@pytest.fixture
-def f_restarted_after_boot_use_case(
-    restarted_after_boot_book: AlertBook,
-    f_dispatcher: EventDispatcher,
-) -> EvaluateAlertsUseCase:
-    return _use_case([], ZoneSourceStub(zones=[]), restarted_after_boot_book, f_dispatcher)
-
-
-@pytest.fixture
-def f_restarted_held_back_use_case(f_restarted_use_case: EvaluateAlertsUseCase) -> EvaluateAlertsUseCase:
-    f_restarted_use_case.execute(
-        EvaluateAlertsInputDTO(
-            now=NOW - CLOCK_STEP + timedelta(minutes=6),
-            monotonic=NOTICED + 360,
-            clock_trusted=True,
-        ),
-    )
-    return f_restarted_use_case
-
-
-@pytest.fixture
-def f_restarted_with_zones_use_case(
-    f_restarted_book: AlertBook,
-    f_zones: ZoneSourceStub,
-    f_dispatcher: EventDispatcher,
-) -> EvaluateAlertsUseCase:
-    return _use_case([], f_zones, f_restarted_book, f_dispatcher)
-
-
 def test_confirmed_device_loss_raises_an_alert(
     f_lost_use_case: EvaluateAlertsUseCase,
     f_events: list[DomainEvent],
@@ -280,7 +204,7 @@ def test_confirmed_device_loss_raises_an_alert(
     output = f_lost_use_case.execute(_input(timedelta(minutes=2)))
 
     assert (output, f_events) == (
-        EvaluateAlertsOutputDTO(raised=(THERMOSTAT_KEY,), cleared=(), outage=None),
+        EvaluateAlertsOutputDTO(raised=(THERMOSTAT_KEY,), cleared=()),
         [
             AlertRaised(
                 kind=AlertKind.DEVICE_LOST,
@@ -359,7 +283,7 @@ def test_raised_alert_is_not_repeated(
 ) -> None:
     output = f_still_lost_use_case.execute(_input(timedelta(minutes=10)))
 
-    assert (output, f_events) == (EvaluateAlertsOutputDTO(raised=(), cleared=(), outage=None), [])
+    assert (output, f_events) == (EvaluateAlertsOutputDTO(raised=(), cleared=()), [])
 
 
 def test_device_reading_again_clears_its_alert(
@@ -369,7 +293,7 @@ def test_device_reading_again_clears_its_alert(
     output = f_found_use_case.execute(_input(timedelta(minutes=5)))
 
     assert (output, f_events) == (
-        EvaluateAlertsOutputDTO(raised=(), cleared=(THERMOSTAT_KEY,), outage=None),
+        EvaluateAlertsOutputDTO(raised=(), cleared=(THERMOSTAT_KEY,)),
         [
             AlertCleared(
                 kind=AlertKind.DEVICE_LOST,
@@ -425,67 +349,10 @@ def test_alert_raised_while_the_clock_is_untrusted_names_no_time(
     ]
 
 
-def test_outage_before_the_start_is_reported_once(
-    f_restarted_use_case: EvaluateAlertsUseCase,
-    f_restarted_book: AlertBook,
-    f_events: list[DomainEvent],
-) -> None:
-    output = f_restarted_use_case.execute(_input(timedelta(minutes=7)))
-
-    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW, power_cut=False)
-    assert (output.outage, f_events, f_restarted_book.startup()) == (
-        outage,
-        [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
-        None,
-    )
-
-
-def test_outage_waits_for_a_trusted_clock(
-    f_restarted_with_zones_use_case: EvaluateAlertsUseCase,
-    f_restarted_book: AlertBook,
+def test_zone_targets_are_asked_with_the_trust_of_the_clock(
+    f_lost_use_case: EvaluateAlertsUseCase,
     f_zones: ZoneSourceStub,
-    f_events: list[DomainEvent],
 ) -> None:
-    output = f_restarted_with_zones_use_case.execute(_input(timedelta(minutes=7), clock_trusted=False))
+    f_lost_use_case.execute(_input(timedelta(minutes=1), clock_trusted=False))
 
-    assert (output.outage, f_events, f_restarted_book.startup(), f_zones.clock_trusted) == (
-        None,
-        [],
-        RESTART_NOTE,
-        [False],
-    )
-
-
-def test_outage_is_held_back_until_the_start_no_longer_precedes_the_last_activity(
-    f_restarted_held_back_use_case: EvaluateAlertsUseCase,
-    f_events: list[DomainEvent],
-) -> None:
-    output = f_restarted_held_back_use_case.execute(_input(timedelta(minutes=7)))
-
-    outage = Outage(began_at=NOW - timedelta(minutes=16), ended_at=NOW, power_cut=False)
-    assert (output.outage, f_events) == (
-        outage,
-        [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
-    )
-
-
-def test_power_cut_is_reported_even_after_a_gap_under_three_minutes(
-    f_power_cut_use_case: EvaluateAlertsUseCase,
-    f_events: list[DomainEvent],
-) -> None:
-    output = f_power_cut_use_case.execute(_input(timedelta(minutes=7)))
-
-    outage = Outage(began_at=NOW - timedelta(minutes=2), ended_at=NOW, power_cut=True)
-    assert (output.outage, f_events) == (
-        outage,
-        [TeploResumed(outage=outage, occurred_at=NOW + timedelta(minutes=7))],
-    )
-
-
-def test_restart_soon_after_a_boot_is_no_power_cut_once_teplo_was_active_since_the_boot(
-    f_restarted_after_boot_use_case: EvaluateAlertsUseCase,
-    f_events: list[DomainEvent],
-) -> None:
-    output = f_restarted_after_boot_use_case.execute(_input(timedelta(minutes=1)))
-
-    assert (output.outage, f_events) == (None, [])
+    assert f_zones.clock_trusted == [True, False]

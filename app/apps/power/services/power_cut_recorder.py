@@ -17,9 +17,12 @@ class PowerCutRecorder:
     def init(cls) -> 'PowerCutRecorder':
         return cls(outages=OutageRepository(), journal=JournalRepository())
 
-    def record(self, power_cut: PowerCut) -> OutageRecord:
+    def record(self, power_cut: PowerCut) -> OutageRecord | None:
         with transaction.atomic():
-            outage = self._outages.add(began_at=power_cut.began_at, ended_at=power_cut.ended_at)
+            outage = self._outages.add(power_cut)
+            if outage is None:
+                return None
+
             self._journal.add(
                 kind=POWER_OUTAGE,
                 subject='',

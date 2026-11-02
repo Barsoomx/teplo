@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Protocol
 
 from apps.notifications.domain.alerts import MonitoredDevice, ZoneHeating
+from apps.power.domain.outage import OutageRecord, PowerCut
 
 
 class DeviceSource(Protocol):
@@ -14,3 +15,7 @@ class ZoneSource(Protocol):
 
 class AlertSender(Protocol):
     def send(self, text: str) -> None: ...
+
+
+class PowerCutLedger(Protocol):
+    def record(self, power_cut: PowerCut) -> OutageRecord | None: ...

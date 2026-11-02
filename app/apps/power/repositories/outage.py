@@ -2,14 +2,22 @@ from collections.abc import Collection
 from datetime import datetime
 
 from apps.power.domain.errors import OutageNotFoundError
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.domain.outage import OutageCause, OutageRecord, PowerCut
 from apps.power.models import Outage
 
 
 class OutageRepository:
     @staticmethod
-    def add(began_at: datetime, ended_at: datetime) -> OutageRecord:
-        return _to_record(Outage.objects.create(began_at=began_at, ended_at=ended_at))
+    def add(power_cut: PowerCut) -> OutageRecord | None:
+        if power_cut.boot_id is not None and Outage.objects.filter(boot_id=power_cut.boot_id).exists():
+            return None
+
+        outage = Outage.objects.create(
+            boot_id=power_cut.boot_id,
+            began_at=power_cut.began_at,
+            ended_at=power_cut.ended_at,
+        )
+        return _to_record(outage)
 
     @staticmethod
     def newest_first() -> list[OutageRecord]:

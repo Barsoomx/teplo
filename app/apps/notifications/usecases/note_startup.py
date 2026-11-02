@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.notifications.domain.outage import StartupNote
 from apps.notifications.services.alert_book import AlertBook, alert_book
+from apps.telemetry.domain.starts import BootOpening
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -11,6 +12,7 @@ class NoteStartupInputDTO:
     last_activity: datetime | None
     monotonic: float
     router_uptime: timedelta | None
+    boot: BootOpening
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -32,6 +34,7 @@ class NoteStartupUseCase(BaseUseCase[NoteStartupInputDTO, NoteStartupOutputDTO])
             last_activity=input_dto.last_activity,
             monotonic=input_dto.monotonic,
             router_uptime=input_dto.router_uptime,
+            boot=input_dto.boot,
         )
         self._book.note_startup(note)
         return NoteStartupOutputDTO(note=note)

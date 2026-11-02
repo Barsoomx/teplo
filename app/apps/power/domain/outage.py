@@ -15,6 +15,7 @@ OUTAGE_ANSWERS = (OutageCause.OVERLOAD, OutageCause.GRID, OutageCause.UNKNOWN)
 
 @dataclass(frozen=True, kw_only=True)
 class PowerCut:
+    boot_id: str | None
     began_at: datetime
     ended_at: datetime
     noticed_at: datetime

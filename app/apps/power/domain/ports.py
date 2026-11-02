@@ -1,11 +1,11 @@
 from datetime import datetime
 from typing import Protocol
 
-from apps.power.domain.outage import OutageRecord
+from apps.power.domain.outage import OutageRecord, PowerCut
 
 
 class OutageStore(Protocol):
-    def add(self, began_at: datetime, ended_at: datetime) -> OutageRecord: ...
+    def add(self, power_cut: PowerCut) -> OutageRecord | None: ...
 
 
 class OutageJournal(Protocol):
