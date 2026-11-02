@@ -4,7 +4,6 @@ from apps.climate.domain.events import ZoneBoosted, ZoneCommandFailed, ZoneComma
 from apps.core.domain.events import DomainEvent, domain_event_handler
 from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.notifications.domain.events import AlertCleared, AlertRaised
-from apps.power.domain.events import OutageRecorded
 from apps.telemetry.repositories.journal import JournalRepository
 
 
@@ -69,16 +68,6 @@ def journal_alert_cleared(event: AlertCleared) -> None:
     JournalRepository.add(
         kind='alert_cleared',
         subject=event.subject,
-        payload=_payload(event),
-        created_at=event.occurred_at,
-    )
-
-
-@domain_event_handler(OutageRecorded)
-def journal_power_outage(event: OutageRecorded) -> None:
-    JournalRepository.add(
-        kind='power_outage',
-        subject='',
         payload=_payload(event),
         created_at=event.occurred_at,
     )
