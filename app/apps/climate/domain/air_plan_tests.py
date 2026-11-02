@@ -1,0 +1,229 @@
+from dataclasses import replace
+from datetime import datetime, time, timedelta
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from apps.climate.domain.air_plan import AirPlan, plan_air
+from apps.climate.domain.air_policy import AirRegulationSettings
+from apps.climate.domain.control import ClimateControl
+from apps.climate.domain.floor_policy import ThermostatTarget
+from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
+from apps.climate.domain.modes import AirState, ScheduleMode, ZoneKind
+from apps.climate.domain.optimal_start import OptimalStartSettings, PreheatStart
+from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
+from apps.climate.domain.sensors import ClimateSensors
+from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
+
+MOSCOW = ZoneInfo('Europe/Moscow')
+COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
+MORNING = datetime(2026, 11, 2, 7, 0, tzinfo=MOSCOW)
+NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
+OUTDOOR = Decimal('-3.4')
+CONTROL = ClimateControl(
+    sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug='air-second-floor'),
+    regulation=AirRegulationSettings(start_offset=Decimal('0.3'), initial_early_stop_offset=Decimal('0.3')),
+    optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
+    second_floor_guard=SecondFloorGuardSettings(
+        zone_slug='bathroom-2f',
+        threshold=Decimal('19.0'),
+        hysteresis=Decimal('0.3'),
+        live=False,
+    ),
+)
+UNLEARNED = ZoneLearningRecord.unlearned()
+LEARNED = ZoneLearningRecord(
+    early_stop_offset=None,
+    heat_up=HeatUpModel(dead_time=timedelta(minutes=40), rates={-5: Decimal('0.800')}, mornings=3),
+)
+LEARNED_LEAD = timedelta(hours=2, minutes=40)
+HEAT = ThermostatTarget(power=True, setpoint=Decimal('29.0'))
+IDLE = ThermostatTarget(power=True, setpoint=Decimal('18.0'))
+
+
+def _plan(
+    zone: ZoneSettings,
+    now: datetime,
+    air: str,
+    *,
+    current: AirState | None = None,
+    latched: PreheatStart | None = None,
+    learning: ZoneLearningRecord = UNLEARNED,
+    clock_trusted: bool = True,
+) -> AirPlan:
+    return plan_air(
+        zone,
+        current,
+        latched,
+        air=Decimal(air),
+        outdoor=OUTDOOR,
+        learning=learning,
+        control=CONTROL,
+        now=now,
+        clock_trusted=clock_trusted,
+    )
+
+
+@pytest.fixture
+def f_zone() -> ZoneSettings:
+    return ZoneSettings(
+        slug='kitchen',
+        name='Kitchen',
+        kind=ZoneKind.AIR,
+        thermostat_slug='thermostat-kitchen',
+        air_sensor_slug='air-kitchen',
+        heating_enabled=True,
+        live_control=True,
+        air_control_live=True,
+        setpoints=FloorSetpoints(
+            comfort=Decimal('28.0'),
+            night=Decimal('22.0'),
+            boost=Decimal('30.0'),
+            idle=Decimal('18.0'),
+            limit=Decimal('29.0'),
+        ),
+        air_targets=AirTargets(comfort=Decimal('22.0'), night=Decimal('19.5')),
+        preheat_lead=timedelta(hours=3),
+        windows=tuple(ComfortWindow(weekday=weekday, start=time(6, 30), end=time(23, 30)) for weekday in range(7)),
+        boost_until=None,
+        last_command_at=None,
+        last_dry_run_at=None,
+        last_air_dry_run_at=None,
+    )
+
+
+@pytest.fixture
+def f_boosted_zone(f_zone: ZoneSettings) -> ZoneSettings:
+    return replace(f_zone, boost_until=MORNING + timedelta(hours=1))
+
+
+@pytest.fixture
+def f_latched() -> PreheatStart:
+    return PreheatStart(comfort_at=COMFORT_AT, lead=LEARNED_LEAD)
+
+
+def test_plan_heats_below_start_threshold_in_comfort(f_zone: ZoneSettings) -> None:
+    assert _plan(f_zone, MORNING, '21.6') == AirPlan(
+        air=Decimal('21.6'),
+        preheat=None,
+        mode=ScheduleMode.COMFORT,
+        target=Decimal('22.0'),
+        early_stop_offset=Decimal('0.3'),
+        state=AirState.HEAT,
+        thermostat=HEAT,
+    )
+
+
+def test_plan_idles_at_night_air_target(f_zone: ZoneSettings) -> None:
+    assert _plan(f_zone, NIGHT, '19.4') == AirPlan(
+        air=Decimal('19.4'),
+        preheat=None,
+        mode=ScheduleMode.NIGHT,
+        target=Decimal('19.5'),
+        early_stop_offset=Decimal('0.3'),
+        state=AirState.IDLE,
+        thermostat=IDLE,
+    )
+
+
+def test_plan_holds_comfort_air_target_while_clock_untrusted(f_zone: ZoneSettings, f_latched: PreheatStart) -> None:
+    plan = _plan(f_zone, NIGHT, '21.0', latched=f_latched, clock_trusted=False)
+
+    assert (plan.preheat, plan.target, plan.state) == (None, Decimal('22.0'), AirState.HEAT)
+
+
+@pytest.mark.parametrize(
+    ('now', 'mode', 'preheat'),
+    [
+        (COMFORT_AT - timedelta(hours=3, minutes=1), ScheduleMode.NIGHT, None),
+        (
+            COMFORT_AT - timedelta(hours=3),
+            ScheduleMode.PREHEAT,
+            PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=3)),
+        ),
+    ],
+    ids=['before_fixed_lead', 'at_fixed_lead'],
+)
+def test_unlearned_zone_preheats_on_its_fixed_lead(
+    f_zone: ZoneSettings,
+    now: datetime,
+    mode: ScheduleMode,
+    preheat: PreheatStart | None,
+) -> None:
+    plan = _plan(f_zone, now, '20.4')
+
+    assert (plan.mode, plan.preheat) == (mode, preheat)
+
+
+@pytest.mark.parametrize(
+    ('now', 'mode', 'preheat', 'state'),
+    [
+        (COMFORT_AT - LEARNED_LEAD - timedelta(minutes=1), ScheduleMode.NIGHT, None, AirState.IDLE),
+        (
+            COMFORT_AT - LEARNED_LEAD,
+            ScheduleMode.PREHEAT,
+            PreheatStart(comfort_at=COMFORT_AT, lead=LEARNED_LEAD),
+            AirState.HEAT,
+        ),
+    ],
+    ids=['before_optimal_start', 'at_optimal_start'],
+)
+def test_learned_zone_preheats_on_optimal_lead(
+    f_zone: ZoneSettings,
+    now: datetime,
+    mode: ScheduleMode,
+    preheat: PreheatStart | None,
+    state: AirState,
+) -> None:
+    plan = _plan(f_zone, now, '20.4', learning=LEARNED)
+
+    assert (plan.mode, plan.preheat, plan.lead, plan.state) == (
+        mode,
+        preheat,
+        None if preheat is None else LEARNED_LEAD,
+        state,
+    )
+
+
+def test_latched_preheat_holds_while_room_warms(f_zone: ZoneSettings, f_latched: PreheatStart) -> None:
+    plan = _plan(
+        f_zone,
+        COMFORT_AT - timedelta(hours=1, minutes=20),
+        '21.6',
+        current=AirState.HEAT,
+        latched=f_latched,
+        learning=LEARNED,
+    )
+
+    assert (plan.mode, plan.preheat, plan.target, plan.state) == (
+        ScheduleMode.PREHEAT,
+        f_latched,
+        Decimal('22.0'),
+        AirState.HEAT,
+    )
+
+
+@pytest.mark.parametrize(
+    ('learning', 'early_stop_offset', 'state'),
+    [
+        (UNLEARNED, Decimal('0.3'), AirState.IDLE),
+        (replace(UNLEARNED, early_stop_offset=Decimal('0.10')), Decimal('0.10'), AirState.HEAT),
+    ],
+    ids=['initial_offset_stops', 'learned_smaller_offset_keeps_heating'],
+)
+def test_plan_stops_heat_on_learned_early_stop_offset(
+    f_zone: ZoneSettings,
+    learning: ZoneLearningRecord,
+    early_stop_offset: Decimal,
+    state: AirState,
+) -> None:
+    plan = _plan(f_zone, MORNING, '21.8', current=AirState.HEAT, learning=learning)
+
+    assert (plan.early_stop_offset, plan.state) == (early_stop_offset, state)
+
+
+def test_boosted_plan_holds_boost_setpoint(f_boosted_zone: ZoneSettings) -> None:
+    plan = _plan(f_boosted_zone, MORNING, '22.5')
+
+    assert (plan.state, plan.thermostat) == (AirState.IDLE, ThermostatTarget(power=True, setpoint=Decimal('30.0')))
