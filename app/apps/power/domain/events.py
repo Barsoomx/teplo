@@ -60,6 +60,7 @@ class LoadRestoreEvent(DomainEvent):
     load_amps: Decimal
     reason: ShedReason
     cause: RestoreCause
+    switched_on: bool
 
 
 @dataclass(frozen=True, kw_only=True)

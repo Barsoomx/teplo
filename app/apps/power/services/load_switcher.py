@@ -35,11 +35,16 @@ class LoadSwitcher:
         plug.set_on(True)
         return True
 
-    def release(self, load: LoadRecord, *, was_on: bool | None, zone_writes_live: bool, at: datetime) -> None:
+    def release(self, load: LoadRecord, *, was_on: bool | None, zone_writes_live: bool, at: datetime) -> bool:
         if load.zone_slug is None:
-            if was_on is True:
-                self._plugs.switchable_plug(load.device_slug).set_on(True)
-            return
+            if was_on is not True:
+                return False
 
-        if not zone_writes_live:
-            self._zones.switch_on(load.zone_slug, load.device_slug, at)
+            self._plugs.switchable_plug(load.device_slug).set_on(True)
+            return True
+
+        if zone_writes_live:
+            return False
+
+        self._zones.switch_on(load.zone_slug, load.device_slug, at)
+        return True

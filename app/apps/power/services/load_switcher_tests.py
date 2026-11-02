@@ -157,12 +157,12 @@ def test_restoring_a_plug_without_a_switching_driver_fails_before_asking_a_permi
 
 
 @pytest.mark.parametrize(
-    ('load', 'was_on', 'zone_writes_live', 'switches', 'switched_on'),
+    ('load', 'was_on', 'zone_writes_live', 'outcome', 'switches', 'switched_on'),
     [
-        (BOILER, True, True, [True], []),
-        (BOILER, None, True, [], []),
-        (KITCHEN, None, True, [], []),
-        (KITCHEN, None, False, [], [('kitchen', 'thermostat-kitchen', NOW)]),
+        (BOILER, True, True, True, [True], []),
+        (BOILER, None, True, False, [], []),
+        (KITCHEN, None, True, False, [], []),
+        (KITCHEN, None, False, True, [], [('kitchen', 'thermostat-kitchen', NOW)]),
     ],
     ids=[
         'plug_teplo_switched_off',
@@ -178,12 +178,13 @@ def test_releasing_hands_a_load_back_as_teplo_found_it(
     load: LoadRecord,
     was_on: bool | None,
     zone_writes_live: bool,
+    outcome: bool,
     switches: list[bool],
     switched_on: list[tuple[str, str, datetime]],
 ) -> None:
-    f_switcher.release(load, was_on=was_on, zone_writes_live=zone_writes_live, at=NOW)
+    released = f_switcher.release(load, was_on=was_on, zone_writes_live=zone_writes_live, at=NOW)
 
-    assert (f_plug.switches, f_zones.switched_on) == (switches, switched_on)
+    assert (released, f_plug.switches, f_zones.switched_on) == (outcome, switches, switched_on)
 
 
 def test_plug_without_a_switching_driver_fails_the_shed(f_switcher_without_plugs: LoadSwitcher) -> None:

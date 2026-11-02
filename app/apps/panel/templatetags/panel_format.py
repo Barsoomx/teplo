@@ -110,6 +110,7 @@ LOAD_SHEDS = {
         '%(name)s: would hand the thermostat back to its schedule',
     ),
 }
+ZONE_SWITCHED_BACK_ON = gettext_lazy('%(name)s: switched the thermostat back on')
 SHED_UNMEASURED_OVERLOAD = gettext_lazy('Overload on phase %(phase)s')
 SHED_ON_METER_LOST = gettext_lazy('No readings from the phase meter: one floor per phase')
 RESTORED_ON_CALM = gettext_lazy('Phase %(phase)s back to normal: %(amps)s A')
@@ -119,7 +120,7 @@ LOAD_COMMANDS_FAILED = {
     ('shed', LoadKind.PLUG): gettext_lazy('%(name)s: could not switch the plug off'),
     ('restore', LoadKind.PLUG): gettext_lazy('%(name)s: could not switch the plug back on'),
     ('shed', LoadKind.ZONE): gettext_lazy('%(name)s: could not switch the thermostat off'),
-    ('restore', LoadKind.ZONE): gettext_lazy('%(name)s: could not hand the thermostat back to its schedule'),
+    ('restore', LoadKind.ZONE): gettext_lazy('%(name)s: could not switch the thermostat back on'),
 }
 ANY_LOAD_COMMAND_FAILED = gettext_lazy('%(name)s: a load management command failed')
 START_WOULD_WAIT = gettext_lazy('%(name)s: would put off switching on')
@@ -351,6 +352,8 @@ def load_shed_text(entry: TimelineEntry) -> str:
     if template is None:
         return _unknown_event(entry)
 
+    if kind is LoadKind.ZONE and entry.kind == 'load_restored' and entry.payload.get('switched_on') is True:
+        template = ZONE_SWITCHED_BACK_ON
     return str(template) % {'name': load_name(entry)}
 
 

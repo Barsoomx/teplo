@@ -362,6 +362,7 @@ def test_cleared_alert_is_journaled() -> None:
                 load_amps=Decimal('8.0'),
                 reason=ShedReason.OVERLOAD,
                 cause=RestoreCause.CALM,
+                switched_on=False,
                 occurred_at=NOW,
             ),
             (
@@ -376,6 +377,7 @@ def test_cleared_alert_is_journaled() -> None:
                     'load_amps': '8.0',
                     'reason': 'overload',
                     'cause': 'calm',
+                    'switched_on': False,
                 },
                 NOW,
             ),
@@ -391,6 +393,7 @@ def test_cleared_alert_is_journaled() -> None:
                 load_amps=Decimal('8.0'),
                 reason=ShedReason.METER_LOST,
                 cause=RestoreCause.RELEASED,
+                switched_on=False,
                 occurred_at=NOW,
             ),
             (
@@ -405,6 +408,7 @@ def test_cleared_alert_is_journaled() -> None:
                     'load_amps': '8.0',
                     'reason': 'meter_lost',
                     'cause': 'released',
+                    'switched_on': False,
                 },
                 NOW,
             ),

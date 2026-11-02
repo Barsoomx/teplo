@@ -198,12 +198,13 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         at: float,
         now: datetime,
     ) -> ShedState:
+        switched_on = False
         if shed.live:
             if not self._release_due(state, shedding, record, shed, at):
                 return shedding
 
             try:
-                self._switcher.release(
+                switched_on = self._switcher.release(
                     record,
                     was_on=shed.was_on,
                     zone_writes_live=self._zone_writes_live(state.loads, record),
@@ -212,7 +213,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             except DomainError as error:
                 return self._restore_failed(shedding, record, shed, error, now)
 
-            logger.info('load_released', load=record.slug)
+            logger.info('load_released', load=record.slug, switched_on=switched_on)
             shedding = _stored(shedding, record.slug, None)
         self._event_store.add_event(
             _restore_event(
@@ -221,6 +222,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 shed,
                 amps=state.phases.currents.get(shed.phase),
                 cause=RestoreCause.RELEASED,
+                switched_on=switched_on,
                 now=now,
             ),
         )
@@ -381,6 +383,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 shed,
                 amps=view.currents.get(shed.phase),
                 cause=RestoreCause.CALM,
+                switched_on=live and record.kind is LoadKind.PLUG and shed.was_on is True,
                 now=now,
             ),
         )
@@ -588,6 +591,7 @@ def _restore_event(
     *,
     amps: Decimal | None,
     cause: RestoreCause,
+    switched_on: bool,
     now: datetime,
 ) -> LoadRestoreEvent:
     return event_type(
@@ -599,5 +603,6 @@ def _restore_event(
         load_amps=shed.amps,
         reason=shed.reason,
         cause=cause,
+        switched_on=switched_on,
         occurred_at=now,
     )

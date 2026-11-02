@@ -615,8 +615,13 @@ def test_phase_event_text_names_the_phase_and_its_current(
         ),
         (
             'load_restored',
-            {**KITCHEN_SHED, 'cause': 'released'},
+            {**KITCHEN_SHED, 'cause': 'released', 'switched_on': False},
             ('Кухня: вернул термостат расписанию', 'Управление нагрузкой переключено в настройках'),
+        ),
+        (
+            'load_restored',
+            {**KITCHEN_SHED, 'cause': 'released', 'switched_on': True},
+            ('Кухня: снова включил термостат', 'Управление нагрузкой переключено в настройках'),
         ),
         ('load_shed', {}, ('Бойлер 1 этаж: выключил розетку', '')),
     ],
@@ -627,7 +632,8 @@ def test_phase_event_text_names_the_phase_and_its_current(
         'zone_shed_on_a_lost_meter',
         'plug_restored_on_calm',
         'zone_restored_in_dry_run_on_calm_of_every_phase',
-        'zone_released',
+        'zone_released_to_its_schedule',
+        'zone_released_with_its_thermostat_switched_back_on',
         'kind_from_the_device',
     ],
 )
@@ -653,9 +659,10 @@ def test_load_shed_text_says_what_was_switched_and_why(
         ('shed', 'Бойлер 1 этаж', DeviceKind.PLUG, 'Бойлер 1 этаж: не удалось выключить розетку'),
         ('restore', 'Бойлер 1 этаж', DeviceKind.PLUG, 'Бойлер 1 этаж: не удалось снова включить розетку'),
         ('shed', 'Кухня', DeviceKind.THERMOSTAT, 'Кухня: не удалось выключить термостат'),
+        ('restore', 'Кухня', DeviceKind.THERMOSTAT, 'Кухня: не удалось снова включить термостат'),
         ('shed', 'Бойлер 1 этаж', None, 'Бойлер 1 этаж: команда управления нагрузкой не прошла'),
     ],
-    ids=['plug_off', 'plug_on', 'thermostat_off', 'load_no_longer_known'],
+    ids=['plug_off', 'plug_on', 'thermostat_off', 'thermostat_on', 'load_no_longer_known'],
 )
 def test_load_command_text_names_the_device_teplo_could_not_switch(
     command: str,

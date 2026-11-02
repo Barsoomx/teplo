@@ -499,6 +499,10 @@ msgid "%(name)s: handed the thermostat back to its schedule"
 msgstr "%(name)s: вернул термостат расписанию"
 
 #, python-format
+msgid "%(name)s: switched the thermostat back on"
+msgstr "%(name)s: снова включил термостат"
+
+#, python-format
 msgid "%(name)s: would switch the plug back on"
 msgstr "%(name)s: снова включил бы розетку"
 
@@ -540,8 +544,8 @@ msgid "%(name)s: could not switch the thermostat off"
 msgstr "%(name)s: не удалось выключить термостат"
 
 #, python-format
-msgid "%(name)s: could not hand the thermostat back to its schedule"
-msgstr "%(name)s: не удалось вернуть термостат расписанию"
+msgid "%(name)s: could not switch the thermostat back on"
+msgstr "%(name)s: не удалось снова включить термостат"
 
 #, python-format
 msgid "%(name)s: a load management command failed"
