@@ -97,6 +97,22 @@ def _seed_journal(now: datetime) -> None:
     def setpoint(zone: str, value: str, *, dry_run: bool = False) -> dict:
         return {'zone': zone, 'change': {'power': None, 'mode': None, 'setpoint': value}, 'dry_run': dry_run}
 
+    def air_control(air: str, state: str, floor: str, *, mode: str, lead_minutes: int | None) -> dict:
+        return {
+            'zone': 'kitchen',
+            'air': air,
+            'target': '22.0',
+            'mode': mode,
+            'state': state,
+            'power': True,
+            'setpoint': floor,
+            'early_stop_offset': '0.30',
+            'lead_minutes': lead_minutes,
+        }
+
+    def guard(*, active: bool, air: str) -> dict:
+        return {'zone': 'bathroom-2f', 'active': active, 'air': air, 'setpoint': '30.0'}
+
     entries = (
         (at(21, 15, days_ago=1), 'teplo_started', '', {'last_activity': None}),
         (
@@ -127,7 +143,25 @@ def _seed_journal(now: datetime) -> None:
         (at(23, 30, days_ago=1), 'zone_command_issued', 'kitchen', setpoint('kitchen', '22.0')),
         (at(23, 30, days_ago=1), 'zone_command_issued', 'hallway', setpoint('hallway', '22.0', dry_run=True)),
         (at(3, 30), 'zone_command_issued', 'living-room', setpoint('living-room', '28.0')),
+        (at(4, 20), 'second_floor_guard_dry_run', 'bathroom-2f', guard(active=True, air='18.8')),
         (at(5, 30), 'zone_command_issued', 'kitchen', setpoint('kitchen', '28.0')),
+        (
+            at(6, 10),
+            'optimal_start_dry_run',
+            'kitchen',
+            {
+                'zone': 'kitchen',
+                'lead_minutes': 140,
+                'start': at(6, 10).isoformat(),
+                'fixed_start': at(5, 30).isoformat(),
+            },
+        ),
+        (
+            at(6, 10),
+            'air_control_dry_run',
+            'kitchen',
+            air_control('20.9', 'heat', '30.0', mode='preheat', lead_minutes=140),
+        ),
         (
             at(6, 41),
             'device_availability_changed',
@@ -144,6 +178,13 @@ def _seed_journal(now: datetime) -> None:
                 'error': OFFLINE_DETAIL,
                 'error_code': OFFLINE_CODE,
             },
+        ),
+        (at(7, 40), 'second_floor_guard_dry_run', 'bathroom-2f', guard(active=False, air='19.3')),
+        (
+            at(8, 55),
+            'air_control_dry_run',
+            'kitchen',
+            air_control('21.8', 'idle', '18.0', mode='comfort', lead_minutes=None),
         ),
         (
             now - timedelta(minutes=25),
