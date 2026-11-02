@@ -688,7 +688,7 @@ def f_sensor_back_cycle(
     f_thermostat: FloorThermostatStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
-    _air_zone(air_control_live=True)
+    ZoneLearningFactory.create(zone=_air_zone(air_control_live=True), early_stop_offset=Decimal('0.10'))
     thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat}
     store.record_state(KITCHEN, _state('28.0'))
     temperatures.record_state('air-kitchen', _reading('21.5'))
