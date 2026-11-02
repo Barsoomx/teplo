@@ -1036,13 +1036,26 @@ def test_live_load_is_shed_on_the_measured_current_whatever_the_dry_run_sheds(f_
 def test_live_plug_goes_back_on_only_when_the_measured_phase_has_room(
     f_mixed_house_after_an_overload: House,
 ) -> None:
-    outputs = _seconds(f_mixed_house_after_an_overload.guard, 181, '21.0')
+    crowded = _seconds(f_mixed_house_after_an_overload.guard, 130, '16.0')
+    switched_while_crowded = list(f_mixed_house_after_an_overload.boiler.switches)
+    permit_while_crowded = f_mixed_house_after_an_overload.book.last_permit_at()
+    roomy = _seconds(f_mixed_house_after_an_overload.guard, 1, '14.0')
 
     assert (
-        _restored_at(outputs, 5),
+        _restored_at(crowded, 5),
+        switched_while_crowded,
+        permit_while_crowded,
+        _restored_at(roomy, 135),
         f_mixed_house_after_an_overload.boiler.switches,
         f_mixed_house_after_an_overload.book.last_permit_at(),
-    ) == ([], [False], None)
+    ) == (
+        [(125, ('kitchen',))],
+        [False],
+        None,
+        [(135, ('boiler-1f',))],
+        [False, True],
+        START + 135,
+    )
 
 
 @pytest.mark.parametrize(
