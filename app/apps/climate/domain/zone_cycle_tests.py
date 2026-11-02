@@ -673,6 +673,26 @@ def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(f_live_zo
     )
 
 
+def test_zone_entering_air_mode_into_preheat_its_thermostat_already_holds_starts_no_morning(
+    f_live_zone: ZoneSettings,
+) -> None:
+    memory = ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.NIGHT)
+
+    follow_up = _follow(
+        f_live_zone,
+        memory,
+        _conditions('20.0', learning=SLOW_LEARNED),
+        _cycle(SENSOR_BACK),
+        ZoneCycleOutcome.UNCHANGED,
+    )
+
+    assert (follow_up.memory.mode, follow_up.memory.morning, follow_up.memory.preheated_for) == (
+        ScheduleMode.PREHEAT,
+        None,
+        COMFORT_AT,
+    )
+
+
 @pytest.mark.parametrize(
     ('outcome', 'clock_trusted', 'preheated_for'),
     [

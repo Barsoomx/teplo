@@ -256,6 +256,7 @@ def _morning_reading(
         at=cycle.now,
         mode=decision.mode if cycle.clock_trusted else None,
         previous_mode=memory.mode,
+        entering_air_mode=decision.path is ControlPath.AIR and memory.path is not ControlPath.AIR,
         preheated_for=memory.preheated_for,
         windows=zone.windows,
         target=zone.air_targets.comfort,

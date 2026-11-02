@@ -13,6 +13,7 @@ class MorningReading:
     at: datetime
     mode: ScheduleMode | None
     previous_mode: ScheduleMode | None
+    entering_air_mode: bool
     preheated_for: datetime | None
     windows: tuple[ComfortWindow, ...]
     target: Decimal
@@ -120,7 +121,13 @@ def _start_morning(reading: MorningReading) -> Morning | None:
 
 
 def _heats_from_start(reading: MorningReading) -> bool:
-    return reading.outcome in FOLLOWED and reading.air_state is not AirState.IDLE
+    if reading.air_state is AirState.IDLE:
+        return False
+
+    if reading.entering_air_mode:
+        return reading.outcome is ZoneCycleOutcome.APPLIED
+
+    return reading.outcome in FOLLOWED
 
 
 def _sample(reading: MorningReading) -> AirSample | None:
