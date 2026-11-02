@@ -144,6 +144,8 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
 
    Every node that is up prints its retained `teplo/<node>/status online` at once, then its readings, e.g. `teplo/teplo-air-kitchen/sensor/temperature/state 21.5`: the air and outdoor sensors every 30 seconds, the phase meter every second. Stop with Ctrl-C.
 
+   The dashboard shows a reading within 10 seconds of its arrival: an air sensor in its zone card, or in the row under the house facts when it belongs to no zone, the outdoor temperature among the house facts, and the phase bars below the loads, refreshed every 3 seconds. `api/v1/sensors/` and `api/v1/phases/` give the same as JSON.
+
 `teplo.log` says `mqtt_connected` once teplo has subscribed. `mqtt_connection_refused` means a wrong `username` or `password` in `[mqtt]`; `mqtt_connect_failed` means the broker is down or listens on another address. teplo keeps retrying on its own, 1 second after a failure and then up to every 30 seconds. `esphome_node_unknown` names a node that publishes but matches no teplo device, e.g. a misspelt node name, and `mqtt_not_configured` a missing `[mqtt]` table. The broker logs to standard error, which the init script discards; to watch it, stop the service and run `/opt/sbin/mosquitto -c /opt/etc/mosquitto/mosquitto.conf -v` in the foreground.
 
 ## Operate
