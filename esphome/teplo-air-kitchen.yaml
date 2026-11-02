@@ -1,0 +1,8 @@
+substitutions:
+  node_name: teplo-air-kitchen
+  friendly_name: Kitchen air
+
+packages:
+  node: !include common/node.yaml
+  supermini: !include common/supermini.yaml
+  air: !include common/air.yaml

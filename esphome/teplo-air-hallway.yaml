@@ -1,0 +1,8 @@
+substitutions:
+  node_name: teplo-air-hallway
+  friendly_name: Hallway air
+
+packages:
+  node: !include common/node.yaml
+  supermini: !include common/supermini.yaml
+  air: !include common/air.yaml

@@ -1,0 +1,9 @@
+# The spare SuperMini runs as an air node. To replace a failed SuperMini node, flash it with that node's configuration.
+substitutions:
+  node_name: teplo-spare
+  friendly_name: Spare
+
+packages:
+  node: !include common/node.yaml
+  supermini: !include common/supermini.yaml
+  air: !include common/air.yaml

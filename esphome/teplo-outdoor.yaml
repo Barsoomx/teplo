@@ -1,0 +1,20 @@
+substitutions:
+  node_name: teplo-outdoor
+  friendly_name: Outdoor
+
+packages:
+  node: !include common/node.yaml
+  supermini: !include common/supermini.yaml
+
+one_wire:
+  - platform: gpio
+    pin: GPIO10
+
+sensor:
+  - platform: dallas_temp
+    name: Temperature
+    update_interval: 30s
+    accuracy_decimals: 1
+    state_topic: teplo/${node_name}/sensor/temperature/state
+    retain: false
+    qos: 0
