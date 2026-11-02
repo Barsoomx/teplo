@@ -85,15 +85,18 @@ def follow_zone(
     conditions: ZoneConditions,
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
+    if outcome is ZoneCycleOutcome.SHED:
+        return ZoneFollowUp(
+            memory=_kept_memory(memory, decision, cycle),
+            air_dry_run=None,
+            optimal_start=None,
+            morning=None,
+            stop=None,
+        )
+
     morning = _observe_morning(zone, memory, decision, outcome, conditions, cycle)
     follow_up = ZoneFollowUp(
-        memory=ZoneMemory(
-            path=decision.path,
-            mode=decision.mode if cycle.clock_trusted else None,
-            would_be=memory.would_be,
-            preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
-            morning=morning.morning,
-        ),
+        memory=replace(_kept_memory(memory, decision, cycle), morning=morning.morning),
         air_dry_run=None,
         optimal_start=None,
         morning=morning.finished,
@@ -106,6 +109,15 @@ def follow_zone(
         return _follow_air(follow_up, zone, memory, decision, decision.plan, outcome, conditions, cycle)
 
     return _follow_air_dry_run(follow_up, zone, memory, decision.plan, outcome, conditions, cycle)
+
+
+def _kept_memory(memory: ZoneMemory, decision: ZoneDecision, cycle: CycleConditions) -> ZoneMemory:
+    return ZoneMemory(
+        path=decision.path,
+        mode=decision.mode if cycle.clock_trusted else None,
+        would_be=memory.would_be,
+        preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
+    )
 
 
 def _plan(
