@@ -1,0 +1,121 @@
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import timedelta
+from decimal import Decimal
+
+from apps.power.domain.control import PhaseThresholds
+from apps.power.domain.headroom import Currents, overrun
+from apps.power.domain.load_status import LoadReading, LoadStatus
+from apps.power.domain.loads import MEASURED_PHASES, LoadPhase, LoadRecord, ShedReason
+from apps.power.domain.moments import elapsed
+
+SETTLE = timedelta(seconds=5)
+
+
+@dataclass(frozen=True, kw_only=True)
+class Shed:
+    load: str
+    phase: LoadPhase
+    amps: Decimal
+    live: bool
+    reason: ShedReason
+    was_on: bool | None
+    at: float
+    settled_at: float
+
+
+def new_shed(
+    load: LoadStatus,
+    *,
+    phase: LoadPhase,
+    live: bool,
+    reason: ShedReason,
+    was_on: bool | None,
+    at: float,
+) -> Shed:
+    return Shed(
+        load=load.slug,
+        phase=phase,
+        amps=load.amps,
+        live=live,
+        reason=reason,
+        was_on=was_on,
+        at=at,
+        settled_at=at + SETTLE.total_seconds(),
+    )
+
+
+def resumed_shed(record: LoadRecord, *, at: float, default_amps: Decimal) -> Shed | None:
+    if record.shed is None:
+        return None
+
+    return Shed(
+        load=record.slug,
+        phase=record.shed.phase,
+        amps=record.effective_amps(default_amps),
+        live=True,
+        reason=record.shed.reason,
+        was_on=record.shed.was_on,
+        at=at,
+        settled_at=at,
+    )
+
+
+def relief(sheds: Iterable[Shed], phase: LoadPhase, at: float) -> Decimal:
+    return sum(
+        (shed.amps for shed in sheds if shed.phase is phase and (not shed.live or at < shed.settled_at)),
+        Decimal(0),
+    )
+
+
+def switched_back_on(shed: Shed, reading: LoadReading | None) -> bool:
+    if not shed.live or shed.was_on is not True or reading is None:
+        return False
+
+    return reading.read_at > shed.at and reading.closed is True
+
+
+def choose_shed(phase: LoadPhase, loads: Sequence[LoadStatus]) -> LoadStatus | None:
+    drawing = sorted(
+        (load for load in loads if load.available and load.drawing and not load.shed),
+        key=lambda load: load.priority,
+    )
+    on_phase = [load for load in drawing if load.phase is phase]
+    of_unknown_phase = [load for load in drawing if load.phase is LoadPhase.UNKNOWN]
+    return next(iter([*on_phase, *of_unknown_phase]), None)
+
+
+def choose_restore(
+    sheds: Sequence[Shed],
+    loads: Sequence[LoadStatus],
+    *,
+    calm: frozenset[LoadPhase],
+    currents: Currents,
+    last_restore_at: float | None,
+    at: float,
+    thresholds: PhaseThresholds,
+) -> Shed | None:
+    if not elapsed(last_restore_at, at, thresholds.restore_interval):
+        return None
+
+    statuses = {load.slug: load for load in loads}
+    ready = sorted(
+        (shed for shed in sheds if shed.load in statuses and _calm_for(shed.phase, calm)),
+        key=lambda shed: statuses[shed.load].priority,
+        reverse=True,
+    )
+    return next(
+        (
+            shed
+            for shed in ready
+            if overrun(statuses[shed.load].phase, statuses[shed.load].amps, currents, thresholds.start_ceiling) is None
+        ),
+        None,
+    )
+
+
+def _calm_for(phase: LoadPhase, calm: frozenset[LoadPhase]) -> bool:
+    if phase is LoadPhase.UNKNOWN:
+        return all(measured in calm for measured in MEASURED_PHASES)
+
+    return phase in calm
