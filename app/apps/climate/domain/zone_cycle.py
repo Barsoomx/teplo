@@ -16,6 +16,7 @@ from apps.climate.domain.observation import (
     StopProgress,
     StopReading,
     StopWatch,
+    note_preheat,
     observe_morning,
     observe_stop,
     start_stop_watch,
@@ -85,7 +86,8 @@ def follow_zone(
     conditions: ZoneConditions,
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
-    morning = _observe_morning(zone, memory, decision, outcome, conditions, cycle)
+    reading = _morning_reading(zone, memory, decision, outcome, conditions, cycle)
+    morning = _observe_morning(memory.morning, reading)
     follow_up = ZoneFollowUp(
         memory=ZoneMemory(
             path=decision.path,
@@ -93,7 +95,7 @@ def follow_zone(
             would_be_target=memory.would_be_target,
             preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
             morning=morning.morning,
-            last_morning_comfort_at=_last_morning_comfort_at(memory, morning),
+            preheated_for=None if reading is None else note_preheat(reading),
         ),
         air_dry_run=None,
         optimal_start=None,
@@ -239,42 +241,39 @@ def _optimal_start(zone: ZoneSettings, memory: ZoneMemory, plan: AirPlan, now: d
     )
 
 
-def _observe_morning(
+def _morning_reading(
     zone: ZoneSettings,
     memory: ZoneMemory,
     decision: ZoneDecision,
     outcome: ZoneCycleOutcome,
     conditions: ZoneConditions,
     cycle: CycleConditions,
-) -> MorningProgress:
+) -> MorningReading | None:
     if zone.kind is not ZoneKind.AIR or zone.air_sensor_slug is None:
-        return MorningProgress(morning=None, finished=None)
+        return None
 
-    return observe_morning(
-        memory.morning,
-        MorningReading(
-            at=cycle.now,
-            mode=decision.mode,
-            previous_mode=memory.mode,
-            last_morning_comfort_at=memory.last_morning_comfort_at,
-            windows=zone.windows,
-            target=zone.air_targets.comfort,
-            air=conditions.air,
-            outdoor=cycle.outdoor,
-            heating=(
-                conditions.writes_live
-                and zone.heating_enabled
-                and cycle.clock_trusted
-                and not zone.is_boosted(cycle.now)
-            ),
-            outcome=outcome,
-            air_state=_followed_air_state(memory, decision, outcome),
+    return MorningReading(
+        at=cycle.now,
+        mode=decision.mode if cycle.clock_trusted else None,
+        previous_mode=memory.mode,
+        preheated_for=memory.preheated_for,
+        windows=zone.windows,
+        target=zone.air_targets.comfort,
+        air=conditions.air,
+        outdoor=cycle.outdoor,
+        heating=(
+            conditions.writes_live and zone.heating_enabled and cycle.clock_trusted and not zone.is_boosted(cycle.now)
         ),
+        outcome=outcome,
+        air_state=_followed_air_state(memory, decision, outcome),
     )
 
 
-def _last_morning_comfort_at(memory: ZoneMemory, progress: MorningProgress) -> datetime | None:
-    return memory.last_morning_comfort_at if progress.morning is None else progress.morning.comfort_at
+def _observe_morning(morning: Morning | None, reading: MorningReading | None) -> MorningProgress:
+    if reading is None:
+        return MorningProgress(morning=None, finished=None)
+
+    return observe_morning(morning, reading)
 
 
 def _followed_air_state(memory: ZoneMemory, decision: ZoneDecision, outcome: ZoneCycleOutcome) -> AirState | None:

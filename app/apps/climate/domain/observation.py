@@ -11,9 +11,9 @@ from apps.climate.domain.zone import ComfortWindow
 @dataclass(frozen=True, kw_only=True)
 class MorningReading:
     at: datetime
-    mode: ScheduleMode
+    mode: ScheduleMode | None
     previous_mode: ScheduleMode | None
-    last_morning_comfort_at: datetime | None
+    preheated_for: datetime | None
     windows: tuple[ComfortWindow, ...]
     target: Decimal
     air: Decimal | None
@@ -68,6 +68,13 @@ def observe_morning(morning: Morning | None, reading: MorningReading) -> Morning
     return MorningProgress(morning=observed, finished=None)
 
 
+def note_preheat(reading: MorningReading) -> datetime | None:
+    if reading.mode is not ScheduleMode.PREHEAT or reading.outcome not in FOLLOWED:
+        return reading.preheated_for
+
+    return next_comfort_start(reading.windows, reading.at)
+
+
 def start_stop_watch(
     previous: AirState | None,
     state: AirState | None,
@@ -106,7 +113,7 @@ def _start_morning(reading: MorningReading) -> Morning | None:
         return None
 
     comfort_at = next_comfort_start(reading.windows, reading.at)
-    if comfort_at is None or comfort_at == reading.last_morning_comfort_at:
+    if comfort_at is None or comfort_at == reading.preheated_for:
         return None
 
     return Morning(comfort_at=comfort_at, target=reading.target, outdoor=reading.outdoor, samples=(sample,))

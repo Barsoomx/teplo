@@ -13,6 +13,7 @@ from apps.climate.domain.observation import (
     StopProgress,
     StopReading,
     StopWatch,
+    note_preheat,
     observe_morning,
     observe_stop,
     start_stop_watch,
@@ -22,6 +23,7 @@ from apps.climate.domain.zone import ComfortWindow
 MOSCOW = ZoneInfo('Europe/Moscow')
 PREHEAT_START = datetime(2026, 11, 2, 3, 30, tzinfo=MOSCOW)
 COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
+YESTERDAYS_COMFORT_AT = COMFORT_AT - timedelta(days=1)
 STOPPED_AT = datetime(2026, 11, 2, 9, 0, tzinfo=MOSCOW)
 WINDOWS = tuple(ComfortWindow(weekday=weekday, start=time(6, 30), end=time(23, 30)) for weekday in range(7))
 TARGET = Decimal('22.0')
@@ -35,7 +37,7 @@ def _reading(at: datetime, *, air: str = '20.1', mode: ScheduleMode = ScheduleMo
         at=at,
         mode=mode,
         previous_mode=ScheduleMode.PREHEAT,
-        last_morning_comfort_at=None,
+        preheated_for=None,
         windows=WINDOWS,
         target=TARGET,
         air=Decimal(air),
@@ -106,7 +108,7 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
         at=PREHEAT_START,
         mode=mode,
         previous_mode=previous_mode,
-        last_morning_comfort_at=None,
+        preheated_for=None,
         windows=WINDOWS,
         target=TARGET,
         air=air,
@@ -120,19 +122,19 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
 
 
 @pytest.mark.parametrize(
-    ('at', 'last_morning_comfort_at'),
+    ('at', 'preheated_for'),
     [
-        (PREHEAT_START, COMFORT_AT - timedelta(days=1)),
+        (PREHEAT_START, YESTERDAYS_COMFORT_AT),
         (PREHEAT_START + timedelta(minutes=16), None),
     ],
-    ids=['last_morning_was_yesterday', 'sensor_back_after_preheat_start'],
+    ids=['preheated_for_yesterday', 'sensor_back_after_preheat_start'],
 )
-def test_morning_starts_for_a_comfort_start_without_one(
+def test_morning_starts_for_a_comfort_start_not_preheated_for(
     f_start_reading: MorningReading,
     at: datetime,
-    last_morning_comfort_at: datetime | None,
+    preheated_for: datetime | None,
 ) -> None:
-    reading = replace(f_start_reading, at=at, last_morning_comfort_at=last_morning_comfort_at)
+    reading = replace(f_start_reading, at=at, preheated_for=preheated_for)
 
     assert observe_morning(None, reading) == MorningProgress(
         morning=Morning(
@@ -145,14 +147,48 @@ def test_morning_starts_for_a_comfort_start_without_one(
     )
 
 
-def test_no_second_morning_starts_for_the_same_comfort_start(f_start_reading: MorningReading) -> None:
+def test_no_morning_starts_for_a_comfort_start_already_preheated_for(f_start_reading: MorningReading) -> None:
     reading = replace(
         f_start_reading,
         at=PREHEAT_START + timedelta(minutes=16),
-        last_morning_comfort_at=COMFORT_AT,
+        preheated_for=COMFORT_AT,
     )
 
     assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
+
+
+@pytest.mark.parametrize(
+    ('mode', 'outcome', 'preheated_for'),
+    [
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.APPLIED, COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.UNCHANGED, COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.DRY_RUN, COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.THROTTLED, YESTERDAYS_COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.DEVICE_UNAVAILABLE, YESTERDAYS_COMFORT_AT),
+        (ScheduleMode.PREHEAT, ZoneCycleOutcome.FAILED, YESTERDAYS_COMFORT_AT),
+        (ScheduleMode.NIGHT, ZoneCycleOutcome.APPLIED, YESTERDAYS_COMFORT_AT),
+        (None, ZoneCycleOutcome.APPLIED, YESTERDAYS_COMFORT_AT),
+    ],
+    ids=[
+        'written',
+        'already_held',
+        'journaled_in_dry_run',
+        'write_waits_its_turn',
+        'thermostat_unavailable',
+        'write_failed',
+        'night',
+        'clock_untrusted',
+    ],
+)
+def test_comfort_start_is_preheated_for_once_the_thermostat_follows_its_preheat(
+    f_start_reading: MorningReading,
+    mode: ScheduleMode | None,
+    outcome: ZoneCycleOutcome,
+    preheated_for: datetime,
+) -> None:
+    reading = replace(f_start_reading, mode=mode, outcome=outcome, preheated_for=YESTERDAYS_COMFORT_AT)
+
+    assert note_preheat(reading) == preheated_for
 
 
 @pytest.mark.parametrize(
@@ -201,7 +237,7 @@ def test_morning_is_dropped_when_its_conditions_break(
         at=PREHEAT_START + timedelta(hours=1),
         mode=mode,
         previous_mode=ScheduleMode.PREHEAT,
-        last_morning_comfort_at=None,
+        preheated_for=None,
         windows=WINDOWS,
         target=TARGET,
         air=air,

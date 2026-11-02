@@ -33,6 +33,7 @@ OPTIMAL_START = datetime(2026, 11, 2, 3, 50, tzinfo=MOSCOW)
 MORNING = datetime(2026, 11, 2, 7, 0, tzinfo=MOSCOW)
 AIR_MODE_STOP = datetime(2026, 11, 2, 5, 40, tzinfo=MOSCOW)
 NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
+PREHEAT_WRITE = datetime(2026, 11, 2, 2, 40, tzinfo=MOSCOW)
 SENSOR_BACK = datetime(2026, 11, 2, 2, 46, tzinfo=MOSCOW)
 OUTDOOR = Decimal('-3.4')
 TARGET = Decimal('22.0')
@@ -194,6 +195,16 @@ def f_preheating_memory() -> ZoneMemory:
         air_state=AirState.HEAT,
         heat_target=TARGET,
         preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=2, minutes=40)),
+    )
+
+
+@pytest.fixture
+def f_held_back_preheat_memory() -> ZoneMemory:
+    return ZoneMemory(
+        path=ControlPath.AIR,
+        mode=ScheduleMode.PREHEAT,
+        air_state=AirState.IDLE,
+        preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=4)),
     )
 
 
@@ -605,12 +616,20 @@ def test_finished_morning_is_handed_over_once(f_zone: ZoneSettings, f_morning: M
     assert (follow_up.morning, follow_up.memory.morning) == (f_morning, None)
 
 
-def test_air_sensor_back_in_preheat_starts_no_second_morning_for_its_comfort_start(f_live_zone: ZoneSettings) -> None:
+@pytest.mark.parametrize(
+    'outcome',
+    [ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.APPLIED],
+    ids=['thermostat_still_heating', 'thermostat_written_again'],
+)
+def test_air_sensor_back_in_preheat_starts_no_morning_for_a_comfort_start_already_preheated_for(
+    f_live_zone: ZoneSettings,
+    outcome: ZoneCycleOutcome,
+) -> None:
     memory = ZoneMemory(
         path=ControlPath.FLOOR,
         mode=ScheduleMode.NIGHT,
         preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=4)),
-        last_morning_comfort_at=COMFORT_AT,
+        preheated_for=COMFORT_AT,
     )
 
     follow_up = _follow(
@@ -618,10 +637,10 @@ def test_air_sensor_back_in_preheat_starts_no_second_morning_for_its_comfort_sta
         memory,
         _conditions('20.0', learning=SLOW_LEARNED),
         _cycle(SENSOR_BACK),
-        ZoneCycleOutcome.UNCHANGED,
+        outcome,
     )
 
-    assert (follow_up.memory.mode, follow_up.memory.morning, follow_up.memory.last_morning_comfort_at) == (
+    assert (follow_up.memory.mode, follow_up.memory.morning, follow_up.memory.preheated_for) == (
         ScheduleMode.PREHEAT,
         None,
         COMFORT_AT,
@@ -632,7 +651,7 @@ def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(f_live_zo
     memory = ZoneMemory(
         path=ControlPath.FLOOR,
         mode=ScheduleMode.NIGHT,
-        last_morning_comfort_at=COMFORT_AT - timedelta(days=1),
+        preheated_for=COMFORT_AT - timedelta(days=1),
     )
 
     follow_up = _follow(
@@ -643,7 +662,7 @@ def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(f_live_zo
         ZoneCycleOutcome.APPLIED,
     )
 
-    assert (follow_up.memory.morning, follow_up.memory.last_morning_comfort_at) == (
+    assert (follow_up.memory.morning, follow_up.memory.preheated_for) == (
         Morning(
             comfort_at=COMFORT_AT,
             target=TARGET,
@@ -652,6 +671,33 @@ def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(f_live_zo
         ),
         COMFORT_AT,
     )
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'clock_trusted', 'preheated_for'),
+    [
+        (ZoneCycleOutcome.APPLIED, True, COMFORT_AT),
+        (ZoneCycleOutcome.THROTTLED, True, None),
+        (ZoneCycleOutcome.APPLIED, False, None),
+    ],
+    ids=['thermostat_follows', 'write_waits_its_turn', 'clock_untrusted'],
+)
+def test_preheat_that_started_no_morning_is_noted_once_its_thermostat_follows_it(
+    f_live_zone: ZoneSettings,
+    f_held_back_preheat_memory: ZoneMemory,
+    outcome: ZoneCycleOutcome,
+    clock_trusted: bool,
+    preheated_for: datetime | None,
+) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_held_back_preheat_memory,
+        _conditions('19.4', learning=SLOW_LEARNED),
+        _cycle(PREHEAT_WRITE, clock_trusted=clock_trusted),
+        outcome,
+    )
+
+    assert (follow_up.memory.morning, follow_up.memory.preheated_for) == (None, preheated_for)
 
 
 def test_untrusted_clock_keeps_held_preheat(f_live_zone: ZoneSettings, f_preheating_memory: ZoneMemory) -> None:

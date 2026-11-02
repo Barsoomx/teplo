@@ -18,7 +18,7 @@ class ZoneMemory:
     would_be_target: ThermostatTarget | None = None
     preheat: PreheatStart | None = None
     morning: Morning | None = None
-    last_morning_comfort_at: datetime | None = None
+    preheated_for: datetime | None = None
     stop: StopWatch | None = None
 
     def air_state_on(self, path: ControlPath) -> AirState | None:
