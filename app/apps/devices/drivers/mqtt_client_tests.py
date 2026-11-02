@@ -10,6 +10,7 @@ from apps.devices.stubs import MqttReceiverStub
 
 SECRET = MqttSecret(host='192.0.2.1', port=1883, username='teplo', password='mqtt-password')
 TOPICS = ('teplo/+/sensor/+/state', 'teplo/+/status')
+SUBSCRIBE = ('subscribe', [('teplo/+/sensor/+/state', 0), ('teplo/+/status', 0)])
 CONNECTED = ReasonCode(PacketTypes.CONNACK, 'Success')
 NOT_AUTHORIZED = ReasonCode(PacketTypes.CONNACK, 'Not authorized')
 DISCONNECTED = ReasonCode(PacketTypes.DISCONNECT, 'Success')
@@ -68,6 +69,12 @@ def f_connected_client(f_client: MqttClient, f_paho: PahoClientStub) -> MqttClie
 
 
 @pytest.fixture
+def f_dropped_client(f_connected_client: MqttClient, f_paho: PahoClientStub) -> MqttClient:
+    f_connected_client.on_disconnect(f_paho, None, DISCONNECT_FLAGS, CONNECTION_LOST, None)
+    return f_connected_client
+
+
+@pytest.fixture
 def f_refused_client(f_client: MqttClient, f_paho: PahoClientStub) -> MqttClient:
     f_client.on_connect(f_paho, None, CONNECT_FLAGS, NOT_AUTHORIZED, None)
     return f_client
@@ -92,7 +99,7 @@ def test_start_connects_in_the_background(f_client: MqttClient, f_paho: PahoClie
     assert f_paho.calls == [('connect_async', ('192.0.2.1', 1883, 30)), ('loop_start', None)]
 
 
-def test_connection_subscribes_to_the_topics(
+def test_connection_subscribes_to_the_topics_and_tells_the_receiver(
     f_client: MqttClient,
     f_paho: PahoClientStub,
     f_receiver: MqttReceiverStub,
@@ -100,8 +107,9 @@ def test_connection_subscribes_to_the_topics(
     with capture_logs() as logs:
         f_client.on_connect(f_paho, None, CONNECT_FLAGS, CONNECTED, None)
 
-    assert (f_paho.calls, f_receiver.lost, logs) == (
-        [('subscribe', [('teplo/+/sensor/+/state', 0), ('teplo/+/status', 0)])],
+    assert (f_paho.calls, f_receiver.made, f_receiver.lost, logs) == (
+        [SUBSCRIBE],
+        1,
         [],
         [{'event': 'mqtt_connected', 'host': '192.0.2.1', 'port': 1883, 'log_level': 'info'}],
     )
@@ -115,8 +123,9 @@ def test_refused_connection_fails_the_devices_and_subscribes_nothing(
     with capture_logs() as logs:
         f_client.on_connect(f_paho, None, CONNECT_FLAGS, NOT_AUTHORIZED, None)
 
-    assert (f_paho.calls, f_receiver.lost, logs) == (
+    assert (f_paho.calls, f_receiver.made, f_receiver.lost, logs) == (
         [],
+        0,
         ['mqtt broker refused the connection: Not authorized'],
         [
             {
@@ -152,6 +161,20 @@ def test_lost_connection_fails_the_devices(
     f_connected_client.on_disconnect(f_paho, None, DISCONNECT_FLAGS, CONNECTION_LOST, None)
 
     assert f_receiver.lost == ['mqtt connection lost: Unspecified error']
+
+
+def test_reconnection_after_a_lost_connection_tells_the_receiver_again(
+    f_dropped_client: MqttClient,
+    f_paho: PahoClientStub,
+    f_receiver: MqttReceiverStub,
+) -> None:
+    f_dropped_client.on_connect(f_paho, None, CONNECT_FLAGS, CONNECTED, None)
+
+    assert (f_receiver.made, f_receiver.lost, f_paho.calls) == (
+        2,
+        ['mqtt connection lost: Unspecified error'],
+        [SUBSCRIBE, SUBSCRIBE],
+    )
 
 
 def test_disconnect_after_a_refusal_keeps_the_refusal(

@@ -73,6 +73,11 @@ class PhaseMeterStore:
         with self._lock:
             self._failures[slug] = (error_code, error)
 
+    def clear_failure(self, slug: str, error_code: str) -> None:
+        with self._lock:
+            if slug in self._failures and self._failures[slug][0] == error_code:
+                del self._failures[slug]
+
     def snapshot(self, slug: str) -> PhaseMeterSnapshot:
         with self._lock:
             currents = dict(self._currents.get(slug, {}))

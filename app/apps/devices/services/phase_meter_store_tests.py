@@ -52,6 +52,13 @@ def f_failed_store(f_store: PhaseMeterStore) -> PhaseMeterStore:
 
 
 @pytest.fixture
+def f_store_with_failures(f_store: PhaseMeterStore, request: pytest.FixtureRequest) -> PhaseMeterStore:
+    for error_code, error in request.param:
+        f_store.record_failure('phase-meter', error_code=error_code, error=error)
+    return f_store
+
+
+@pytest.fixture
 def f_recovered_store(f_failed_store: PhaseMeterStore) -> PhaseMeterStore:
     f_failed_store.record_current('phase-meter', Phase.B, Decimal('4.20'), NOW + 3 * SECOND)
     return f_failed_store
@@ -157,6 +164,35 @@ def test_current_clears_the_failure(f_recovered_store: PhaseMeterStore) -> None:
     snapshot = f_recovered_store.snapshot('phase-meter')
 
     assert (snapshot.error_code, snapshot.error, snapshot.ages[Phase.B]) == (None, None, timedelta(0))
+
+
+@pytest.mark.parametrize(
+    ('f_store_with_failures', 'failure'),
+    [
+        ([('broker_unavailable', 'mqtt broker unreachable')], (None, None)),
+        (
+            [('sensor_reading_failed', 'l2_current: the node reported nan')],
+            ('sensor_reading_failed', 'l2_current: the node reported nan'),
+        ),
+        ([], (None, None)),
+    ],
+    ids=['of-that-code', 'of-another-code', 'none'],
+    indirect=['f_store_with_failures'],
+)
+def test_clearing_a_failure_removes_only_one_of_that_code_and_keeps_the_currents(
+    f_store_with_failures: PhaseMeterStore,
+    failure: tuple[str | None, str | None],
+) -> None:
+    f_store_with_failures.clear_failure('phase-meter', 'broker_unavailable')
+
+    snapshot = f_store_with_failures.snapshot('phase-meter')
+    assert (snapshot.currents, (snapshot.error_code, snapshot.error)) == (
+        PhaseCurrents(
+            amps={Phase.A: Decimal('12.34'), Phase.B: Decimal('4.10'), Phase.C: Decimal('0.52')},
+            read_at=NOW,
+        ),
+        failure,
+    )
 
 
 def test_statistics_give_mean_and_peak_per_phase(f_busy_store: PhaseMeterStore) -> None:

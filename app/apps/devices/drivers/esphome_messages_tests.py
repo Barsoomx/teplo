@@ -18,6 +18,7 @@ NOW = datetime(2026, 11, 2, 9, 0, tzinfo=UTC)
 KITCHEN_TEMPERATURE = 'teplo/teplo-air-kitchen/sensor/temperature/state'
 KITCHEN_HUMIDITY = 'teplo/teplo-air-kitchen/sensor/humidity/state'
 KITCHEN_STATUS = 'teplo/teplo-air-kitchen/status'
+OUTDOOR_STATUS = 'teplo/teplo-outdoor/status'
 
 
 @pytest.fixture
@@ -74,6 +75,21 @@ def f_humid_handler(
     f_read_handler.receive(KITCHEN_HUMIDITY, b'41.2', retained=False)
     monotonic.advance(25)
     wall_clock.advance(timedelta(seconds=25))
+    return f_read_handler
+
+
+@pytest.fixture
+def f_disconnected_handler(f_read_handler: EsphomeMessageHandler) -> EsphomeMessageHandler:
+    f_read_handler.receive(OUTDOOR_STATUS, b'offline', retained=False)
+    f_read_handler.connection_lost('mqtt connection lost: Unspecified error')
+    return f_read_handler
+
+
+@pytest.fixture
+def f_failing_handler(f_read_handler: EsphomeMessageHandler) -> EsphomeMessageHandler:
+    f_read_handler.receive(KITCHEN_TEMPERATURE, b'nan', retained=False)
+    f_read_handler.receive(OUTDOOR_STATUS, b'offline', retained=False)
+    f_read_handler.receive('teplo/teplo-phase-meter/sensor/l2_current/state', b'4,10', retained=False)
     return f_read_handler
 
 
@@ -287,6 +303,46 @@ def test_lost_broker_fails_every_device(
         )
     ]
     assert failures == [('broker_unavailable', 'mqtt broker unreachable')] * 3
+
+
+def test_connection_clears_the_lost_broker_and_keeps_the_reading(
+    f_disconnected_handler: EsphomeMessageHandler,
+    f_temperature_store: TemperatureStateStore,
+    f_phase_store: PhaseMeterStore,
+) -> None:
+    f_disconnected_handler.connection_made()
+
+    kitchen = f_temperature_store.snapshot('air-kitchen')
+    failures = [
+        (snapshot.error_code, snapshot.error)
+        for snapshot in (kitchen, f_temperature_store.snapshot('outdoor'), f_phase_store.snapshot('phase-meter'))
+    ]
+    assert (kitchen.state, failures) == (
+        TemperatureReading(temperature=Decimal('21.5'), humidity=None, read_at=NOW),
+        [(None, None)] * 3,
+    )
+
+
+def test_connection_keeps_the_failures_the_nodes_reported(
+    f_failing_handler: EsphomeMessageHandler,
+    f_temperature_store: TemperatureStateStore,
+    f_phase_store: PhaseMeterStore,
+) -> None:
+    f_failing_handler.connection_made()
+
+    failures = [
+        (snapshot.error_code, snapshot.error)
+        for snapshot in (
+            f_temperature_store.snapshot('air-kitchen'),
+            f_temperature_store.snapshot('outdoor'),
+            f_phase_store.snapshot('phase-meter'),
+        )
+    ]
+    assert failures == [
+        ('sensor_reading_failed', 'temperature: the node reported nan'),
+        ('device_unavailable', 'the node went offline'),
+        ('device_protocol_error', "l2_current: not a number: b'4,10'"),
+    ]
 
 
 def test_unknown_node_is_logged_once(f_handler: EsphomeMessageHandler) -> None:

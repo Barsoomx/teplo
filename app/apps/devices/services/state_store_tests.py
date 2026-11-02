@@ -78,6 +78,19 @@ def f_amended_store(clock: MonotonicClockStub, f_reading: TemperatureReading) ->
     return store
 
 
+@pytest.fixture
+def f_store_with_failures(
+    clock: MonotonicClockStub,
+    f_reading: TemperatureReading,
+    request: pytest.FixtureRequest,
+) -> TemperatureStateStore:
+    store = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record_state('air-kitchen', f_reading)
+    for error_code, error in request.param:
+        store.record_failure('air-kitchen', error_code=error_code, error=error)
+    return store
+
+
 def test_failure_keeps_last_state_and_error(f_store: ThermostatStateStore, f_state: ThermostatState) -> None:
     assert f_store.snapshot('thermostat-kitchen') == ThermostatSnapshot(
         slug='thermostat-kitchen',
@@ -143,3 +156,24 @@ def test_amending_a_device_without_a_reading_records_nothing(f_amended_store: Te
         error_code=None,
         error=None,
     )
+
+
+@pytest.mark.parametrize(
+    ('f_store_with_failures', 'failure'),
+    [
+        ([('broker_unavailable', 'mqtt broker unreachable')], (None, None)),
+        ([('device_unavailable', 'the node went offline')], ('device_unavailable', 'the node went offline')),
+        ([], (None, None)),
+    ],
+    ids=['of-that-code', 'of-another-code', 'none'],
+    indirect=['f_store_with_failures'],
+)
+def test_clearing_a_failure_removes_only_one_of_that_code_and_keeps_the_reading(
+    f_store_with_failures: TemperatureStateStore,
+    f_reading: TemperatureReading,
+    failure: tuple[str | None, str | None],
+) -> None:
+    f_store_with_failures.clear_failure('air-kitchen', 'broker_unavailable')
+
+    snapshot = f_store_with_failures.snapshot('air-kitchen')
+    assert (snapshot.state, (snapshot.error_code, snapshot.error)) == (f_reading, failure)

@@ -19,6 +19,8 @@ QOS = 0
 class MqttReceiver(Protocol):
     def receive(self, topic: str, payload: bytes, *, retained: bool) -> None: ...
 
+    def connection_made(self) -> None: ...
+
     def connection_lost(self, detail: str) -> None: ...
 
 
@@ -85,6 +87,7 @@ class MqttClient:
             return
 
         self._connected = True
+        self._receiver.connection_made()
         self._client.subscribe([(topic, QOS) for topic in self._topics])
         logger.info('mqtt_connected', host=self._secret.host, port=self._secret.port)
 

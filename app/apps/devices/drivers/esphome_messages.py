@@ -8,7 +8,7 @@ import structlog
 from django.utils import timezone
 
 from apps.core.domain.errors import DomainError
-from apps.devices.domain.errors import BrokerUnavailableError, DeviceUnavailableError
+from apps.devices.domain.errors import BROKER_UNAVAILABLE, BrokerUnavailableError, DeviceUnavailableError
 from apps.devices.domain.kinds import DeviceDriver
 from apps.devices.domain.readings import TemperatureReading
 from apps.devices.drivers.esphome_protocol import (
@@ -36,6 +36,8 @@ class ReadingSink(Protocol):
     def record(self, slug: str, object_id: str, value: Decimal, read_at: datetime) -> None: ...
 
     def fail(self, slug: str, object_id: str | None, error: DomainError) -> None: ...
+
+    def clear_failure(self, slug: str, error_code: str) -> None: ...
 
 
 class TemperatureSink:
@@ -65,6 +67,9 @@ class TemperatureSink:
             self._store.amend_state(slug, lambda reading: replace(reading, humidity=None))
         self._store.record_failure(slug, error_code=error.error_code, error=error.detail)
 
+    def clear_failure(self, slug: str, error_code: str) -> None:
+        self._store.clear_failure(slug, error_code)
+
 
 class PhaseMeterSink:
     def __init__(self, store: PhaseMeterStore) -> None:
@@ -78,6 +83,9 @@ class PhaseMeterSink:
 
     def fail(self, slug: str, object_id: str | None, error: DomainError) -> None:  # noqa: ARG002
         self._store.record_failure(slug, error_code=error.error_code, error=error.detail)
+
+    def clear_failure(self, slug: str, error_code: str) -> None:
+        self._store.clear_failure(slug, error_code)
 
 
 class EsphomeMessageHandler:
@@ -107,6 +115,10 @@ class EsphomeMessageHandler:
                 self._reading(slug, object_id, payload)
             case NodeStatusTopic(slug=slug):
                 self._status(slug, payload)
+
+    def connection_made(self) -> None:
+        for slug, sink in self._sinks.items():
+            sink.clear_failure(slug, BROKER_UNAVAILABLE)
 
     def connection_lost(self, detail: str) -> None:
         error = BrokerUnavailableError(detail)
