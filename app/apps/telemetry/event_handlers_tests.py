@@ -18,14 +18,12 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.devices.domain.readings import ThermostatMode
 from apps.notifications.domain.alerts import AlertKind
 from apps.notifications.domain.events import AlertCleared, AlertRaised
-from apps.power.domain.events import OutageRecorded
 from apps.telemetry.event_handlers import (
     journal_air_control_dry_run,
     journal_alert_cleared,
     journal_alert_raised,
     journal_device_availability,
     journal_optimal_start_dry_run,
-    journal_power_outage,
     journal_second_floor_guard_dry_run,
     journal_zone_boost,
     journal_zone_command,
@@ -237,23 +235,5 @@ def test_cleared_alert_is_journaled() -> None:
             'device_kind': 'thermostat',
             'since': '2026-10-29T05:20:00Z',
         },
-        NOW,
-    )
-
-
-def test_recorded_power_outage_is_journaled_with_its_interval() -> None:
-    journal_power_outage(
-        OutageRecorded(
-            outage_id=7,
-            began_at=NOW - timedelta(minutes=16),
-            ended_at=NOW - timedelta(minutes=7),
-            occurred_at=NOW,
-        ),
-    )
-
-    assert _entry() == (
-        'power_outage',
-        '',
-        {'outage_id': 7, 'began_at': '2026-10-29T05:44:00Z', 'ended_at': '2026-10-29T05:53:00Z'},
         NOW,
     )

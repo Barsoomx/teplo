@@ -9,6 +9,13 @@ packages:
   node: !include common/node.yaml
   supermini: !include common/supermini.yaml
 
+# The page can drive the air conditioner, so it asks for a login; the sensor nodes only show readings.
+web_server:
+  auth:
+    type: digest
+    username: !secret web_username
+    password: !secret web_password
+
 remote_transmitter:
   id: ir_transmitter
   pin: GPIO3

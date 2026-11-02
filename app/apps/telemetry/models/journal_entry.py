@@ -10,7 +10,10 @@ class JournalEntry(models.Model):
 
     class Meta:
         ordering = ('-created_at', '-id')
-        indexes = [models.Index(fields=('-created_at',), name='journal_created_idx')]
+        indexes = [
+            models.Index(fields=('-created_at',), name='journal_created_idx'),
+            models.Index(fields=('kind', 'id'), name='journal_kind_idx'),
+        ]
 
     def __str__(self) -> str:
         return f'{self.created_at:%Y-%m-%d %H:%M:%S} {self.kind} {self.subject}'

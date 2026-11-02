@@ -95,11 +95,13 @@ Left empty, the line reads «Отметь причину в панели.» with
 
 The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquitto on the router, and teplo subscribes there. Entware's `mosquitto-nossl` has no TLS and no `mosquitto_passwd`: it reads its password file as plain text, so the file holds the passwords as written and only the broker may read it. Persistence stays off, as no message is retained and the flash is spared. Run the steps on the router (`ssh -p 222 root@192.168.1.1`).
 
-1. Install the broker and the command-line clients:
+1. Install the broker and the command-line clients, then add the `mosquitto` account the broker switches to once it has started. The package does not create it; 200 is a user and group id no other account on the router has:
 
    ```sh
    opkg update
    opkg install mosquitto-nossl mosquitto-client-nossl
+   grep -q '^mosquitto:' /opt/etc/group || echo 'mosquitto:x:200:' >> /opt/etc/group
+   grep -q '^mosquitto:' /opt/etc/passwd || echo 'mosquitto:*:200:200:mosquitto:/opt/var/run:/opt/bin/nologin' >> /opt/etc/passwd
    ```
 
 2. Replace `/opt/etc/mosquitto/mosquitto.conf` with a listener on the LAN address only, so the broker is not reachable from the internet side:
@@ -147,8 +149,10 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
 6. Check that readings arrive:
 
    ```sh
-   mosquitto_sub -h 192.168.1.1 -u teplo -P 'choose-a-teplo-password' -t 'teplo/#' -v
+   mosquitto_sub -h 192.168.1.1 -i teplo-check -u teplo -P 'choose-a-teplo-password' -t 'teplo/#' -v
    ```
+
+   `-i` names the client. The broker on the router cannot make up a client id, so it drops a client that sends none: the client says `The connection was lost` and the broker logs `Client <unknown> disconnected due to out of memory`. The nodes and teplo always send theirs.
 
    Every node that is up prints its readings within 30 seconds, e.g. `teplo/teplo-air-kitchen/sensor/temperature/state 21.5`: the air and outdoor sensors every 30 seconds, the phase meter every second. No message is retained, so a node that is already connected prints no status line: `teplo/<node>/status online` appears only when a node connects, and `offline` when it drops. Stop with Ctrl-C.
 
@@ -174,7 +178,7 @@ Each node also publishes `wifi_signal` and `uptime`. A reading goes to the route
 
 A sensor that fails when its node starts also yields `nan`. An SHT30 that does not answer at boot stays out of use until the node restarts: the node publishes `nan` for it every 30 s, and once the wiring is fixed, the node needs a power cycle. While the outdoor node has found no DS18B20, it searches its 1-Wire line every 30 s and publishes `nan` until the sensor answers.
 
-1. Copy `esphome/secrets.example.yaml` to `esphome/secrets.yaml` and fill it in: the home Wi-Fi network in `wifi_ssid` and `wifi_password`; new passwords in `fallback_ap_password` (8 characters or more) and `ota_password`; the router's LAN address in `mqtt_broker`; the nodes' Mosquitto account in `mqtt_username` and `mqtt_password`. Git ignores `esphome/secrets.yaml` and `esphome/.esphome/`, so the values stay on the machine that builds.
+1. Copy `esphome/secrets.example.yaml` to `esphome/secrets.yaml` and fill it in: the home Wi-Fi network in `wifi_ssid` and `wifi_password`; new passwords in `fallback_ap_password` (8 characters or more), `ota_password` and `web_password`, with `web_username` for the IR node's page; the router's LAN address in `mqtt_broker`; the nodes' Mosquitto account in `mqtt_username` and `mqtt_password`. Git ignores `esphome/secrets.yaml` and `esphome/.esphome/`, so the values stay on the machine that builds.
 
 2. Compile every node, or the ones named:
 
@@ -219,7 +223,7 @@ A sensor that fails when its node starts also yields `nan`. An SHT30 that does n
 
    The three clamps are one model on one ADC, so the factor from L3 serves all three. Without an outlet on L3, take the same steps on L1 or L2, where the kettle adds `I_k = P / (0.95 × U_in)` at the clamp: `U_in` is the input voltage on the stabilizer's display while the kettle boils, and 0.95 is the stabilizer's efficiency of about 96 % times its input power factor of 0.99. A factor from L1 or L2 is a few percent less certain than one from L3.
 
-7. Confirm the air conditioner's IR protocol from the receiver dump before teplo ever drives it. `teplo-ir-bedroom` assumes `midea_ir`: the Ballu BSYI-10HN8_V4 is probably a Midea OEM, and its remote has Follow Me. Open `http://teplo-ir-bedroom/`, point the original remote at the receiver from 30–50 cm and press On, Heat, 22 °C, Cool and Off, 3 s apart. Each press logs `Received …` lines. `Received Midea` confirms `midea_ir`, and `Received Coolix` calls for the `coolix` platform. Without either, ESPHome does not know the protocol: try the `ballu` platform, or replay the codes captured in the `Received Pronto` lines. Until the dump confirms the protocol, the climate controls on the node's page serve only to test that the unit answers.
+7. Confirm the air conditioner's IR protocol from the receiver dump before teplo ever drives it. `teplo-ir-bedroom` assumes `midea_ir`: the Ballu BSYI-10HN8_V4 is probably a Midea OEM, and its remote has Follow Me. Open `http://teplo-ir-bedroom/`, which asks for `web_username` and `web_password` from `esphome/secrets.yaml` because its page drives the unit, point the original remote at the receiver from 30–50 cm and press On, Heat, 22 °C, Cool and Off, 3 s apart. Each press logs `Received …` lines. `Received Midea` confirms `midea_ir`, and `Received Coolix` calls for the `coolix` platform. Without either, ESPHome does not know the protocol: try the `ballu` platform, or replay the codes captured in the `Received Pronto` lines. Until the dump confirms the protocol, the climate controls on the node's page serve only to test that the unit answers.
 
 To replace a failed SuperMini node, wire the spare like it and flash the spare with that node's firmware; it takes over the node's name and topics.
 

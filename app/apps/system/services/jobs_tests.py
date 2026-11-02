@@ -12,6 +12,6 @@ def test_teplo_jobs_schedule() -> None:
         ('run_heating_cycle', timedelta(minutes=1), timedelta(0)),
         ('flush_samples', timedelta(minutes=5), timedelta(0)),
         ('evaluate_alerts', timedelta(minutes=1), timedelta(0)),
-        ('record_outages', timedelta(minutes=1), timedelta(0)),
+        ('report_outages', timedelta(minutes=1), timedelta(0)),
         ('deliver_alerts', timedelta(minutes=1), timedelta(0)),
     ]

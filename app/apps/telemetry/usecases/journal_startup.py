@@ -1,19 +1,23 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apps.core.domain.usecases.base import BaseUseCase
-from apps.telemetry.repositories.journal import JournalRepository
+from apps.telemetry.domain.starts import BootOpening, TeploStart, boot_opening
+from apps.telemetry.repositories.journal import TEPLO_STARTED, JournalRepository
 from apps.telemetry.repositories.sample import SampleRepository
 
 
 @dataclass(frozen=True, kw_only=True)
 class JournalStartupInputDTO:
     now: datetime
+    boot_id: str | None
+    router_uptime: timedelta | None
 
 
 @dataclass(frozen=True, kw_only=True)
 class JournalStartupOutputDTO:
     last_activity: datetime | None
+    boot: BootOpening
 
 
 class JournalStartupUseCase(BaseUseCase[JournalStartupInputDTO, JournalStartupOutputDTO]):
@@ -32,11 +36,20 @@ class JournalStartupUseCase(BaseUseCase[JournalStartupInputDTO, JournalStartupOu
             self._samples.last_recorded_at(),
             self._journal.previous_start_last_activity(),
         )
-        last_activity = max((moment for moment in moments if moment is not None), default=None)
+        start = TeploStart(
+            boot_id=input_dto.boot_id,
+            last_activity=max((moment for moment in moments if moment is not None), default=None),
+            router_uptime=input_dto.router_uptime,
+        )
+        boot = boot_opening(start, self._journal.starts_newest_first())
         self._journal.add(
-            kind='teplo_started',
+            kind=TEPLO_STARTED,
             subject='',
-            payload={'last_activity': last_activity},
+            payload={
+                'last_activity': start.last_activity,
+                'boot_id': start.boot_id,
+                'router_uptime': None if start.router_uptime is None else start.router_uptime.total_seconds(),
+            },
             created_at=input_dto.now,
         )
-        return JournalStartupOutputDTO(last_activity=last_activity)
+        return JournalStartupOutputDTO(last_activity=start.last_activity, boot=boot)
