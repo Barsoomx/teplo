@@ -234,6 +234,60 @@ def m_alerts_timeline_use_case() -> Iterator[MagicMock]:
 
 
 @pytest.fixture
+def m_dry_run_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=(
+                        TimelineEntry(
+                            kind='air_control_dry_run',
+                            subject='kitchen',
+                            subject_name='Кухня',
+                            device_kind=None,
+                            payload={
+                                'zone': 'kitchen',
+                                'air': '20.9',
+                                'target': '22.0',
+                                'mode': 'preheat',
+                                'state': 'heat',
+                                'power': True,
+                                'setpoint': '30.0',
+                                'early_stop_offset': '0.30',
+                                'lead_minutes': 140,
+                            },
+                            created_at=MORNING,
+                        ),
+                        TimelineEntry(
+                            kind='optimal_start_dry_run',
+                            subject='kitchen',
+                            subject_name='Кухня',
+                            device_kind=None,
+                            payload={
+                                'zone': 'kitchen',
+                                'lead_minutes': 140,
+                                'start': '2026-10-29T01:10:00Z',
+                                'fixed_start': '2026-10-29T00:30:00Z',
+                            },
+                            created_at=MORNING - timedelta(minutes=5),
+                        ),
+                        TimelineEntry(
+                            kind='second_floor_guard_dry_run',
+                            subject='bathroom-2f',
+                            subject_name='Санузел 2 этаж',
+                            device_kind=None,
+                            payload={'zone': 'bathroom-2f', 'active': True, 'air': '18.8', 'setpoint': '30.0'},
+                            created_at=MORNING - timedelta(minutes=10),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
+@pytest.fixture
 def m_outage_timeline_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
         use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
@@ -351,6 +405,23 @@ def test_journal_reads_alerts_like_the_telegram_messages(
         'неизвестное событие' in content,
         m_alerts_timeline_use_case.init.call_count,
     ) == (True, True, True, False, 1)
+
+
+def test_journal_words_what_air_control_optimal_start_and_the_guard_would_do(
+    f_russian_client: Client,
+    m_dry_run_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        'Кухня: в режиме по воздуху включил бы обогрев (20,9° при цели 22,0°)' in content,
+        'На термостате было бы 30°' in content,
+        'Кухня: в режиме по воздуху начал бы разогрев в 04:10, а не в 03:30' in content,
+        'Санузел 2 этаж: защита второго этажа включила бы комфорт (2 этаж 18,8°)' in content,
+        'неизвестное событие' in content,
+        m_dry_run_timeline_use_case.init.call_count,
+    ) == (True, True, True, True, False, 1)
 
 
 def test_journal_shows_a_power_outage_with_its_cause_and_the_answers_to_change_it(

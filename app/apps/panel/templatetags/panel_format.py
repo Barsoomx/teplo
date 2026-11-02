@@ -59,6 +59,22 @@ CLOCK_NOTES = {
 ALERT_TRANSITIONS = {'alert_raised': AlertTransition.RAISED, 'alert_cleared': AlertTransition.CLEARED}
 OUTAGE_QUESTION = gettext_lazy('Power was out %(began)s–%(ended)s (%(duration)s). What was it?')
 POWER_OUTAGE = gettext_lazy('Power was out %(began)s–%(ended)s (%(duration)s)')
+UNKNOWN_EVENT = gettext_lazy('%(name)s: unknown event')
+AIR_CONTROL = {
+    'heat': gettext_lazy('%(name)s: air mode would start heating (%(air)s° against a target of %(target)s°)'),
+    'idle': gettext_lazy('%(name)s: air mode would stop heating (%(air)s° against a target of %(target)s°)'),
+}
+WOULD_BE_SETPOINT = gettext_lazy('Thermostat would be set to %(setpoint)s°')
+WOULD_BE_OFF = gettext_lazy('Thermostat would be off')
+OPTIMAL_START = gettext_lazy('%(name)s: air mode would start the warm-up at %(start)s instead of %(fixed)s')
+SAME_OPTIMAL_START = gettext_lazy('%(name)s: air mode would also start the warm-up at %(start)s')
+GUARD_ON = gettext_lazy('%(name)s: the second-floor guard would turn comfort on (second floor %(air)s°)')
+GUARD_OFF = gettext_lazy(
+    '%(name)s: the second-floor guard would return the zone to its schedule (second floor %(air)s°)',
+)
+GUARD_OFF_UNREAD = gettext_lazy(
+    '%(name)s: the second-floor guard would return the zone to its schedule (no second-floor reading)',
+)
 
 
 @register.simple_tag
@@ -130,7 +146,7 @@ def alert_text(entry: TimelineEntry) -> str:
     transition = ALERT_TRANSITIONS.get(entry.kind)
     text = alert_text_from_payload(transition, entry.payload, entry.created_at) if transition is not None else None
     if text is None:
-        return gettext('%(name)s: unknown event') % {'name': entry.subject_name}
+        return _unknown_event(entry)
 
     return text
 
@@ -152,3 +168,58 @@ def power_outage_text(entry: TimelineEntry) -> str:
         return gettext('Unknown event')
 
     return str(POWER_OUTAGE) % parts
+
+
+@register.filter
+def air_control_text(entry: TimelineEntry) -> str:
+    template = AIR_CONTROL.get(str(entry.payload.get('state')))
+    air = floatformat(entry.payload.get('air'), 1)
+    target = floatformat(entry.payload.get('target'), 1)
+    if template is None or not air or not target:
+        return _unknown_event(entry)
+
+    return str(template) % {'name': entry.subject_name, 'air': air, 'target': target}
+
+
+@register.filter
+def air_control_note(entry: TimelineEntry) -> str:
+    if entry.payload.get('power') is False:
+        return str(WOULD_BE_OFF)
+
+    setpoint = floatformat(entry.payload.get('setpoint'), -1)
+    if not setpoint:
+        return ''
+
+    return str(WOULD_BE_SETPOINT) % {'setpoint': setpoint}
+
+
+@register.filter
+def optimal_start_text(entry: TimelineEntry) -> str:
+    try:
+        start = local_time(str(entry.payload['start']))
+        fixed = local_time(str(entry.payload['fixed_start']))
+    except (KeyError, ValueError):
+        return _unknown_event(entry)
+
+    template = SAME_OPTIMAL_START if start == fixed else OPTIMAL_START
+    return str(template) % {'name': entry.subject_name, 'start': start, 'fixed': fixed}
+
+
+@register.filter
+def second_floor_guard_text(entry: TimelineEntry) -> str:
+    active = entry.payload.get('active')
+    air = floatformat(entry.payload.get('air'), 1)
+    if active is True and air:
+        return str(GUARD_ON) % {'name': entry.subject_name, 'air': air}
+
+    if active is False and air:
+        return str(GUARD_OFF) % {'name': entry.subject_name, 'air': air}
+
+    if active is False:
+        return str(GUARD_OFF_UNREAD) % {'name': entry.subject_name}
+
+    return _unknown_event(entry)
+
+
+def _unknown_event(entry: TimelineEntry) -> str:
+    return str(UNKNOWN_EVENT) % {'name': entry.subject_name}

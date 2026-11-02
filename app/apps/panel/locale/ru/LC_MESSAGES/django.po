@@ -340,3 +340,38 @@ msgstr "уставка %(temperature)s°"
 
 msgid "tomorrow"
 msgstr "завтра"
+
+#, python-format
+msgid "%(name)s: air mode would start heating (%(air)s° against a target of %(target)s°)"
+msgstr "%(name)s: в режиме по воздуху включил бы обогрев (%(air)s° при цели %(target)s°)"
+
+#, python-format
+msgid "%(name)s: air mode would stop heating (%(air)s° against a target of %(target)s°)"
+msgstr "%(name)s: в режиме по воздуху остановил бы обогрев (%(air)s° при цели %(target)s°)"
+
+#, python-format
+msgid "Thermostat would be set to %(setpoint)s°"
+msgstr "На термостате было бы %(setpoint)s°"
+
+msgid "Thermostat would be off"
+msgstr "Термостат был бы выключен"
+
+#, python-format
+msgid "%(name)s: air mode would start the warm-up at %(start)s instead of %(fixed)s"
+msgstr "%(name)s: в режиме по воздуху начал бы разогрев в %(start)s, а не в %(fixed)s"
+
+#, python-format
+msgid "%(name)s: air mode would also start the warm-up at %(start)s"
+msgstr "%(name)s: в режиме по воздуху тоже начал бы разогрев в %(start)s"
+
+#, python-format
+msgid "%(name)s: the second-floor guard would turn comfort on (second floor %(air)s°)"
+msgstr "%(name)s: защита второго этажа включила бы комфорт (2 этаж %(air)s°)"
+
+#, python-format
+msgid "%(name)s: the second-floor guard would return the zone to its schedule (second floor %(air)s°)"
+msgstr "%(name)s: защита второго этажа вернула бы расписание (2 этаж %(air)s°)"
+
+#, python-format
+msgid "%(name)s: the second-floor guard would return the zone to its schedule (no second-floor reading)"
+msgstr "%(name)s: защита второго этажа вернула бы расписание (нет показаний 2 этажа)"

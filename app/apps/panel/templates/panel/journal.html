@@ -40,6 +40,18 @@
         {% elif entry.kind == 'zone_boosted' %}
         <span class="event-mark event-mark-boost">{% icon 'flame' %}</span>
         <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name until=entry.payload.until|local_time %}{{ name }}: boost until {{ until }}{% endblocktranslate %}</p></div>
+        {% elif entry.kind == 'air_control_dry_run' %}
+        <span class="event-mark">{% icon 'thermometer' %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|air_control_text }}</p>
+          {% with note=entry|air_control_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
+        </div>
+        {% elif entry.kind == 'optimal_start_dry_run' %}
+        <span class="event-mark">{% icon 'sunrise' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|optimal_start_text }}</p></div>
+        {% elif entry.kind == 'second_floor_guard_dry_run' %}
+        <span class="event-mark">{% icon 'eye' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|second_floor_guard_text }}</p></div>
         {% elif entry.kind == 'alert_raised' %}
         <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>

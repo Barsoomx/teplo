@@ -18,6 +18,8 @@ from apps.devices.domain.errors import (
 )
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.templatetags.panel_format import (
+    air_control_note,
+    air_control_text,
     alert_text,
     clock_note,
     command_summary,
@@ -26,8 +28,10 @@ from apps.panel.templatetags.panel_format import (
     failure_note,
     icon,
     local_time,
+    optimal_start_text,
     outage_question,
     power_outage_text,
+    second_floor_guard_text,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.power.domain.outage import OutageCause, OutageRecord
@@ -49,6 +53,28 @@ ALERT_PAYLOAD = {
     'device_kind': 'thermostat',
     'since': '2026-10-31T17:24:00Z',
 }
+AIR_CONTROL_PAYLOAD: dict[str, object] = {
+    'zone': 'kitchen',
+    'air': '20.9',
+    'target': '22.0',
+    'mode': 'preheat',
+    'state': 'heat',
+    'power': True,
+    'setpoint': '30.0',
+    'early_stop_offset': '0.30',
+    'lead_minutes': 140,
+}
+
+
+def _entry(kind: str, payload: dict[str, object], name: str = 'Кухня') -> TimelineEntry:
+    return TimelineEntry(
+        kind=kind,
+        subject='kitchen',
+        subject_name=name,
+        device_kind=None,
+        payload=payload,
+        created_at=datetime(2026, 10, 29, 7, 0, tzinfo=MOSCOW),
+    )
 
 
 @pytest.fixture
@@ -191,6 +217,98 @@ def test_day_word_names_days_other_than_today(moment: datetime, expected: str) -
 )
 def test_duration_reads_a_lead_in_hours_and_minutes(lead: timedelta, expected: str) -> None:
     assert duration(lead) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (AIR_CONTROL_PAYLOAD, 'Кухня: в режиме по воздуху включил бы обогрев (20,9° при цели 22,0°)'),
+        (
+            {**AIR_CONTROL_PAYLOAD, 'air': '21.8', 'mode': 'comfort', 'state': 'idle', 'setpoint': '18.0'},
+            'Кухня: в режиме по воздуху остановил бы обогрев (21,8° при цели 22,0°)',
+        ),
+        ({}, 'Кухня: неизвестное событие'),
+    ],
+    ids=['heat', 'idle', 'empty'],
+)
+def test_air_control_text_says_what_air_mode_would_do(payload: dict[str, object], expected: str) -> None:
+    assert air_control_text(_entry('air_control_dry_run', payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (AIR_CONTROL_PAYLOAD, 'На термостате было бы 30°'),
+        ({**AIR_CONTROL_PAYLOAD, 'power': False, 'setpoint': None}, 'Термостат был бы выключен'),
+        ({}, ''),
+    ],
+    ids=['setpoint', 'off', 'empty'],
+)
+def test_air_control_note_gives_the_would_be_thermostat_setting(payload: dict[str, object], expected: str) -> None:
+    assert air_control_note(_entry('air_control_dry_run', payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (
+            {'lead_minutes': 140, 'start': '2026-10-29T01:10:00Z', 'fixed_start': '2026-10-29T00:30:00Z'},
+            'Кухня: в режиме по воздуху начал бы разогрев в 04:10, а не в 03:30',
+        ),
+        (
+            {'lead_minutes': 180, 'start': '2026-10-29T00:30:00Z', 'fixed_start': '2026-10-29T00:30:00Z'},
+            'Кухня: в режиме по воздуху тоже начал бы разогрев в 03:30',
+        ),
+        (
+            {'lead_minutes': 140, 'start': 'soon', 'fixed_start': '2026-10-29T00:30:00Z'},
+            'Кухня: неизвестное событие',
+        ),
+        ({}, 'Кухня: неизвестное событие'),
+    ],
+    ids=['later', 'same', 'malformed', 'empty'],
+)
+def test_optimal_start_text_compares_the_would_be_start_with_the_fixed_one(
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    assert optimal_start_text(_entry('optimal_start_dry_run', payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (
+            {'active': True, 'air': '18.8', 'setpoint': '30.0'},
+            'Санузел 2 этаж: защита второго этажа включила бы комфорт (2 этаж 18,8°)',
+        ),
+        (
+            {'active': False, 'air': '19.3', 'setpoint': '30.0'},
+            'Санузел 2 этаж: защита второго этажа вернула бы расписание (2 этаж 19,3°)',
+        ),
+        (
+            {'active': False, 'air': None, 'setpoint': '30.0'},
+            'Санузел 2 этаж: защита второго этажа вернула бы расписание (нет показаний 2 этажа)',
+        ),
+        ({}, 'Санузел 2 этаж: неизвестное событие'),
+    ],
+    ids=['on', 'off', 'off_without_a_reading', 'empty'],
+)
+def test_second_floor_guard_text_says_what_the_guard_would_do(payload: dict[str, object], expected: str) -> None:
+    assert second_floor_guard_text(_entry('second_floor_guard_dry_run', payload, name='Санузел 2 этаж')) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_dry_run_texts_follow_the_active_language() -> None:
+    entry = _entry('air_control_dry_run', AIR_CONTROL_PAYLOAD, name='Kitchen')
+
+    assert (air_control_text(entry), air_control_note(entry)) == (
+        'Kitchen: air mode would start heating (20.9° against a target of 22.0°)',
+        'Thermostat would be set to 30°',
+    )
 
 
 @pytest.mark.usefixtures('russian')
