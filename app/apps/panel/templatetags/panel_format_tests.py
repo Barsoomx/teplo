@@ -16,6 +16,7 @@ from apps.devices.domain.errors import (
     DeviceProtocolError,
     DeviceUnavailableError,
     DriverNotImplementedError,
+    PlugNotSwitchableError,
     SensorReadingError,
 )
 from apps.devices.domain.kinds import DeviceKind
@@ -203,6 +204,10 @@ def test_failure_note_names_the_cause_by_error_code(error: DomainError, expected
         (DriverNotImplementedError('unsupported'), 'teplo пока не умеет управлять этим устройством'),
         (SecretMissingError('plug-boiler-1f'), 'В файле секретов нет адреса и ключа этой розетки'),
         (DeviceConfigError('no address'), 'В файле секретов у этой розетки неверный адрес или протокол'),
+        (
+            PlugNotSwitchableError('plug-boiler-1f', 'its driver only reads'),
+            'Драйвер этой розетки не умеет её переключать',
+        ),
     ],
 )
 def test_failure_note_names_the_plug_for_a_plug(error: DomainError, expected: str) -> None:

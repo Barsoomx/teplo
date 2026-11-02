@@ -366,6 +366,9 @@ msgstr "В файле секретов нет адреса и ключа это�
 msgid "The secrets file gives this plug a wrong address or protocol"
 msgstr "В файле секретов у этой розетки неверный адрес или протокол"
 
+msgid "The driver of this plug cannot switch it"
+msgstr "Драйвер этой розетки не умеет её переключать"
+
 msgid "No connection to the sensor"
 msgstr "Нет связи с датчиком"
 

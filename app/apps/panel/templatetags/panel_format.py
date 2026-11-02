@@ -34,6 +34,7 @@ PLUG_FAILURE_NOTES = {
     'device_protocol_error': gettext_lazy('The plug sent an unexpected reply'),
     'secret_missing': gettext_lazy('The secrets file has no address and key for this plug'),
     'device_config_invalid': gettext_lazy('The secrets file gives this plug a wrong address or protocol'),
+    'plug_not_switchable': gettext_lazy('The driver of this plug cannot switch it'),
 }
 SENSOR_FAILURE_NOTES = {
     **FAILURE_NOTES,
