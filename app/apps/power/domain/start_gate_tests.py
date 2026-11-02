@@ -18,6 +18,7 @@ from apps.power.domain.start_gate import (
     decide_starts,
     in_start_order,
 )
+from apps.power.domain.view import GuardView
 
 THRESHOLDS = PhaseThresholds(
     start_ceiling=Decimal('20.0'),
@@ -59,8 +60,10 @@ def _decide(
     return decide_start(
         load,
         meter=meter,
-        currents=CURRENTS if meter is MeterCondition.FRESH else {},
-        loads=[load] if loads is None else loads,
+        view=GuardView(
+            currents=CURRENTS if meter is MeterCondition.FRESH else {},
+            loads=(load,) if loads is None else tuple(loads),
+        ),
         last_permit_at=last_permit_at,
         at=AT,
         thresholds=THRESHOLDS,
@@ -158,12 +161,18 @@ def test_starts_are_served_most_important_first() -> None:
     assert in_start_order([BOILER, KITCHEN, HALLWAY]) == (KITCHEN, HALLWAY, BOILER)
 
 
-def _serve(requests: list[StartRequest], last_permit_at: float | None = None) -> StartRound:
+def _serve(
+    requests: list[StartRequest],
+    last_permit_at: float | None = None,
+    live_currents: dict[LoadPhase, Decimal] = CURRENTS,
+    dry_run_currents: dict[LoadPhase, Decimal] = CURRENTS,
+) -> StartRound:
+    loads = tuple(request.load for request in requests)
     return decide_starts(
         requests,
         meter=MeterCondition.FRESH,
-        currents=CURRENTS,
-        loads=[request.load for request in requests],
+        live_view=GuardView(currents=live_currents, loads=loads),
+        dry_run_view=GuardView(currents=dry_run_currents, loads=loads),
         last_permit_at=last_permit_at,
         at=AT,
         thresholds=THRESHOLDS,
@@ -218,4 +227,27 @@ def test_round_keeps_the_last_permit_when_it_grants_none() -> None:
     assert served == StartRound(
         decisions={'kitchen': StartDecision(load='kitchen', refusal=StartRefusal.TOO_SOON, overrun=None)},
         last_permit_at=AT - 10,
+    )
+
+
+def test_round_judges_a_live_start_on_the_live_view_and_a_dry_run_start_on_the_dry_run_view() -> None:
+    served = _serve(
+        [
+            StartRequest(load=replace(KITCHEN, phase=LoadPhase.L2), live=True),
+            StartRequest(load=LIVING_ROOM, live=False),
+        ],
+        live_currents={**CURRENTS, LoadPhase.L3: Decimal('15.0')},
+        dry_run_currents={**CURRENTS, LoadPhase.L2: Decimal('9.0')},
+    )
+
+    assert served == StartRound(
+        decisions={
+            'living-room': GRANTED_LIVING_ROOM,
+            'kitchen': StartDecision(
+                load='kitchen',
+                refusal=StartRefusal.NO_HEADROOM,
+                overrun=PhaseOverrun(phase=LoadPhase.L2, amps=Decimal('23.0')),
+            ),
+        },
+        last_permit_at=None,
     )

@@ -1,5 +1,5 @@
 import time
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
@@ -23,28 +23,23 @@ from apps.power.domain.events import (
     LoadShedOverridden,
     RestoreCause,
 )
-from apps.power.domain.guard import GuardLoads, GuardState, ShedState, load_statuses, relieved_currents
+from apps.power.domain.guard import GuardLoads, GuardState, ShedState, guard_view
 from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition, limp_sheds, meter_condition
 from apps.power.domain.moments import elapsed
 from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
-from apps.power.domain.shedding import (
-    Shed,
-    choose_restore,
-    choose_shed,
-    new_shed,
-    relief,
-    resumed_shed,
-    switched_back_on,
-)
+from apps.power.domain.shedding import Shed, choose_restore, choose_shed, new_shed, resumed_shed, switched_back_on
 from apps.power.domain.start_gate import decide_start
+from apps.power.domain.view import GuardView
 from apps.power.repositories.load import LoadRepository
 from apps.power.services.guard_book import GuardBook, guard_book
 from apps.power.services.load_switcher import LoadSwitcher
 
 logger = structlog.get_logger(__name__)
+
+LIVE_FIRST = (True, False)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -95,9 +90,11 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         resumed = self._resumed(state, at)
         shedding = self._overridden(state, resumed, now)
         shedding = self._released(state, shedding, at, now)
-        watches, shedding = self._shed_overloads(state, shedding, at, now)
-        shedding = self._shed_limp(state, shedding, at, now)
-        shedding = self._restored(state, shedding, at, now)
+        watches = dict(state.phases.watches)
+        for live in LIVE_FIRST:
+            watches, shedding = self._shed_overloads(state, watches, shedding, live=live, at=at, now=now)
+            shedding = self._shed_limp(state, shedding, live=live, at=at, now=now)
+            shedding = self._restored(state, shedding, live=live, at=at, now=now)
         self._book.remember(replace(state, phases=replace(state.phases, watches=watches), shedding=shedding))
         return ShedPhaseLoadsOutputDTO(
             shed=tuple(slug for slug in shedding.sheds if slug not in resumed.sheds),
@@ -185,59 +182,62 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     def _shed_overloads(
         self,
         state: GuardState,
+        watches: dict[LoadPhase, PhaseWatch],
         shedding: ShedState,
+        *,
+        live: bool,
         at: float,
         now: datetime,
     ) -> tuple[dict[LoadPhase, PhaseWatch], ShedState]:
         thresholds = state.loads.control.thresholds
-        watches = dict(state.phases.watches)
+        watched = dict(watches)
         for phase in MEASURED_PHASES:
-            measured = state.phases.currents.get(phase)
-            if not shed_due(watches[phase], measured, relief(shedding.sheds.values(), phase, at), at, thresholds):
+            view = guard_view(state, shedding, live=live)
+            if not shed_due(watched[phase].overload(live=live), view.currents.get(phase), at, thresholds):
                 continue
 
-            statuses = load_statuses(state.loads, state.readings, shedding)
-            load = choose_shed(phase, [status for status in statuses if status.slug not in shedding.overridden])
+            load = choose_shed(phase, self._candidates(state, shedding, view, live=live))
             if load is None:
                 continue
 
-            watches[phase] = with_shed(watches[phase], at)
+            watched[phase] = with_shed(watched[phase], at, live=live)
             shedding = self._shed(
                 state,
                 shedding,
                 load,
                 phase=phase,
                 reason=ShedReason.OVERLOAD,
-                amps=measured,
+                amps=state.phases.currents.get(phase),
+                live=live,
                 at=at,
                 now=now,
             )
-        return watches, shedding
+        return watched, shedding
 
-    def _shed_limp(self, state: GuardState, shedding: ShedState, at: float, now: datetime) -> ShedState:
+    def _shed_limp(self, state: GuardState, shedding: ShedState, *, live: bool, at: float, now: datetime) -> ShedState:
         thresholds = state.loads.control.thresholds
         meter = state.phases.meter
-        if meter_condition(meter, at, thresholds) is not MeterCondition.LOST:
+        if meter_condition(meter, at, thresholds) is not MeterCondition.LOST or not (live or meter.seen):
             return shedding
 
-        if not elapsed(shedding.last_limp_shed_at, at, thresholds.shed_interval):
+        times = shedding.times(live=live)
+        if not elapsed(times.last_limp_shed_at, at, thresholds.shed_interval):
             return shedding
 
-        statuses = load_statuses(state.loads, state.readings, shedding)
-        load = next(
-            (load for load in limp_sheds(statuses) if meter.seen or self._live_load(state.loads, load.slug)),
-            None,
-        )
+        view = guard_view(state, shedding, live=live)
+        sheddable = {status.slug for status in self._candidates(state, shedding, view, live=live)}
+        load = next((load for load in limp_sheds(view.loads) if load.slug in sheddable), None)
         if load is None:
             return shedding
 
         return self._shed(
             state,
-            replace(shedding, last_limp_shed_at=at),
+            shedding.with_times(replace(times, last_limp_shed_at=at), live=live),
             load,
             phase=load.phase,
             reason=ShedReason.METER_LOST,
             amps=None,
+            live=live,
             at=at,
             now=now,
         )
@@ -251,6 +251,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         phase: LoadPhase,
         reason: ShedReason,
         amps: Decimal | None,
+        live: bool,
         at: float,
         now: datetime,
     ) -> ShedState:
@@ -258,7 +259,6 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if record is None:
             return shedding
 
-        live = self._live(state.loads, record)
         was_on = True if record.kind is LoadKind.PLUG else None
         if live and not self._switched_off(record, now):
             return replace(shedding, failed={**shedding.failed, record.slug: at})
@@ -271,19 +271,23 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         )
         return replace(shedding, sheds={**shedding.sheds, record.slug: shed})
 
-    def _restored(self, state: GuardState, shedding: ShedState, at: float, now: datetime) -> ShedState:
+    def _restored(self, state: GuardState, shedding: ShedState, *, live: bool, at: float, now: datetime) -> ShedState:
         thresholds = state.loads.control.thresholds
         if meter_condition(state.phases.meter, at, thresholds) is not MeterCondition.FRESH:
             return shedding
 
-        statuses = load_statuses(state.loads, state.readings, shedding)
-        currents = relieved_currents(state.phases.currents, shedding.sheds.values(), at)
+        view = guard_view(state, shedding, live=live)
+        times = shedding.times(live=live)
         shed = choose_restore(
-            tuple(shedding.sheds.values()),
-            statuses,
-            calm=calm_phases(state.phases.watches, at, thresholds),
-            currents=currents,
-            last_restore_at=shedding.last_restore_at,
+            tuple(
+                shed
+                for shed in shedding.sheds.values()
+                if shed.live == live and self._live_load(state.loads, shed.load) == live
+            ),
+            view.loads,
+            calm=calm_phases(state.phases.watches, at, thresholds, live=live),
+            currents=view.currents,
+            last_restore_at=times.last_restore_at,
             at=at,
             thresholds=thresholds,
         )
@@ -291,18 +295,19 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if shed is None or record is None:
             return shedding
 
-        load = next(status for status in statuses if status.slug == record.slug)
-        if record.kind is LoadKind.PLUG and not self._may_start(load, statuses, currents, shed.live, at, thresholds):
+        load = next(status for status in view.loads if status.slug == record.slug)
+        if record.kind is LoadKind.PLUG and not self._may_start(load, view, live, at, thresholds):
             return shedding
 
-        if shed.live and not self._switched_on(record, shed, now):
-            return replace(shedding, last_restore_at=at)
+        restored = shedding.with_times(replace(times, last_restore_at=at), live=live)
+        if live and not self._switched_on(record, shed, now):
+            return restored
 
-        if shed.live:
+        if live:
             self._loads.clear_shed(record.slug)
         self._event_store.add_event(
             _restore_event(
-                LoadRestored if shed.live else LoadRestoredDryRun,
+                LoadRestored if live else LoadRestoredDryRun,
                 record,
                 shed,
                 amps=state.phases.currents.get(shed.phase),
@@ -310,13 +315,26 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 now=now,
             ),
         )
-        return replace(_without(shedding, {record.slug}), last_restore_at=at)
+        return _without(restored, {record.slug})
+
+    def _candidates(
+        self,
+        state: GuardState,
+        shedding: ShedState,
+        view: GuardView,
+        *,
+        live: bool,
+    ) -> list[LoadStatus]:
+        return [
+            status
+            for status in view.loads
+            if status.slug not in shedding.overridden and self._live_load(state.loads, status.slug) == live
+        ]
 
     def _may_start(
         self,
         load: LoadStatus,
-        statuses: Sequence[LoadStatus],
-        currents: Mapping[LoadPhase, Decimal],
+        view: GuardView,
         live: bool,
         at: float,
         thresholds: PhaseThresholds,
@@ -325,8 +343,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             decision = self._book.permit_start(
                 load,
                 meter=MeterCondition.FRESH,
-                currents=currents,
-                loads=statuses,
+                view=view,
                 at=at,
                 thresholds=thresholds,
             )
@@ -335,8 +352,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         decision = decide_start(
             load,
             meter=MeterCondition.FRESH,
-            currents=currents,
-            loads=statuses,
+            view=view,
             last_permit_at=self._book.last_permit_at(),
             at=at,
             thresholds=thresholds,
@@ -403,7 +419,7 @@ def _reading(state: GuardState, slug: str) -> LoadReading | None:
 
 def _overloaded(state: GuardState, phase: LoadPhase) -> bool:
     watch = state.phases.watches.get(phase)
-    return watch is not None and watch.overloaded
+    return watch is not None and watch.live.overloaded
 
 
 def _name(loads: GuardLoads, slug: str) -> str:

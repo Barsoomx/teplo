@@ -11,16 +11,32 @@ ALARM_AFTER = timedelta(minutes=1)
 
 
 @dataclass(frozen=True, kw_only=True)
-class PhaseWatch:
+class PhaseAmps:
+    measured: Decimal
+    live: Decimal
+    dry_run: Decimal
+
+
+@dataclass(frozen=True, kw_only=True)
+class OverloadWatch:
     above_since: float | None = None
     calm_since: float | None = None
     overloaded: bool = False
+    last_shed_at: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PhaseWatch:
+    live: OverloadWatch = OverloadWatch()
+    dry_run: OverloadWatch = OverloadWatch()
     measured_above_since: float | None = None
     measured_calm_since: float | None = None
     alarmed: bool = False
     alarm_since: float | None = None
     alarm_amps: Decimal | None = None
-    last_shed_at: float | None = None
+
+    def overload(self, *, live: bool) -> OverloadWatch:
+        return self.live if live else self.dry_run
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,31 +50,23 @@ class PhaseWatchStep:
 
 def watch_phase(
     watch: PhaseWatch,
-    measured: Decimal | None,
-    relief: Decimal,
+    amps: PhaseAmps | None,
     at: float,
     thresholds: PhaseThresholds,
 ) -> PhaseWatchStep:
-    if measured is None:
+    if amps is None:
         unheld = replace(
             watch,
-            above_since=None,
-            calm_since=None,
+            live=_unheld(watch.live),
+            dry_run=_unheld(watch.dry_run),
             measured_above_since=None,
             measured_calm_since=None,
         )
         return PhaseWatchStep(watch=unheld, overloaded=False, calmed=False, alarmed=False, alarm_cleared=False)
 
-    current = measured - relief
-    above_since = held_since(watch.above_since, current > thresholds.shed, at)
-    calm_since = held_since(watch.calm_since, current <= thresholds.restore, at)
-    measured_above_since = held_since(watch.measured_above_since, measured > thresholds.shed, at)
-    measured_calm_since = held_since(watch.measured_calm_since, measured <= thresholds.restore, at)
-    overloaded = _in_episode(
-        watch.overloaded,
-        held(above_since, at, thresholds.shed_hold),
-        held(calm_since, at, thresholds.restore_hold),
-    )
+    live = _followed(watch.live, amps.live, at, thresholds)
+    measured_above_since = held_since(watch.measured_above_since, amps.measured > thresholds.shed, at)
+    measured_calm_since = held_since(watch.measured_calm_since, amps.measured <= thresholds.restore, at)
     alarmed = _in_episode(
         watch.alarmed,
         held(measured_above_since, at, ALARM_AFTER),
@@ -68,47 +76,73 @@ def watch_phase(
     return PhaseWatchStep(
         watch=replace(
             watch,
-            above_since=above_since,
-            calm_since=calm_since,
-            overloaded=overloaded,
+            live=live,
+            dry_run=_followed(watch.dry_run, amps.dry_run, at, thresholds),
             measured_above_since=measured_above_since,
             measured_calm_since=measured_calm_since,
             alarmed=alarmed,
             alarm_since=_kept(alarmed, raised, measured_above_since, watch.alarm_since),
-            alarm_amps=_kept(alarmed, raised, measured, watch.alarm_amps),
+            alarm_amps=_kept(alarmed, raised, amps.measured, watch.alarm_amps),
         ),
-        overloaded=overloaded and not watch.overloaded,
-        calmed=watch.overloaded and not overloaded,
+        overloaded=live.overloaded and not watch.live.overloaded,
+        calmed=watch.live.overloaded and not live.overloaded,
         alarmed=raised,
         alarm_cleared=watch.alarmed and not alarmed,
     )
 
 
 def shed_due(
-    watch: PhaseWatch,
-    measured: Decimal | None,
-    relief: Decimal,
+    watch: OverloadWatch,
+    current: Decimal | None,
     at: float,
     thresholds: PhaseThresholds,
 ) -> bool:
     return (
-        measured is not None
+        current is not None
         and watch.overloaded
-        and measured - relief > thresholds.start_ceiling
+        and current > thresholds.start_ceiling
         and elapsed(watch.last_shed_at, at, thresholds.shed_interval)
     )
 
 
-def with_shed(watch: PhaseWatch, at: float) -> PhaseWatch:
-    return replace(watch, last_shed_at=at)
+def with_shed(watch: PhaseWatch, at: float, *, live: bool) -> PhaseWatch:
+    if live:
+        return replace(watch, live=replace(watch.live, last_shed_at=at))
+
+    return replace(watch, dry_run=replace(watch.dry_run, last_shed_at=at))
 
 
 def calm_phases(
     watches: Mapping[LoadPhase, PhaseWatch],
     at: float,
     thresholds: PhaseThresholds,
+    *,
+    live: bool,
 ) -> frozenset[LoadPhase]:
-    return frozenset(phase for phase, watch in watches.items() if held(watch.calm_since, at, thresholds.restore_hold))
+    return frozenset(
+        phase
+        for phase, watch in watches.items()
+        if held(watch.overload(live=live).calm_since, at, thresholds.restore_hold)
+    )
+
+
+def _followed(watch: OverloadWatch, current: Decimal, at: float, thresholds: PhaseThresholds) -> OverloadWatch:
+    above_since = held_since(watch.above_since, current > thresholds.shed, at)
+    calm_since = held_since(watch.calm_since, current <= thresholds.restore, at)
+    return replace(
+        watch,
+        above_since=above_since,
+        calm_since=calm_since,
+        overloaded=_in_episode(
+            watch.overloaded,
+            held(above_since, at, thresholds.shed_hold),
+            held(calm_since, at, thresholds.restore_hold),
+        ),
+    )
+
+
+def _unheld(watch: OverloadWatch) -> OverloadWatch:
+    return replace(watch, above_since=None, calm_since=None)
 
 
 def _in_episode(active: bool, entered: bool, left: bool) -> bool:

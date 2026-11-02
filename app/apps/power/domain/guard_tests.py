@@ -11,17 +11,21 @@ from apps.power.domain.guard import (
     SeenReading,
     ShedState,
     follow_samples,
+    guard_view,
     load_statuses,
+    phase_amps,
     relieved_currents,
 )
 from apps.power.domain.load_status import LoadStatus, plug_reading, thermostat_reading
 from apps.power.domain.loads import LearnedPhase, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.phase_samples import PhaseSample
+from apps.power.domain.phase_watch import PhaseAmps
 from apps.power.domain.shedding import Shed
 
 AT = 1000.0
 POLLED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 CURRENTS = {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: Decimal('26.0'), LoadPhase.L3: Decimal('4.0')}
+READ_AT = {LoadPhase.L1: AT, LoadPhase.L2: AT, LoadPhase.L3: AT}
 CONTROL = LoadControl(
     live=False,
     thresholds=PhaseThresholds(
@@ -71,6 +75,7 @@ SHED = Shed(
     at=AT - 2,
     settled_at=AT + 3,
 )
+BOILER_DRY_RUN_SHED = replace(SHED, load='boiler-1f', amps=Decimal('6.0'), live=False, was_on=True)
 BOILER_ON = SeenReading(polled_at=POLLED_AT, reading=plug_reading(on=True, current=Decimal('6.1'), read_at=AT - 20))
 KITCHEN_HEATING = SeenReading(
     polled_at=POLLED_AT,
@@ -93,6 +98,17 @@ def f_samples() -> tuple[PhaseSample, ...]:
     return tuple(_sample(at) for at in (AT - 121, AT - 120, AT - 1))
 
 
+@pytest.fixture
+def f_state_with_a_live_and_a_dry_run_shed() -> GuardState:
+    started = GuardState.started(LOADS, AT)
+    return replace(
+        started,
+        phases=replace(started.phases, currents=CURRENTS, read_at=READ_AT),
+        readings={'boiler-1f': BOILER_ON, 'kitchen': KITCHEN_HEATING},
+        shedding=ShedState(sheds={'boiler-1f': BOILER_DRY_RUN_SHED, 'kitchen': SHED}),
+    )
+
+
 def test_samples_keep_the_last_two_minutes_and_add_the_currents_of_the_second(
     f_samples: tuple[PhaseSample, ...],
 ) -> None:
@@ -105,11 +121,17 @@ def test_second_without_every_phase_adds_no_sample(f_samples: tuple[PhaseSample,
     assert follow_samples(f_samples, currents, AT) == (_sample(AT - 120), _sample(AT - 1))
 
 
-def test_statuses_follow_the_readings_and_the_sheds() -> None:
+@pytest.mark.parametrize(
+    ('live', 'boiler_shed'),
+    [(True, False), (False, True)],
+    ids=['live_view_sees_only_live_sheds', 'dry_run_view_sees_every_shed'],
+)
+def test_statuses_follow_the_readings_and_the_sheds_of_their_view(live: bool, boiler_shed: bool) -> None:
     statuses = load_statuses(
         LOADS,
         {'boiler-1f': BOILER_ON, 'kitchen': KITCHEN_HEATING},
-        ShedState(sheds={'kitchen': SHED}),
+        ShedState(sheds={'boiler-1f': BOILER_DRY_RUN_SHED, 'kitchen': SHED}),
+        live=live,
     )
 
     assert statuses == (
@@ -121,7 +143,7 @@ def test_statuses_follow_the_readings_and_the_sheds() -> None:
             amps=Decimal('6.0'),
             available=True,
             drawing=True,
-            shed=False,
+            shed=boiler_shed,
         ),
         LoadStatus(
             slug='kitchen',
@@ -145,16 +167,43 @@ def test_load_whose_command_failed_counts_as_unavailable_until_it_is_read_again(
     failed_at: float,
     available: bool,
 ) -> None:
-    statuses = load_statuses(LOADS, {'boiler-1f': BOILER_ON}, ShedState(failed={'boiler-1f': failed_at}))
+    statuses = load_statuses(LOADS, {'boiler-1f': BOILER_ON}, ShedState(failed={'boiler-1f': failed_at}), live=True)
 
     assert (statuses[0].available, statuses[0].drawing) == (available, available)
 
 
 def test_relieved_currents_take_the_relief_of_the_sheds_from_their_phase() -> None:
-    assert relieved_currents(CURRENTS, [SHED], AT) == {
+    assert relieved_currents(CURRENTS, READ_AT, [SHED]) == {
         LoadPhase.L1: Decimal('12.0'),
         LoadPhase.L2: Decimal('18.0'),
         LoadPhase.L3: Decimal('4.0'),
+    }
+
+
+@pytest.mark.parametrize(
+    ('live', 'l2'),
+    [(True, Decimal('18.0')), (False, Decimal('12.0'))],
+    ids=['live_view_takes_only_live_sheds', 'dry_run_view_takes_every_shed'],
+)
+def test_view_takes_from_the_measured_current_the_relief_of_the_sheds_it_sees(
+    f_state_with_a_live_and_a_dry_run_shed: GuardState,
+    live: bool,
+    l2: Decimal,
+) -> None:
+    view = guard_view(
+        f_state_with_a_live_and_a_dry_run_shed,
+        f_state_with_a_live_and_a_dry_run_shed.shedding,
+        live=live,
+    )
+
+    assert view.currents == {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: l2, LoadPhase.L3: Decimal('4.0')}
+
+
+def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it() -> None:
+    assert phase_amps(CURRENTS, READ_AT, [SHED, BOILER_DRY_RUN_SHED]) == {
+        LoadPhase.L1: PhaseAmps(measured=Decimal('12.0'), live=Decimal('12.0'), dry_run=Decimal('12.0')),
+        LoadPhase.L2: PhaseAmps(measured=Decimal('26.0'), live=Decimal('18.0'), dry_run=Decimal('12.0')),
+        LoadPhase.L3: PhaseAmps(measured=Decimal('4.0'), live=Decimal('4.0'), dry_run=Decimal('4.0')),
     }
 
 

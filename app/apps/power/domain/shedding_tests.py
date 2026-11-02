@@ -8,9 +8,11 @@ from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.load_status import LoadReading, LoadStatus, plug_reading
 from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.shedding import (
+    SETTLED,
     Shed,
     choose_restore,
     choose_shed,
+    in_view,
     new_shed,
     relief,
     resumed_shed,
@@ -55,6 +57,7 @@ BOILER_SHED = Shed(
     at=AT - 65,
     settled_at=AT - 60,
 )
+DRY_RUN_SHED = replace(BOILER_SHED, live=False)
 LIVING_ROOM_SHED = replace(BOILER_SHED, load='living-room', amps=Decimal('8.0'), was_on=None)
 KITCHEN_SHED = replace(LIVING_ROOM_SHED, load='kitchen', phase=LoadPhase.L2)
 BATHROOM_SHED = replace(LIVING_ROOM_SHED, load='bathroom-1f', phase=LoadPhase.UNKNOWN, reason=ShedReason.METER_LOST)
@@ -100,6 +103,33 @@ def test_relief_counts_live_sheds_while_they_settle_and_dry_run_sheds_until_rest
     assert relief(f_sheds, phase, AT) == expected
 
 
+@pytest.mark.parametrize(
+    ('read_at', 'expected'),
+    [(AT + 1.9, Decimal('6.0')), (AT + 2, Decimal(0))],
+    ids=['reading_taken_while_it_settles', 'reading_taken_once_it_settled'],
+)
+def test_live_shed_relieves_its_phase_until_a_reading_taken_once_it_settled(
+    f_sheds: list[Shed],
+    read_at: float,
+    expected: Decimal,
+) -> None:
+    assert relief(f_sheds[:1], LoadPhase.L1, read_at) == expected
+
+
+@pytest.mark.parametrize(
+    ('shed', 'live', 'expected'),
+    [(BOILER_SHED, True, True), (BOILER_SHED, False, True), (DRY_RUN_SHED, True, False), (DRY_RUN_SHED, False, True)],
+    ids=[
+        'live_shed_in_the_live_view',
+        'live_shed_in_the_dry_run_view',
+        'dry_run_shed_in_the_live_view',
+        'dry_run_shed_in_the_dry_run_view',
+    ],
+)
+def test_live_view_sees_only_live_sheds_and_the_dry_run_view_every_shed(shed: Shed, live: bool, expected: bool) -> None:
+    assert in_view(shed, live=live) is expected
+
+
 def test_new_shed_relieves_its_phase_while_it_settles() -> None:
     assert new_shed(KITCHEN, phase=LoadPhase.L2, live=True, reason=ShedReason.OVERLOAD, was_on=None, at=AT) == Shed(
         load='kitchen',
@@ -113,16 +143,21 @@ def test_new_shed_relieves_its_phase_while_it_settles() -> None:
     )
 
 
-def test_resumed_shed_carries_the_stored_shed_already_settled() -> None:
-    assert resumed_shed(SHED_BOILER_RECORD, at=AT, default_amps=Decimal('6.0')) == Shed(
-        load='boiler-1f',
-        phase=LoadPhase.L2,
-        amps=Decimal('6.0'),
-        live=True,
-        reason=ShedReason.OVERLOAD,
-        was_on=True,
-        at=AT,
-        settled_at=AT,
+def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading() -> None:
+    resumed = resumed_shed(SHED_BOILER_RECORD, at=AT, default_amps=Decimal('6.0'))
+
+    assert (resumed, relief([] if resumed is None else [resumed], LoadPhase.L2, AT - 1)) == (
+        Shed(
+            load='boiler-1f',
+            phase=LoadPhase.L2,
+            amps=Decimal('6.0'),
+            live=True,
+            reason=ShedReason.OVERLOAD,
+            was_on=True,
+            at=AT,
+            settled_at=SETTLED,
+        ),
+        Decimal(0),
     )
 
 

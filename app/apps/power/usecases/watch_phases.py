@@ -26,15 +26,22 @@ from apps.power.domain.events import (
     PhaseCalmed,
     PhaseOverloaded,
 )
-from apps.power.domain.guard import GuardLoads, GuardState, PhaseState, SeenReading, follow_samples
+from apps.power.domain.guard import GuardLoads, GuardState, PhaseState, SeenReading, follow_samples, phase_amps
 from apps.power.domain.load_status import plug_reading, thermostat_reading
-from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LoadKind, LoadPhase, LoadRecord, measured_currents
+from apps.power.domain.loads import (
+    MEASURED_PHASES,
+    METER_PHASES,
+    LearnedPhase,
+    LoadKind,
+    LoadPhase,
+    LoadRecord,
+    measured_currents,
+)
 from apps.power.domain.meter_watch import watch_meter
 from apps.power.domain.moments import elapsed
 from apps.power.domain.phase_learning import LoadChange, detect_change, follow_learning, learned_changed
 from apps.power.domain.phase_watch import PhaseWatchStep, watch_phase
 from apps.power.domain.ports import DeviceDirectory, LoadSettingsStore, LoadStore
-from apps.power.domain.shedding import relief
 from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.services.guard_book import GuardBook, guard_book
@@ -98,7 +105,8 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         loads = self._loads_at(previous, at)
         state = GuardState.started(loads, at) if previous is None else replace(previous, loads=loads)
         readings, changes = self._readings(state, at)
-        phases, steps = self._watch(state, self._currents(loads.meter), at, input_dto.now)
+        currents, read_at = self._currents(loads.meter, at)
+        phases, steps = self._watch(state, currents, read_at, at, input_dto.now)
         learning = follow_learning(state.learning, changes, phases.samples, at)
         learned = self._learned(loads, learning.learned, input_dto.now)
         ev = self._follow_ev(state.ev, phases, learning.state.changes, at, input_dto.now)
@@ -123,16 +131,18 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             read_at=at,
         )
 
-    def _currents(self, meter: str | None) -> dict[LoadPhase, Decimal]:
+    def _currents(self, meter: str | None, at: float) -> tuple[dict[LoadPhase, Decimal], dict[LoadPhase, float]]:
         if meter is None:
-            return {}
+            return {}, {}
 
         snapshot = self._meter.snapshot(meter)
         if snapshot.currents is None:
-            return {}
+            return {}, {}
 
-        return measured_currents(
-            {phase: amps for phase, amps in snapshot.currents.amps.items() if phase not in snapshot.stale_phases},
+        fresh = {phase: amps for phase, amps in snapshot.currents.amps.items() if phase not in snapshot.stale_phases}
+        return (
+            measured_currents(fresh),
+            {METER_PHASES[phase]: at - snapshot.ages[phase].total_seconds() for phase in fresh},
         )
 
     def _readings(self, state: GuardState, at: float) -> tuple[dict[str, SeenReading], list[LoadChange]]:
@@ -193,19 +203,14 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         self,
         state: GuardState,
         currents: dict[LoadPhase, Decimal],
+        read_at: dict[LoadPhase, float],
         at: float,
         now: datetime,
     ) -> tuple[PhaseState, dict[LoadPhase, PhaseWatchStep]]:
         thresholds = state.loads.control.thresholds
-        sheds = tuple(state.shedding.sheds.values())
+        amps = phase_amps(currents, read_at, state.shedding.sheds.values())
         steps = {
-            phase: watch_phase(
-                state.phases.watches[phase],
-                currents.get(phase),
-                relief(sheds, phase, at),
-                at,
-                thresholds,
-            )
+            phase: watch_phase(state.phases.watches[phase], amps.get(phase), at, thresholds)
             for phase in MEASURED_PHASES
         }
         for phase, step in steps.items():
@@ -213,6 +218,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         phases = PhaseState(
             meter=watch_meter(state.phases.meter, fresh=_fresh(currents), at=at),
             currents=currents,
+            read_at=read_at,
             watches={phase: step.watch for phase, step in steps.items()},
             samples=follow_samples(state.phases.samples, currents, at),
         )

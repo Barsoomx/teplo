@@ -3,10 +3,10 @@ from collections.abc import Mapping, Sequence
 
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.guard import GuardState
-from apps.power.domain.headroom import Currents
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.meter_watch import MeterCondition
 from apps.power.domain.start_gate import StartDecision, StartRequest, decide_starts
+from apps.power.domain.view import GuardView
 
 
 class GuardBook:
@@ -37,16 +37,15 @@ class GuardBook:
         load: LoadStatus,
         *,
         meter: MeterCondition,
-        currents: Currents,
-        loads: Sequence[LoadStatus],
+        view: GuardView,
         at: float,
         thresholds: PhaseThresholds,
     ) -> StartDecision:
         decisions = self.serve_starts(
             (StartRequest(load=load, live=True),),
             meter=meter,
-            currents=currents,
-            loads=loads,
+            live_view=view,
+            dry_run_view=view,
             at=at,
             thresholds=thresholds,
         )
@@ -57,8 +56,8 @@ class GuardBook:
         requests: Sequence[StartRequest],
         *,
         meter: MeterCondition,
-        currents: Currents,
-        loads: Sequence[LoadStatus],
+        live_view: GuardView,
+        dry_run_view: GuardView,
         at: float,
         thresholds: PhaseThresholds,
     ) -> Mapping[str, StartDecision]:
@@ -66,8 +65,8 @@ class GuardBook:
             served = decide_starts(
                 requests,
                 meter=meter,
-                currents=currents,
-                loads=loads,
+                live_view=live_view,
+                dry_run_view=dry_run_view,
                 last_permit_at=self._last_permit_at,
                 at=at,
                 thresholds=thresholds,

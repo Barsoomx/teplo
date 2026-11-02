@@ -12,6 +12,7 @@ from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
 from apps.power.domain.shedding import Shed
 from apps.power.domain.start_gate import StartDecision, StartRefusal, StartRequest
+from apps.power.domain.view import GuardView
 from apps.power.services.guard_book import GuardBook
 
 AT = 1000.0
@@ -66,20 +67,20 @@ def _permit(book: GuardBook, load: LoadStatus, at: float) -> StartDecision:
     return book.permit_start(
         load,
         meter=MeterCondition.FRESH,
-        currents=CURRENTS,
-        loads=[load],
+        view=GuardView(currents=CURRENTS, loads=(load,)),
         at=at,
         thresholds=THRESHOLDS,
     )
 
 
 def _serve(book: GuardBook, requests: tuple[StartRequest, ...], at: float) -> dict[str, StartDecision]:
+    view = GuardView(currents=CURRENTS, loads=tuple(request.load for request in requests))
     return dict(
         book.serve_starts(
             requests,
             meter=MeterCondition.FRESH,
-            currents=CURRENTS,
-            loads=[request.load for request in requests],
+            live_view=view,
+            dry_run_view=view,
             at=at,
             thresholds=THRESHOLDS,
         ),

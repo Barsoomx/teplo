@@ -347,7 +347,7 @@ def _watch(
     book.remember(
         replace(
             started,
-            phases=replace(started.phases, meter=meter, currents=currents),
+            phases=replace(started.phases, meter=meter, currents=currents, read_at=dict.fromkeys(currents, 0.0)),
             readings={} if readings is None else readings,
         ),
     )

@@ -3,11 +3,12 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from apps.power.domain.control import PhaseThresholds
-from apps.power.domain.headroom import Currents, PhaseOverrun, overrun
+from apps.power.domain.headroom import PhaseOverrun, overrun
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind
 from apps.power.domain.meter_watch import MeterCondition, drawing_floors
 from apps.power.domain.moments import elapsed
+from apps.power.domain.view import GuardView
 
 
 class StartRefusal(StrEnum):
@@ -44,17 +45,16 @@ def decide_start(
     load: LoadStatus,
     *,
     meter: MeterCondition,
-    currents: Currents,
-    loads: Sequence[LoadStatus],
+    view: GuardView,
     last_permit_at: float | None,
     at: float,
     thresholds: PhaseThresholds,
 ) -> StartDecision:
-    refusal = _refusal(load, meter, loads, last_permit_at, at, thresholds)
+    refusal = _refusal(load, meter, view.loads, last_permit_at, at, thresholds)
     if refusal is not None or meter is not MeterCondition.FRESH:
         return StartDecision(load=load.slug, refusal=refusal, overrun=None)
 
-    excess = overrun(load.phase, load.amps, currents, thresholds.start_ceiling)
+    excess = overrun(load.phase, load.amps, view.currents, thresholds.start_ceiling)
     return StartDecision(
         load=load.slug,
         refusal=None if excess is None else StartRefusal.NO_HEADROOM,
@@ -66,8 +66,8 @@ def decide_starts(
     requests: Sequence[StartRequest],
     *,
     meter: MeterCondition,
-    currents: Currents,
-    loads: Sequence[LoadStatus],
+    live_view: GuardView,
+    dry_run_view: GuardView,
     last_permit_at: float | None,
     at: float,
     thresholds: PhaseThresholds,
@@ -80,8 +80,7 @@ def decide_starts(
         decision = decide_start(
             load,
             meter=meter,
-            currents=currents,
-            loads=loads,
+            view=live_view if load.slug in live else dry_run_view,
             last_permit_at=permit_at if load.slug in live else _latest(permit_at, would_be_permit_at),
             at=at,
             thresholds=thresholds,

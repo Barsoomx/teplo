@@ -113,7 +113,7 @@ def _remember(
     book.remember(
         replace(
             started,
-            phases=replace(started.phases, meter=meter, currents=currents),
+            phases=replace(started.phases, meter=meter, currents=currents, read_at=dict.fromkeys(currents, AT)),
             readings={} if readings is None else readings,
             shedding=ShedState() if shedding is None else shedding,
         ),
@@ -170,6 +170,22 @@ def f_lost_meter_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate:
 @pytest.fixture
 def f_stale_meter_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     _remember(f_book, management_live=False, meter=MeterWatch(seen=True, stale_since=AT - 10))
+    return f_gate
+
+
+@pytest.fixture
+def f_dry_run_shed_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
+    shed = Shed(
+        load='hallway',
+        phase=LoadPhase.L2,
+        amps=Decimal('6.0'),
+        live=False,
+        reason=ShedReason.OVERLOAD,
+        was_on=None,
+        at=AT - 600,
+        settled_at=AT - 595,
+    )
+    _remember(f_book, management_live=True, l2='18.0', shedding=ShedState(sheds={'hallway': shed}))
     return f_gate
 
 
@@ -287,3 +303,18 @@ def test_lost_meter_starts_a_floor_within_one_drawing_floor_a_phase(
     answer: StartAnswer,
 ) -> None:
     assert f_lost_meter_gate.ask_starts([KITCHEN_START], NOW) == {'kitchen': answer}
+
+
+def test_dry_run_shed_makes_no_room_for_a_live_start(f_dry_run_shed_gate: GuardLoadGate, f_book: GuardBook) -> None:
+    answers = f_dry_run_shed_gate.ask_starts([KITCHEN_START], NOW)
+
+    assert (answers, f_book.last_permit_at()) == ({'kitchen': WAITS}, None)
+
+
+def test_dry_run_start_counts_the_room_a_dry_run_shed_would_make(
+    f_dry_run_shed_gate: GuardLoadGate,
+    f_book: GuardBook,
+) -> None:
+    answers = f_dry_run_shed_gate.ask_starts([ZoneStart(zone='kitchen', writes_live=False)], NOW)
+
+    assert (answers, f_book.last_permit_at()) == ({'kitchen': GRANTED}, None)

@@ -10,6 +10,7 @@ from apps.power.domain.loads import MEASURED_PHASES, LoadPhase, LoadRecord, Shed
 from apps.power.domain.moments import elapsed
 
 SETTLE = timedelta(seconds=5)
+SETTLED = float('-inf')
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -57,13 +58,17 @@ def resumed_shed(record: LoadRecord, *, at: float, default_amps: Decimal) -> She
         reason=record.shed.reason,
         was_on=record.shed.was_on,
         at=at,
-        settled_at=at,
+        settled_at=SETTLED,
     )
 
 
-def relief(sheds: Iterable[Shed], phase: LoadPhase, at: float) -> Decimal:
+def in_view(shed: Shed, *, live: bool) -> bool:
+    return shed.live or not live
+
+
+def relief(sheds: Iterable[Shed], phase: LoadPhase, read_at: float) -> Decimal:
     return sum(
-        (shed.amps for shed in sheds if shed.phase is phase and (not shed.live or at < shed.settled_at)),
+        (shed.amps for shed in sheds if shed.phase is phase and (not shed.live or read_at < shed.settled_at)),
         Decimal(0),
     )
 

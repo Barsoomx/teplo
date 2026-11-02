@@ -145,6 +145,7 @@ class Guard:
 @dataclass(frozen=True, kw_only=True)
 class House:
     guard: Guard
+    book: GuardBook
     plugs: PlugStateStore
     loads: LoadStoreStub
     load_settings: LoadSettingsStoreStub
@@ -233,6 +234,7 @@ def _house(
                 dispatcher=dispatcher,
             ),
         ),
+        book=book,
         plugs=plugs,
         loads=loads,
         load_settings=load_settings,
@@ -308,6 +310,12 @@ def f_live_house_after_two_sheds(f_live_house: House) -> House:
 
 
 @pytest.fixture
+def f_live_house_shedding_thirty_amperes(f_live_house: House) -> House:
+    _seconds(f_live_house.guard, 5, '30.0')
+    return f_live_house
+
+
+@pytest.fixture
 def f_boiler_shed_live() -> House:
     house = _house(_live(BOILER), LIVE_CONTROL, frozenset())
     _seconds(house.guard, 4, '26.0')
@@ -359,6 +367,23 @@ def f_unreachable_plug_house() -> House:
 @pytest.fixture
 def f_live_floors_house() -> House:
     return _house(_live(KITCHEN, LIVING_ROOM), LIVE_CONTROL, LIVE_ZONES)
+
+
+@pytest.fixture
+def f_mixed_house() -> House:
+    return _house([BOILER, KITCHEN, replace(LIVING_ROOM, live=True)], LIVE_CONTROL, LIVE_ZONES)
+
+
+@pytest.fixture
+def f_mixed_house_after_an_overload() -> House:
+    house = _house([replace(BOILER, live=True), KITCHEN], LIVE_CONTROL, LIVE_ZONES)
+    _seconds(house.guard, 4, '30.0')
+    return house
+
+
+@pytest.fixture
+def f_mixed_floors_house(request: pytest.FixtureRequest) -> House:
+    return _house(request.param, LIVE_CONTROL, LIVE_ZONES)
 
 
 @pytest.fixture
@@ -860,6 +885,90 @@ def test_dry_run_journals_the_limp_house_once_a_meter_that_reported_is_lost_and_
                 occurred_at=_moment(201),
             ),
         ],
+    )
+
+
+def test_live_load_is_shed_on_the_measured_current_whatever_the_dry_run_sheds(f_mixed_house: House) -> None:
+    outputs = _seconds(f_mixed_house.guard, 6, '30.0')
+
+    assert (
+        _shed_at(outputs, 1),
+        f_mixed_house.zones.switched_off,
+        f_mixed_house.boiler.switches,
+        f_mixed_house.events,
+    ) == (
+        [(4, ('living-room', 'boiler-1f'))],
+        [('living-room', 'thermostat-living-room', _moment(4))],
+        [],
+        [
+            _overload(4, '30.0'),
+            LoadShed(
+                load='living-room',
+                name='Гостиная',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('30.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(4),
+            ),
+            LoadShedDryRun(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('30.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(4),
+            ),
+        ],
+    )
+
+
+def test_live_plug_goes_back_on_only_when_the_measured_phase_has_room(
+    f_mixed_house_after_an_overload: House,
+) -> None:
+    outputs = _seconds(f_mixed_house_after_an_overload.guard, 181, '21.0')
+
+    assert (
+        _restored_at(outputs, 5),
+        f_mixed_house_after_an_overload.boiler.switches,
+        f_mixed_house_after_an_overload.book.last_permit_at(),
+    ) == ([], [False], None)
+
+
+@pytest.mark.parametrize(
+    ('f_mixed_floors_house', 'shed', 'switched_off'),
+    [
+        (
+            [replace(KITCHEN, live=True), LIVING_ROOM],
+            [(61, ('kitchen',))],
+            [('kitchen', 'thermostat-kitchen', _moment(61))],
+        ),
+        ([KITCHEN, replace(LIVING_ROOM, live=True)], [], []),
+    ],
+    ids=['live_floor_beside_a_more_important_one', 'most_important_floor_beside_one_it_cannot_switch'],
+    indirect=['f_mixed_floors_house'],
+)
+def test_lost_meter_sheds_a_live_floor_only_beside_a_more_important_drawing_floor(
+    f_mixed_floors_house: House,
+    shed: list[tuple[int, tuple[str, ...]]],
+    switched_off: list[tuple[str, str, datetime]],
+) -> None:
+    outputs = _seconds(f_mixed_floors_house.guard, 62, None)
+
+    assert (_shed_at(outputs, 1), f_mixed_floors_house.zones.switched_off) == (shed, switched_off)
+
+
+def test_live_shed_relieves_its_phase_until_the_meter_reads_the_phase_once_it_settled(
+    f_live_house_shedding_thirty_amperes: House,
+) -> None:
+    outputs = _seconds(f_live_house_shedding_thirty_amperes.guard, 9, None)
+
+    assert (_shed_at(outputs, 6), f_live_house_shedding_thirty_amperes.zones.switched_off) == (
+        [],
+        [('kitchen', 'thermostat-kitchen', _moment(5))],
     )
 
 
