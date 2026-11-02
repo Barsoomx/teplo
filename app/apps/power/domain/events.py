@@ -4,6 +4,7 @@ from enum import StrEnum
 
 from apps.core.domain.events import DomainEvent
 from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
+from apps.power.domain.start_gate import StartRefusal
 
 
 class RestoreCause(StrEnum):
@@ -85,6 +86,16 @@ class LoadCommandFailed(DomainEvent):
     command: LoadCommand
     error: str
     error_code: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class StartWouldWaitDryRun(DomainEvent):
+    load: str
+    name: str
+    phase: LoadPhase
+    amps: Decimal | None
+    load_amps: Decimal
+    reason: StartRefusal
 
 
 @dataclass(frozen=True, kw_only=True)

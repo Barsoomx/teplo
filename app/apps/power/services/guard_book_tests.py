@@ -11,7 +11,7 @@ from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
 from apps.power.domain.shedding import Shed
-from apps.power.domain.start_gate import StartDecision, StartRefusal
+from apps.power.domain.start_gate import StartDecision, StartRefusal, StartRequest
 from apps.power.services.guard_book import GuardBook
 
 AT = 1000.0
@@ -73,6 +73,19 @@ def _permit(book: GuardBook, load: LoadStatus, at: float) -> StartDecision:
     )
 
 
+def _serve(book: GuardBook, requests: tuple[StartRequest, ...], at: float) -> dict[str, StartDecision]:
+    return dict(
+        book.serve_starts(
+            requests,
+            meter=MeterCondition.FRESH,
+            currents=CURRENTS,
+            loads=[request.load for request in requests],
+            at=at,
+            thresholds=THRESHOLDS,
+        ),
+    )
+
+
 @pytest.fixture
 def f_book() -> GuardBook:
     return GuardBook()
@@ -81,6 +94,12 @@ def f_book() -> GuardBook:
 @pytest.fixture
 def f_book_after_a_permit(f_book: GuardBook) -> GuardBook:
     _permit(f_book, KITCHEN, AT)
+    return f_book
+
+
+@pytest.fixture
+def f_book_with_a_waiting_load(f_book: GuardBook) -> GuardBook:
+    f_book.note_waiting(frozenset({'kitchen'}))
     return f_book
 
 
@@ -131,3 +150,53 @@ def test_book_holds_the_zones_of_live_sheds(f_book_with_a_shed_zone: GuardBook) 
 
 def test_book_holds_no_zone_before_the_guard_runs(f_book: GuardBook) -> None:
     assert (f_book.state(), f_book.held_zones()) == (None, frozenset())
+
+
+def test_round_of_starts_takes_the_permit_of_its_live_start(f_book: GuardBook) -> None:
+    hallway = replace(KITCHEN, slug='hallway', priority=4)
+
+    decisions = _serve(
+        f_book,
+        (StartRequest(load=hallway, live=True), StartRequest(load=KITCHEN, live=False)),
+        AT,
+    )
+
+    assert (decisions, f_book.last_permit_at()) == (
+        {
+            'kitchen': StartDecision(load='kitchen', refusal=None, overrun=None),
+            'hallway': StartDecision(load='hallway', refusal=None, overrun=None),
+        },
+        AT,
+    )
+
+
+def test_round_of_dry_run_starts_leaves_the_last_permit(f_book_after_a_permit: GuardBook) -> None:
+    decisions = _serve(f_book_after_a_permit, (StartRequest(load=KITCHEN, live=False),), AT + 30)
+
+    assert (decisions, f_book_after_a_permit.last_permit_at()) == (
+        {'kitchen': StartDecision(load='kitchen', refusal=None, overrun=None)},
+        AT,
+    )
+
+
+@pytest.mark.parametrize(
+    ('waiting', 'began'),
+    [
+        (frozenset({'kitchen'}), frozenset()),
+        (frozenset({'kitchen', 'hallway'}), frozenset({'hallway'})),
+        (frozenset(), frozenset()),
+    ],
+    ids=['still_waiting', 'another_begins_to_wait', 'none_waits'],
+)
+def test_book_names_only_the_loads_that_begin_to_wait(
+    f_book_with_a_waiting_load: GuardBook,
+    waiting: frozenset[str],
+    began: frozenset[str],
+) -> None:
+    assert f_book_with_a_waiting_load.note_waiting(waiting) == began
+
+
+def test_load_that_stopped_waiting_begins_a_new_wait(f_book_with_a_waiting_load: GuardBook) -> None:
+    f_book_with_a_waiting_load.note_waiting(frozenset())
+
+    assert f_book_with_a_waiting_load.note_waiting(frozenset({'kitchen'})) == frozenset({'kitchen'})

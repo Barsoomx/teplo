@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.power.domain.control import LoadControl, PhaseThresholds, commands_live
+from apps.power.domain.control import LoadControl, PhaseThresholds, commands_live, starts_live
 from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord
 
 CONTROL = LoadControl(
@@ -67,3 +67,24 @@ def test_commands_reach_a_load_only_through_every_gate(
     control = replace(CONTROL, live=management_live)
 
     assert commands_live(control, load, dry_run=dry_run, zone_live_control=zone_live_control) is expected
+
+
+@pytest.mark.parametrize(
+    ('writes_live', 'management_live', 'load', 'expected'),
+    [
+        (True, True, KITCHEN, True),
+        (False, True, KITCHEN, False),
+        (True, False, KITCHEN, False),
+        (True, True, replace(KITCHEN, live=False), False),
+    ],
+    ids=['every_gate_open', 'zone_writes_held_back', 'load_management_off', 'load_off'],
+)
+def test_start_of_a_zone_waits_for_a_permit_only_when_its_write_and_its_load_are_live(
+    writes_live: bool,
+    management_live: bool,
+    load: LoadRecord,
+    expected: bool,
+) -> None:
+    control = replace(CONTROL, live=management_live)
+
+    assert starts_live(control, load, writes_live=writes_live) is expected

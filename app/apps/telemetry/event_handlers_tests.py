@@ -34,8 +34,10 @@ from apps.power.domain.events import (
     PhaseCalmed,
     PhaseOverloaded,
     RestoreCause,
+    StartWouldWaitDryRun,
 )
 from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
+from apps.power.domain.start_gate import StartRefusal
 from apps.telemetry.event_handlers import (
     journal_air_control_dry_run,
     journal_alert_cleared,
@@ -54,6 +56,7 @@ from apps.telemetry.event_handlers import (
     journal_phase_calm,
     journal_phase_overload,
     journal_second_floor_guard_dry_run,
+    journal_start_would_wait_dry_run,
     journal_zone_boost,
     journal_zone_command,
     journal_zone_command_failure,
@@ -435,6 +438,31 @@ def test_cleared_alert_is_journaled() -> None:
             ),
         ),
         (
+            journal_start_would_wait_dry_run,
+            StartWouldWaitDryRun(
+                load='kitchen',
+                name='Кухня',
+                phase=LoadPhase.L2,
+                amps=Decimal('21.5'),
+                load_amps=Decimal('8.0'),
+                reason=StartRefusal.NO_HEADROOM,
+                occurred_at=NOW,
+            ),
+            (
+                'start_would_wait_dry_run',
+                'kitchen',
+                {
+                    'load': 'kitchen',
+                    'name': 'Кухня',
+                    'phase': 'l2',
+                    'amps': '21.5',
+                    'load_amps': '8.0',
+                    'reason': 'no_headroom',
+                },
+                NOW,
+            ),
+        ),
+        (
             journal_load_phase_learned,
             LoadPhaseLearned(
                 load='boiler-1f',
@@ -471,6 +499,7 @@ def test_cleared_alert_is_journaled() -> None:
         'load_restored_dry_run',
         'load_shed_overridden',
         'load_command_failed',
+        'start_would_wait_dry_run',
         'load_phase_learned',
         'ev_charging_started',
         'ev_charging_stopped',

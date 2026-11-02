@@ -23,6 +23,7 @@ from apps.power.domain.events import (
     LoadShedOverridden,
     PhaseCalmed,
     PhaseOverloaded,
+    StartWouldWaitDryRun,
 )
 from apps.telemetry.repositories.journal import JournalRepository
 
@@ -165,6 +166,11 @@ def journal_load_shed_overridden(event: LoadShedOverridden) -> None:
 @domain_event_handler(LoadCommandFailed)
 def journal_load_command_failure(event: LoadCommandFailed) -> None:
     _journal('load_command_failed', event.load, event)
+
+
+@domain_event_handler(StartWouldWaitDryRun)
+def journal_start_would_wait_dry_run(event: StartWouldWaitDryRun) -> None:
+    _journal('start_would_wait_dry_run', event.load, event)
 
 
 @domain_event_handler(LoadPhaseLearned)

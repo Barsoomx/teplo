@@ -30,3 +30,7 @@ def commands_live(control: LoadControl, load: LoadRecord, *, dry_run: bool, zone
         return False
 
     return load.kind is LoadKind.PLUG or zone_live_control
+
+
+def starts_live(control: LoadControl, load: LoadRecord, *, writes_live: bool) -> bool:
+    return writes_live and control.live and load.live

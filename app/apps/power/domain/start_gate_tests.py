@@ -9,7 +9,15 @@ from apps.power.domain.headroom import PhaseOverrun
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind, LoadPhase
 from apps.power.domain.meter_watch import MeterCondition
-from apps.power.domain.start_gate import StartDecision, StartRefusal, decide_start, in_start_order
+from apps.power.domain.start_gate import (
+    StartDecision,
+    StartRefusal,
+    StartRequest,
+    StartRound,
+    decide_start,
+    decide_starts,
+    in_start_order,
+)
 
 THRESHOLDS = PhaseThresholds(
     start_ceiling=Decimal('20.0'),
@@ -37,6 +45,8 @@ KITCHEN = LoadStatus(
 HALLWAY = replace(KITCHEN, slug='hallway', priority=4, drawing=True)
 BOILER = replace(KITCHEN, slug='boiler-1f', kind=LoadKind.PLUG, priority=1, amps=Decimal('6.0'))
 GRANTED = StartDecision(load='kitchen', refusal=None, overrun=None)
+LIVING_ROOM = replace(KITCHEN, slug='living-room', priority=7, phase=LoadPhase.L3)
+GRANTED_LIVING_ROOM = StartDecision(load='living-room', refusal=None, overrun=None)
 
 
 def _decide(
@@ -146,3 +156,66 @@ def test_lost_meter_starts_floors_thirty_seconds_apart() -> None:
 
 def test_starts_are_served_most_important_first() -> None:
     assert in_start_order([BOILER, KITCHEN, HALLWAY]) == (KITCHEN, HALLWAY, BOILER)
+
+
+def _serve(requests: list[StartRequest], last_permit_at: float | None = None) -> StartRound:
+    return decide_starts(
+        requests,
+        meter=MeterCondition.FRESH,
+        currents=CURRENTS,
+        loads=[request.load for request in requests],
+        last_permit_at=last_permit_at,
+        at=AT,
+        thresholds=THRESHOLDS,
+    )
+
+
+def test_round_serves_the_most_important_start_first_and_holds_back_the_rest() -> None:
+    served = _serve([StartRequest(load=KITCHEN, live=True), StartRequest(load=LIVING_ROOM, live=True)])
+
+    assert served == StartRound(
+        decisions={
+            'living-room': StartDecision(load='living-room', refusal=None, overrun=None),
+            'kitchen': StartDecision(load='kitchen', refusal=StartRefusal.TOO_SOON, overrun=None),
+        },
+        last_permit_at=AT,
+    )
+
+
+def test_round_of_dry_run_starts_takes_no_permit_but_holds_back_the_starts_after_its_own() -> None:
+    served = _serve([StartRequest(load=KITCHEN, live=False), StartRequest(load=LIVING_ROOM, live=False)])
+
+    assert served == StartRound(
+        decisions={
+            'living-room': StartDecision(load='living-room', refusal=None, overrun=None),
+            'kitchen': StartDecision(load='kitchen', refusal=StartRefusal.TOO_SOON, overrun=None),
+        },
+        last_permit_at=None,
+    )
+
+
+def test_dry_run_start_never_holds_back_a_live_one() -> None:
+    served = _serve([StartRequest(load=KITCHEN, live=True), StartRequest(load=LIVING_ROOM, live=False)])
+
+    assert served == StartRound(decisions={'living-room': GRANTED_LIVING_ROOM, 'kitchen': GRANTED}, last_permit_at=AT)
+
+
+def test_live_permit_holds_back_the_dry_run_starts_after_it() -> None:
+    served = _serve([StartRequest(load=KITCHEN, live=False), StartRequest(load=LIVING_ROOM, live=True)])
+
+    assert served == StartRound(
+        decisions={
+            'living-room': GRANTED_LIVING_ROOM,
+            'kitchen': StartDecision(load='kitchen', refusal=StartRefusal.TOO_SOON, overrun=None),
+        },
+        last_permit_at=AT,
+    )
+
+
+def test_round_keeps_the_last_permit_when_it_grants_none() -> None:
+    served = _serve([StartRequest(load=KITCHEN, live=True)], last_permit_at=AT - 10)
+
+    assert served == StartRound(
+        decisions={'kitchen': StartDecision(load='kitchen', refusal=StartRefusal.TOO_SOON, overrun=None)},
+        last_permit_at=AT - 10,
+    )

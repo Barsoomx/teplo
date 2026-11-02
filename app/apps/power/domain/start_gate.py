@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -28,6 +28,18 @@ class StartDecision:
         return self.refusal is None
 
 
+@dataclass(frozen=True, kw_only=True)
+class StartRequest:
+    load: LoadStatus
+    live: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class StartRound:
+    decisions: Mapping[str, StartDecision]
+    last_permit_at: float | None
+
+
 def decide_start(
     load: LoadStatus,
     *,
@@ -48,6 +60,38 @@ def decide_start(
         refusal=None if excess is None else StartRefusal.NO_HEADROOM,
         overrun=excess,
     )
+
+
+def decide_starts(
+    requests: Sequence[StartRequest],
+    *,
+    meter: MeterCondition,
+    currents: Currents,
+    loads: Sequence[LoadStatus],
+    last_permit_at: float | None,
+    at: float,
+    thresholds: PhaseThresholds,
+) -> StartRound:
+    live = {request.load.slug for request in requests if request.live}
+    permit_at = last_permit_at
+    would_be_permit_at: float | None = None
+    decisions: dict[str, StartDecision] = {}
+    for load in in_start_order(request.load for request in requests):
+        decision = decide_start(
+            load,
+            meter=meter,
+            currents=currents,
+            loads=loads,
+            last_permit_at=permit_at if load.slug in live else _latest(permit_at, would_be_permit_at),
+            at=at,
+            thresholds=thresholds,
+        )
+        decisions[load.slug] = decision
+        if decision.granted and load.slug in live:
+            permit_at = at
+        elif decision.granted:
+            would_be_permit_at = at
+    return StartRound(decisions=decisions, last_permit_at=permit_at)
 
 
 def in_start_order(loads: Iterable[LoadStatus]) -> tuple[LoadStatus, ...]:
@@ -74,3 +118,7 @@ def _refusal(
         return StartRefusal.TOO_SOON
 
     return None
+
+
+def _latest(first: float | None, second: float | None) -> float | None:
+    return max((moment for moment in (first, second) if moment is not None), default=None)
