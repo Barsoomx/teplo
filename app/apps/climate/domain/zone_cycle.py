@@ -213,6 +213,7 @@ def _follow_air_dry_run(
             target=plan.target,
             mode=plan.mode,
             state=plan.state,
+            previous_state=None if memory.would_be is None else memory.would_be.state,
             power=would_be.target.power,
             setpoint=would_be.target.setpoint,
             early_stop_offset=plan.early_stop_offset,

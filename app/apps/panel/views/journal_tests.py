@@ -252,12 +252,32 @@ def m_dry_run_timeline_use_case() -> Iterator[MagicMock]:
                                 'target': '22.0',
                                 'mode': 'preheat',
                                 'state': 'heat',
+                                'previous_state': 'idle',
                                 'power': True,
                                 'setpoint': '30.0',
                                 'early_stop_offset': '0.30',
                                 'lead_minutes': 140,
                             },
                             created_at=MORNING,
+                        ),
+                        TimelineEntry(
+                            kind='air_control_dry_run',
+                            subject='living-room',
+                            subject_name='Гостиная',
+                            device_kind=None,
+                            payload={
+                                'zone': 'living-room',
+                                'air': '21.8',
+                                'target': '22.0',
+                                'mode': 'comfort',
+                                'state': 'idle',
+                                'previous_state': 'idle',
+                                'power': True,
+                                'setpoint': '30.0',
+                                'early_stop_offset': '0.30',
+                                'lead_minutes': None,
+                            },
+                            created_at=MORNING - timedelta(minutes=2),
                         ),
                         TimelineEntry(
                             kind='optimal_start_dry_run',
@@ -416,12 +436,13 @@ def test_journal_words_what_air_control_optimal_start_and_the_guard_would_do(
     content = response.content.decode()
     assert (
         'Кухня: в режиме по воздуху включил бы обогрев (20,9° при цели 22,0°)' in content,
-        'На термостате было бы 30°' in content,
+        content.count('На термостате было бы 30°'),
+        'Гостиная: в режиме по воздуху держал бы термостат на 30°' in content,
         'Кухня: в режиме по воздуху начал бы разогрев в 04:10, а не в 03:30' in content,
         'Санузел 2 этаж: защита второго этажа включила бы комфорт (2 этаж 18,8°)' in content,
         'неизвестное событие' in content,
         m_dry_run_timeline_use_case.init.call_count,
-    ) == (True, True, True, True, False, 1)
+    ) == (True, 1, True, True, True, False, 1)
 
 
 def test_journal_shows_a_power_outage_with_its_cause_and_the_answers_to_change_it(

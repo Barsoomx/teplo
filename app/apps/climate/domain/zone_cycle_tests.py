@@ -120,6 +120,11 @@ def f_live_zone(f_zone: ZoneSettings) -> ZoneSettings:
 
 
 @pytest.fixture
+def f_boosted_zone(f_zone: ZoneSettings) -> ZoneSettings:
+    return replace(f_zone, boost_until=MORNING + timedelta(hours=1))
+
+
+@pytest.fixture
 def f_floor_zone(f_zone: ZoneSettings) -> ZoneSettings:
     return replace(f_zone, slug='bathroom-2f', kind=ZoneKind.FLOOR, air_sensor_slug=None)
 
@@ -306,6 +311,7 @@ def test_air_dry_run_journals_first_decision(f_zone: ZoneSettings) -> None:
             target=TARGET,
             mode=ScheduleMode.COMFORT,
             state=AirState.HEAT,
+            previous_state=None,
             power=True,
             setpoint=Decimal('29.0'),
             early_stop_offset=Decimal('0.3'),
@@ -314,6 +320,33 @@ def test_air_dry_run_journals_first_decision(f_zone: ZoneSettings) -> None:
         ),
         HEATING,
         AirState.HEAT,
+    )
+
+
+def test_air_dry_run_journals_would_be_thermostat_change_beside_state_it_keeps(
+    f_boosted_zone: ZoneSettings,
+    f_journaled_memory: ZoneMemory,
+) -> None:
+    follow_up = _follow(
+        f_boosted_zone,
+        f_journaled_memory,
+        _conditions('21.5'),
+        _cycle(MORNING),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert follow_up.air_dry_run == AirControlDryRun(
+        zone='kitchen',
+        air=Decimal('21.5'),
+        target=TARGET,
+        mode=ScheduleMode.COMFORT,
+        state=AirState.HEAT,
+        previous_state=AirState.HEAT,
+        power=True,
+        setpoint=Decimal('30.0'),
+        early_stop_offset=Decimal('0.3'),
+        lead_minutes=None,
+        occurred_at=MORNING,
     )
 
 

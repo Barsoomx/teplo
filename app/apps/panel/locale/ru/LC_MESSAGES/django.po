@@ -350,6 +350,14 @@ msgid "%(name)s: air mode would stop heating (%(air)s° against a target of %(ta
 msgstr "%(name)s: в режиме по воздуху остановил бы обогрев (%(air)s° при цели %(target)s°)"
 
 #, python-format
+msgid "%(name)s: air mode would hold the thermostat at %(setpoint)s°"
+msgstr "%(name)s: в режиме по воздуху держал бы термостат на %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: air mode would turn the thermostat off"
+msgstr "%(name)s: в режиме по воздуху выключил бы термостат"
+
+#, python-format
 msgid "Thermostat would be set to %(setpoint)s°"
 msgstr "На термостате было бы %(setpoint)s°"
 

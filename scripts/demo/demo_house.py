@@ -104,6 +104,7 @@ def _seed_journal(now: datetime) -> None:
             'target': '22.0',
             'mode': mode,
             'state': state,
+            'previous_state': 'heat' if state == 'idle' else 'idle',
             'power': True,
             'setpoint': floor,
             'early_stop_offset': '0.30',

@@ -59,6 +59,7 @@ AIR_CONTROL_PAYLOAD: dict[str, object] = {
     'target': '22.0',
     'mode': 'preheat',
     'state': 'heat',
+    'previous_state': 'idle',
     'power': True,
     'setpoint': '30.0',
     'early_stop_offset': '0.30',
@@ -225,12 +226,40 @@ def test_duration_reads_a_lead_in_hours_and_minutes(lead: timedelta, expected: s
     [
         (AIR_CONTROL_PAYLOAD, 'Кухня: в режиме по воздуху включил бы обогрев (20,9° при цели 22,0°)'),
         (
-            {**AIR_CONTROL_PAYLOAD, 'air': '21.8', 'mode': 'comfort', 'state': 'idle', 'setpoint': '18.0'},
+            {
+                **AIR_CONTROL_PAYLOAD,
+                'air': '21.8',
+                'mode': 'comfort',
+                'state': 'idle',
+                'previous_state': 'heat',
+                'setpoint': '18.0',
+            },
             'Кухня: в режиме по воздуху остановил бы обогрев (21,8° при цели 22,0°)',
         ),
+        (
+            {**AIR_CONTROL_PAYLOAD, 'previous_state': None},
+            'Кухня: в режиме по воздуху включил бы обогрев (20,9° при цели 22,0°)',
+        ),
+        (
+            {**AIR_CONTROL_PAYLOAD, 'air': '21.8', 'mode': 'comfort', 'state': 'idle', 'setpoint': '30.0'},
+            'Кухня: в режиме по воздуху держал бы термостат на 30°',
+        ),
+        (
+            {**AIR_CONTROL_PAYLOAD, 'previous_state': 'heat', 'power': False, 'setpoint': None},
+            'Кухня: в режиме по воздуху выключил бы термостат',
+        ),
+        ({**AIR_CONTROL_PAYLOAD, 'previous_state': 'heat', 'setpoint': None}, 'Кухня: неизвестное событие'),
         ({}, 'Кухня: неизвестное событие'),
     ],
-    ids=['heat', 'idle', 'empty'],
+    ids=[
+        'heat',
+        'idle',
+        'first_after_start',
+        'thermostat_set_beside_kept_state',
+        'thermostat_off_beside_kept_state',
+        'kept_state_without_setpoint',
+        'empty',
+    ],
 )
 def test_air_control_text_says_what_air_mode_would_do(payload: dict[str, object], expected: str) -> None:
     assert air_control_text(_entry('air_control_dry_run', payload)) == expected
@@ -242,9 +271,10 @@ def test_air_control_text_says_what_air_mode_would_do(payload: dict[str, object]
     [
         (AIR_CONTROL_PAYLOAD, 'На термостате было бы 30°'),
         ({**AIR_CONTROL_PAYLOAD, 'power': False, 'setpoint': None}, 'Термостат был бы выключен'),
+        ({**AIR_CONTROL_PAYLOAD, 'state': 'idle', 'setpoint': '30.0'}, ''),
         ({}, ''),
     ],
-    ids=['setpoint', 'off', 'empty'],
+    ids=['setpoint', 'off', 'kept_state_says_it_in_the_headline', 'empty'],
 )
 def test_air_control_note_gives_the_would_be_thermostat_setting(payload: dict[str, object], expected: str) -> None:
     assert air_control_note(_entry('air_control_dry_run', payload)) == expected

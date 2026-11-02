@@ -35,6 +35,7 @@ class AirControlDryRun(DomainEvent):
     target: Decimal
     mode: ScheduleMode
     state: AirState
+    previous_state: AirState | None
     power: bool
     setpoint: Decimal | None
     early_stop_offset: Decimal

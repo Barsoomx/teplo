@@ -64,6 +64,8 @@ AIR_CONTROL = {
     'heat': gettext_lazy('%(name)s: air mode would start heating (%(air)s° against a target of %(target)s°)'),
     'idle': gettext_lazy('%(name)s: air mode would stop heating (%(air)s° against a target of %(target)s°)'),
 }
+AIR_CONTROL_SETPOINT = gettext_lazy('%(name)s: air mode would hold the thermostat at %(setpoint)s°')
+AIR_CONTROL_OFF = gettext_lazy('%(name)s: air mode would turn the thermostat off')
 WOULD_BE_SETPOINT = gettext_lazy('Thermostat would be set to %(setpoint)s°')
 WOULD_BE_OFF = gettext_lazy('Thermostat would be off')
 OPTIMAL_START = gettext_lazy('%(name)s: air mode would start the warm-up at %(start)s instead of %(fixed)s')
@@ -172,6 +174,9 @@ def power_outage_text(entry: TimelineEntry) -> str:
 
 @register.filter
 def air_control_text(entry: TimelineEntry) -> str:
+    if _air_state_kept(entry):
+        return _air_control_thermostat_text(entry)
+
     template = AIR_CONTROL.get(str(entry.payload.get('state')))
     air = floatformat(entry.payload.get('air'), 1)
     target = floatformat(entry.payload.get('target'), 1)
@@ -183,6 +188,9 @@ def air_control_text(entry: TimelineEntry) -> str:
 
 @register.filter
 def air_control_note(entry: TimelineEntry) -> str:
+    if _air_state_kept(entry):
+        return ''
+
     if entry.payload.get('power') is False:
         return str(WOULD_BE_OFF)
 
@@ -219,6 +227,22 @@ def second_floor_guard_text(entry: TimelineEntry) -> str:
         return str(GUARD_OFF_UNREAD) % {'name': entry.subject_name}
 
     return _unknown_event(entry)
+
+
+def _air_state_kept(entry: TimelineEntry) -> bool:
+    state = entry.payload.get('state')
+    return state is not None and state == entry.payload.get('previous_state')
+
+
+def _air_control_thermostat_text(entry: TimelineEntry) -> str:
+    if entry.payload.get('power') is False:
+        return str(AIR_CONTROL_OFF) % {'name': entry.subject_name}
+
+    setpoint = floatformat(entry.payload.get('setpoint'), -1)
+    if not setpoint:
+        return _unknown_event(entry)
+
+    return str(AIR_CONTROL_SETPOINT) % {'name': entry.subject_name, 'setpoint': setpoint}
 
 
 def _unknown_event(entry: TimelineEntry) -> str:
