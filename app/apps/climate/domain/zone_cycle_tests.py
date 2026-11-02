@@ -433,6 +433,35 @@ def test_floor_mode_preheat_of_dry_run_zone_starts_morning(f_zone: ZoneSettings)
     )
 
 
+@pytest.mark.parametrize(
+    'outcome',
+    [ZoneCycleOutcome.THROTTLED, ZoneCycleOutcome.DEVICE_UNAVAILABLE, ZoneCycleOutcome.FAILED],
+)
+def test_preheat_the_thermostat_does_not_take_starts_no_morning(
+    f_zone: ZoneSettings,
+    outcome: ZoneCycleOutcome,
+) -> None:
+    memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.NIGHT)
+
+    follow_up = _follow(f_zone, memory, _conditions('20.0'), _cycle(FIXED_START), outcome)
+
+    assert follow_up.memory.morning is None
+
+
+def test_morning_is_dropped_when_its_thermostat_is_lost(f_zone: ZoneSettings, f_morning: Morning) -> None:
+    memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.PREHEAT, morning=f_morning)
+
+    follow_up = _follow(
+        f_zone,
+        memory,
+        _conditions('20.4'),
+        _cycle(FIXED_START + timedelta(hours=1)),
+        ZoneCycleOutcome.DEVICE_UNAVAILABLE,
+    )
+
+    assert (follow_up.morning, follow_up.memory.morning) == (None, None)
+
+
 def test_morning_without_live_writes_is_not_observed(f_zone: ZoneSettings) -> None:
     memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.NIGHT)
 

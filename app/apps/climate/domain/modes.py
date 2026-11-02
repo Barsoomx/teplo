@@ -30,3 +30,7 @@ class ZoneCycleOutcome(StrEnum):
     THROTTLED = 'throttled'
     DEVICE_UNAVAILABLE = 'device_unavailable'
     FAILED = 'failed'
+
+
+FOLLOWED = frozenset({ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.APPLIED, ZoneCycleOutcome.DRY_RUN})
+UNREACHED = frozenset({ZoneCycleOutcome.DEVICE_UNAVAILABLE, ZoneCycleOutcome.FAILED})

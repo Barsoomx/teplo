@@ -6,7 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.learning import AirSample, Morning
-from apps.climate.domain.modes import AirState, ScheduleMode
+from apps.climate.domain.modes import AirState, ScheduleMode, ZoneCycleOutcome
 from apps.climate.domain.observation import (
     MorningProgress,
     MorningReading,
@@ -40,6 +40,7 @@ def _reading(at: datetime, *, air: str = '20.1', mode: ScheduleMode = ScheduleMo
         air=Decimal(air),
         outdoor=OUTDOOR,
         heating=True,
+        outcome=ZoneCycleOutcome.UNCHANGED,
     )
 
 
@@ -102,7 +103,22 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
         air=air,
         outdoor=outdoor,
         heating=heating,
+        outcome=ZoneCycleOutcome.APPLIED,
     )
+
+    assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
+
+
+@pytest.mark.parametrize(
+    'outcome',
+    [ZoneCycleOutcome.THROTTLED, ZoneCycleOutcome.DEVICE_UNAVAILABLE, ZoneCycleOutcome.FAILED],
+    ids=['write_waits_its_turn', 'thermostat_unavailable', 'write_failed'],
+)
+def test_morning_starts_only_when_thermostat_takes_the_preheat(
+    f_start_reading: MorningReading,
+    outcome: ZoneCycleOutcome,
+) -> None:
+    reading = replace(f_start_reading, outcome=outcome)
 
     assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
 
@@ -144,9 +160,32 @@ def test_morning_is_dropped_when_its_conditions_break(
         air=air,
         outdoor=outdoor,
         heating=heating,
+        outcome=ZoneCycleOutcome.UNCHANGED,
     )
 
     assert observe_morning(f_morning, reading) == MorningProgress(morning=None, finished=None)
+
+
+@pytest.mark.parametrize(
+    'outcome',
+    [ZoneCycleOutcome.DEVICE_UNAVAILABLE, ZoneCycleOutcome.FAILED],
+    ids=['thermostat_unavailable', 'write_failed'],
+)
+def test_morning_is_dropped_when_its_thermostat_is_out_of_reach(f_morning: Morning, outcome: ZoneCycleOutcome) -> None:
+    reading = replace(_reading(PREHEAT_START + timedelta(hours=1)), outcome=outcome)
+
+    assert observe_morning(f_morning, reading) == MorningProgress(morning=None, finished=None)
+
+
+def test_morning_goes_on_while_a_write_waits_its_turn(f_morning: Morning) -> None:
+    at = PREHEAT_START + timedelta(minutes=40)
+
+    progress = observe_morning(f_morning, replace(_reading(at), outcome=ZoneCycleOutcome.THROTTLED))
+
+    assert progress == MorningProgress(
+        morning=replace(f_morning, samples=(FIRST_SAMPLE, AirSample(at=at, air=Decimal('20.1')))),
+        finished=None,
+    )
 
 
 @pytest.mark.parametrize('air', [Decimal('21.9'), None], ids=['sensor_reading', 'sensor_lost'])

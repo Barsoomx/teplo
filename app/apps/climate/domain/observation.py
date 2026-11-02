@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.learning import EARLY_STOP_WATCH, AirSample, Morning
-from apps.climate.domain.modes import AirState, ScheduleMode
+from apps.climate.domain.modes import FOLLOWED, UNREACHED, AirState, ScheduleMode, ZoneCycleOutcome
 from apps.climate.domain.schedule import next_comfort_start
 from apps.climate.domain.zone import ComfortWindow
 
@@ -18,6 +18,7 @@ class MorningReading:
     air: Decimal | None
     outdoor: Decimal | None
     heating: bool
+    outcome: ZoneCycleOutcome
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -92,7 +93,7 @@ def observe_stop(watch: StopWatch, reading: StopReading) -> StopProgress:
 
 def _start_morning(reading: MorningReading) -> Morning | None:
     sample = _sample(reading)
-    if sample is None or reading.outdoor is None:
+    if sample is None or reading.outdoor is None or reading.outcome not in FOLLOWED:
         return None
 
     if reading.previous_mode is not ScheduleMode.NIGHT or reading.mode is not ScheduleMode.PREHEAT:
@@ -106,7 +107,7 @@ def _start_morning(reading: MorningReading) -> Morning | None:
 
 
 def _sample(reading: MorningReading) -> AirSample | None:
-    if not reading.heating or reading.air is None:
+    if not reading.heating or reading.air is None or reading.outcome in UNREACHED:
         return None
 
     return AirSample(at=reading.at, air=reading.air)

@@ -795,6 +795,26 @@ def f_morning_cycle(
 
 
 @pytest.fixture
+def f_failed_preheat_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _air_zone()
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor'))
+    thermostats: dict[str, FloorThermostat] = {
+        KITCHEN: FloorThermostatStub(state=None, error=DeviceUnavailableError('timeout')),
+    }
+    store.record_state(KITCHEN, _state('22.0'))
+    temperatures.record_state('outdoor', _reading('-3.4'))
+    for at, air in MORNING_AIR:
+        temperatures.record_state('air-kitchen', _reading(air))
+        _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(at))
+    return _use_case(store, temperatures, thermostats, book, dispatcher)
+
+
+@pytest.fixture
 def f_learned_morning_cycle(
     morning_thermostats: dict[str, FloorThermostat],
     store: ThermostatStateStore,
@@ -1276,6 +1296,12 @@ def test_floor_mode_preheat_teaches_air_zone_its_morning(f_morning_cycle: RunHea
         {'-5': '0.777'},
         1,
     )
+
+
+def test_preheat_whose_write_fails_teaches_no_morning(f_failed_preheat_cycle: RunHeatingCycleUseCase) -> None:
+    f_failed_preheat_cycle.execute(_at(COMFORT_AT))
+
+    assert not ZoneLearning.objects.exists()
 
 
 def test_morning_is_learned_once(f_learned_morning_cycle: RunHeatingCycleUseCase) -> None:

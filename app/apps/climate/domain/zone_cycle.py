@@ -9,7 +9,7 @@ from apps.climate.domain.events import AirControlDryRun, OptimalStartDryRun
 from apps.climate.domain.floor_policy import ThermostatTarget, decide_floor_target
 from apps.climate.domain.learning import Morning, ZoneLearningRecord
 from apps.climate.domain.memory import AirDecision, ZoneMemory
-from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
+from apps.climate.domain.modes import FOLLOWED, AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import (
     MorningProgress,
     MorningReading,
@@ -26,7 +26,6 @@ from apps.climate.domain.write_guard import write_allowed
 from apps.climate.domain.zone import ZoneSettings
 
 MINUTE = timedelta(minutes=1)
-FOLLOWED = frozenset({ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.APPLIED, ZoneCycleOutcome.DRY_RUN})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -86,7 +85,7 @@ def follow_zone(
     conditions: ZoneConditions,
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
-    morning = _observe_morning(zone, memory, decision, conditions, cycle)
+    morning = _observe_morning(zone, memory, decision, outcome, conditions, cycle)
     follow_up = ZoneFollowUp(
         memory=ZoneMemory(
             path=decision.path,
@@ -241,6 +240,7 @@ def _observe_morning(
     zone: ZoneSettings,
     memory: ZoneMemory,
     decision: ZoneDecision,
+    outcome: ZoneCycleOutcome,
     conditions: ZoneConditions,
     cycle: CycleConditions,
 ) -> MorningProgress:
@@ -263,5 +263,6 @@ def _observe_morning(
                 and cycle.clock_trusted
                 and not zone.is_boosted(cycle.now)
             ),
+            outcome=outcome,
         ),
     )
