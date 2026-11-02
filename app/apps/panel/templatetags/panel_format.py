@@ -11,7 +11,7 @@ from django.utils.translation import gettext, gettext_lazy
 
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
-from apps.notifications.services.messages import alert_text_from_payload, interval_parts
+from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.power.domain.outage import OutageRecord
 from apps.system.domain.clock import ClockStatusCode
@@ -105,6 +105,11 @@ def clock_note(code: ClockStatusCode) -> str:
 @register.filter
 def local_time(value: str) -> str:
     return timezone.localtime(datetime.fromisoformat(value)).strftime('%H:%M')
+
+
+@register.filter
+def duration(value: timedelta) -> str:
+    return duration_text(value)
 
 
 @register.filter

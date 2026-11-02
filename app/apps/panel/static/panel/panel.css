@@ -379,6 +379,24 @@ body {
   color: var(--ink-muted);
 }
 
+/* The path that drives a room with an air sensor, in ink only: filled while air mode drives the thermostat */
+
+.path {
+  padding-inline: 0.65rem;
+  border: 1px solid var(--line);
+  color: var(--ink-muted);
+}
+
+.path-air {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--ink) 12%, transparent);
+  color: var(--ink);
+}
+
+.path-air_dry_run {
+  border-style: dashed;
+}
+
 /* The floor temperature is the one big thing on a tile */
 
 .readout-value {

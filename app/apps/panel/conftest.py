@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import translation
 
-from apps.climate.domain.modes import ScheduleMode, ZoneKind
+from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
@@ -73,7 +73,11 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
                 target_setpoint=Decimal('28.0'),
                 boosted=False,
                 live_control=False,
+                air_control_live=False,
+                path=ControlPath.AIR_DRY_RUN,
+                air_target=Decimal('22.0'),
                 regime=ZoneRegime.COMFORT,
+                lead=None,
                 boost_until=None,
                 next_change=ScheduleTransition(
                     mode=ScheduleMode.NIGHT,

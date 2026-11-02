@@ -4,15 +4,21 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from apps.climate.domain.modes import ScheduleMode, ZoneKind
+from apps.climate.domain.memory import ZoneMemory
+from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneKind
+from apps.climate.domain.optimal_start import PreheatStart
 from apps.climate.domain.schedule import ScheduleTransition
-from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, ZoneFactory
+from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, ZoneFactory, ZoneLearningFactory
+from apps.climate.models import Zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
+from apps.climate.repositories.zone_learning import ZoneLearningRepository
+from apps.climate.services.control_book import ControlBook
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import PlugState, TemperatureReading, ThermostatMode, ThermostatState
 from apps.devices.factories import DeviceFactory
+from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
 from apps.panel.usecases.get_panel_overview import (
@@ -35,9 +41,57 @@ pytestmark = pytest.mark.django_db
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 MORNING = datetime(2026, 10, 29, 7, 0, tzinfo=MOSCOW)
+NIGHT = datetime(2026, 10, 29, 1, 0, tzinfo=MOSCOW)
+WARM_UP = datetime(2026, 10, 29, 4, 0, tzinfo=MOSCOW)
+LATE_WARM_UP = datetime(2026, 10, 29, 4, 30, tzinfo=MOSCOW)
+COMFORT_AT = datetime(2026, 10, 29, 6, 30, tzinfo=MOSCOW)
+LEARNED_LEAD = timedelta(hours=2, minutes=40)
 EVENING_CUT = datetime(2026, 10, 28, 20, 24, tzinfo=MOSCOW)
 MARKED_CUT = EVENING_CUT - timedelta(days=1)
 NIGHT_CUT = datetime(2026, 10, 29, 3, 10, tzinfo=MOSCOW)
+
+
+def _sensor(slug: str) -> Device:
+    return DeviceFactory.create(slug=slug, kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.ESPHOME_TEMPERATURE)
+
+
+def _zone(slug: str, name: str, **fields: object) -> Zone:
+    zone = ZoneFactory.create(slug=slug, name=name, thermostat__slug=f'thermostat-{slug}', **fields)
+    ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
+    return zone
+
+
+def _read(temperatures: TemperatureStateStore, readings: dict[str, str]) -> None:
+    for slug, temperature in readings.items():
+        temperatures.record_state(
+            slug,
+            TemperatureReading(temperature=Decimal(temperature), humidity=None, read_at=MORNING),
+        )
+
+
+def _learned_house(air: str) -> TemperatureStateStore:
+    zone = _zone('living-room', 'Гостиная', air_sensor=_sensor('air-living-room'), air_control_live=True)
+    ZoneLearningFactory.create(zone=zone, dead_time=timedelta(minutes=40), heat_up_rates={'-5': '0.800'}, mornings=3)
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor'))
+    temperatures = TemperatureStateStore(unavailable_after=timedelta(minutes=10))
+    _read(temperatures, {'air-living-room': air, 'outdoor': '-3.4'})
+    return temperatures
+
+
+def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPanelOverviewUseCase:
+    return GetPanelOverviewUseCase(
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
+        outages=OutageRepository(),
+        thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
+        plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
+        temperature_store=temperatures,
+        book=book,
+        clock=ClockStub(trusted=True),
+        dry_run=False,
+    )
 
 
 @pytest.fixture
@@ -59,10 +113,12 @@ def f_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -78,10 +134,12 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=False),
         dry_run=False,
     )
@@ -100,10 +158,12 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -122,10 +182,12 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -139,10 +201,12 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -179,10 +243,12 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=plug_store,
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -244,10 +310,12 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=store,
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -265,10 +333,12 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -289,15 +359,68 @@ def f_outages() -> list[Outage]:
 
 
 @pytest.fixture
+def f_paths_use_case() -> GetPanelOverviewUseCase:
+    _zone('kitchen', 'Кухня', air_sensor=_sensor('air-kitchen'))
+    _zone('living-room', 'Гостиная', air_sensor=_sensor('air-living-room'), air_control_live=True)
+    _zone('hallway', 'Прихожая', air_sensor=_sensor('air-hallway'), air_control_live=True)
+    _zone('bathroom-2f', 'Санузел 2 этаж', kind=ZoneKind.FLOOR)
+    temperatures = TemperatureStateStore(unavailable_after=timedelta(minutes=10))
+    _read(temperatures, {'air-kitchen': '21.3', 'air-living-room': '21.0'})
+    temperatures.record_failure('air-hallway', error_code='broker_unavailable', error='connection refused')
+    return _use_case(temperatures, ControlBook())
+
+
+@pytest.fixture
+def f_learned_use_case() -> GetPanelOverviewUseCase:
+    return _use_case(_learned_house('20.4'), ControlBook())
+
+
+@pytest.fixture
+def f_held_preheat_use_case() -> GetPanelOverviewUseCase:
+    book = ControlBook()
+    book.remember_zone(
+        'living-room',
+        ZoneMemory(
+            path=ControlPath.AIR,
+            mode=ScheduleMode.PREHEAT,
+            air_state=AirState.HEAT,
+            heat_target=Decimal('22.0'),
+            preheat=PreheatStart(comfort_at=COMFORT_AT, lead=LEARNED_LEAD),
+        ),
+    )
+    return _use_case(_learned_house('21.6'), book)
+
+
+@pytest.fixture
+def f_guard_use_case() -> GetPanelOverviewUseCase:
+    zone = _zone('bathroom-2f', 'Санузел 2 этаж', kind=ZoneKind.FLOOR)
+    ClimateSettingsFactory.create(second_floor_guard_zone=zone, second_floor_guard_live=True)
+    book = ControlBook()
+    book.remember_guard(True)
+    return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), book)
+
+
+@pytest.fixture
+def f_guard_dry_run_use_case() -> GetPanelOverviewUseCase:
+    zone = _zone('bathroom-2f', 'Санузел 2 этаж', kind=ZoneKind.FLOOR)
+    ClimateSettingsFactory.create(second_floor_guard_zone=zone)
+    book = ControlBook()
+    book.remember_guard(True)
+    return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), book)
+
+
+@pytest.fixture
 def f_outages_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
         climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -322,7 +445,11 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
                 target_setpoint=Decimal('28.0'),
                 boosted=False,
                 live_control=False,
+                air_control_live=False,
+                path=ControlPath.FLOOR,
+                air_target=None,
                 regime=ZoneRegime.COMFORT,
+                lead=None,
                 boost_until=None,
                 next_change=ScheduleTransition(
                     mode=ScheduleMode.NIGHT,
@@ -360,7 +487,11 @@ def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: Get
                 target_setpoint=Decimal('28.0'),
                 boosted=False,
                 live_control=False,
+                air_control_live=False,
+                path=ControlPath.FLOOR,
+                air_target=None,
                 regime=ZoneRegime.COMFORT,
+                lead=None,
                 boost_until=None,
                 next_change=None,
                 air=None,
@@ -391,6 +522,97 @@ def test_overview_shows_disabled_zone_as_off_without_next_change(f_disabled_use_
     zone = f_disabled_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).zones[0]
 
     assert (zone.regime, zone.target_setpoint, zone.next_change) == (ZoneRegime.OFF, None, None)
+
+
+def test_overview_gives_a_floor_mode_preheat_its_fixed_lead(f_use_case: GetPanelOverviewUseCase) -> None:
+    zone = f_use_case.execute(GetPanelOverviewInputDTO(now=WARM_UP)).zones[0]
+
+    assert (zone.path, zone.regime, zone.lead, zone.next_change) == (
+        ControlPath.FLOOR,
+        ZoneRegime.PREHEAT,
+        timedelta(hours=3),
+        ScheduleTransition(mode=ScheduleMode.COMFORT, at=COMFORT_AT),
+    )
+
+
+def test_overview_names_the_path_that_drives_each_zone(f_paths_use_case: GetPanelOverviewUseCase) -> None:
+    output = f_paths_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert [
+        (zone.slug, zone.path, zone.air_control_live, zone.air_target, zone.target_setpoint) for zone in output.zones
+    ] == [
+        ('living-room', ControlPath.AIR, True, Decimal('22.0'), Decimal('30.0')),
+        ('kitchen', ControlPath.AIR_DRY_RUN, False, Decimal('22.0'), Decimal('28.0')),
+        ('hallway', ControlPath.FLOOR, True, None, Decimal('28.0')),
+        ('bathroom-2f', ControlPath.FLOOR, False, None, Decimal('28.0')),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('now', 'regime', 'air_target', 'target_setpoint', 'lead', 'next_change'),
+    [
+        (
+            NIGHT,
+            ZoneRegime.NIGHT,
+            Decimal('19.5'),
+            Decimal('18.0'),
+            None,
+            ScheduleTransition(mode=ScheduleMode.PREHEAT, at=COMFORT_AT - LEARNED_LEAD),
+        ),
+        (
+            WARM_UP,
+            ZoneRegime.PREHEAT,
+            Decimal('22.0'),
+            Decimal('30.0'),
+            LEARNED_LEAD,
+            ScheduleTransition(mode=ScheduleMode.COMFORT, at=COMFORT_AT),
+        ),
+    ],
+    ids=['night', 'preheat'],
+)
+def test_overview_times_the_warm_up_of_a_zone_in_air_mode_by_its_optimal_lead(
+    f_learned_use_case: GetPanelOverviewUseCase,
+    now: datetime,
+    regime: ZoneRegime,
+    air_target: Decimal,
+    target_setpoint: Decimal,
+    lead: timedelta | None,
+    next_change: ScheduleTransition,
+) -> None:
+    zone = f_learned_use_case.execute(GetPanelOverviewInputDTO(now=now)).zones[0]
+
+    assert (zone.path, zone.regime, zone.air_target, zone.target_setpoint, zone.lead, zone.next_change) == (
+        ControlPath.AIR,
+        regime,
+        air_target,
+        target_setpoint,
+        lead,
+        next_change,
+    )
+
+
+def test_overview_keeps_the_preheat_start_the_heating_cycle_holds(
+    f_held_preheat_use_case: GetPanelOverviewUseCase,
+) -> None:
+    zone = f_held_preheat_use_case.execute(GetPanelOverviewInputDTO(now=LATE_WARM_UP)).zones[0]
+
+    assert (zone.regime, zone.lead, zone.target_setpoint) == (ZoneRegime.PREHEAT, LEARNED_LEAD, Decimal('30.0'))
+
+
+def test_overview_shows_the_target_the_live_second_floor_guard_raises(
+    f_guard_use_case: GetPanelOverviewUseCase,
+) -> None:
+    zone = f_guard_use_case.execute(GetPanelOverviewInputDTO(now=NIGHT)).zones[0]
+
+    assert (zone.regime, zone.target_setpoint) == (ZoneRegime.NIGHT, Decimal('28.0'))
+
+
+def test_overview_keeps_the_night_target_while_the_guard_runs_in_dry_run(
+    f_guard_dry_run_use_case: GetPanelOverviewUseCase,
+) -> None:
+    zone = f_guard_dry_run_use_case.execute(GetPanelOverviewInputDTO(now=NIGHT)).zones[0]
+
+    assert (zone.regime, zone.target_setpoint) == (ZoneRegime.NIGHT, Decimal('22.0'))
 
 
 def test_overview_lists_zones_by_name(f_two_zone_use_case: GetPanelOverviewUseCase) -> None:

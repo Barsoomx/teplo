@@ -13,6 +13,7 @@ from apps.notifications.services.messages import (
     alert_text,
     alert_text_from_payload,
     delivery_check_text,
+    duration_text,
     interval_parts,
     outage_text,
 )
@@ -278,6 +279,20 @@ def test_interval_parts_name_the_date_only_off_the_reference_day(
     expected: dict[str, str],
 ) -> None:
     assert interval_parts(began_at, ended_at, at) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('duration', 'expected'),
+    [
+        (timedelta(minutes=40, seconds=59), '40 мин'),
+        (timedelta(hours=3), '3 ч'),
+        (timedelta(hours=2, minutes=40), '2 ч 40 мин'),
+    ],
+    ids=['minutes', 'hours', 'hours_and_minutes'],
+)
+def test_duration_reads_in_whole_hours_and_minutes(duration: timedelta, expected: str) -> None:
+    assert duration_text(duration) == expected
 
 
 @pytest.mark.usefixtures('russian')

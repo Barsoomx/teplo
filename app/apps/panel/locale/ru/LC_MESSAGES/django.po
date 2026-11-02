@@ -58,8 +58,21 @@ msgstr "влажность"
 msgid "%(name)s: no connection. Check that the sensor has power and Wi-Fi."
 msgstr "%(name)s: нет связи. Проверьте питание датчика и Wi-Fi."
 
+msgid "Air mode"
+msgstr "По воздуху"
+
+msgid "Air mode: watching"
+msgstr "По воздуху: наблюдение"
+
+msgid "Floor mode"
+msgstr "По полу"
+
 msgid "Watching"
 msgstr "Наблюдение"
+
+#, python-format
+msgid "Air, target %(target)s°"
+msgstr "Воздух, цель %(target)s°"
 
 msgid "Floor, heating off"
 msgstr "Пол, отопление выключено"
@@ -90,6 +103,10 @@ msgstr "Разогрев с %(at)s"
 #, python-format
 msgid "Comfort from %(at)s"
 msgstr "Комфорт с %(at)s"
+
+#, python-format
+msgid "Warm-up started %(lead)s ahead"
+msgstr "Разогрев начат за %(lead)s"
 
 msgid "Extend boost"
 msgstr "Продлить буст"

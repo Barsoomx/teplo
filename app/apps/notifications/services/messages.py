@@ -105,12 +105,23 @@ def interval_parts(began_at: datetime, ended_at: datetime, at: datetime) -> dict
     return {
         'began': _moment(began, at),
         'ended': _interval_end(ended, began, at),
-        'duration': _duration(ended - began),
+        'duration': duration_text(ended - began),
     }
 
 
 def delivery_check_text() -> str:
     return str(DELIVERY_CHECK)
+
+
+def duration_text(duration: timedelta) -> str:
+    hours, minutes = divmod(int(duration.total_seconds()) // 60, 60)
+    if not hours:
+        return gettext('%(minutes)s min') % {'minutes': minutes}
+
+    if not minutes:
+        return gettext('%(hours)s h') % {'hours': hours}
+
+    return gettext('%(hours)s h %(minutes)s min') % {'hours': hours, 'minutes': minutes}
 
 
 def _template(kind: AlertKind, transition: AlertTransition, device_kind: DeviceKind, *, dated: bool) -> str:
@@ -157,14 +168,3 @@ def _interval_end(ended: datetime, began: datetime, at: datetime) -> str:
         return date_format(local, 'H:i')
 
     return _moment(ended, at)
-
-
-def _duration(duration: timedelta) -> str:
-    hours, minutes = divmod(int(duration.total_seconds()) // 60, 60)
-    if not hours:
-        return gettext('%(minutes)s min') % {'minutes': minutes}
-
-    if not minutes:
-        return gettext('%(hours)s h') % {'hours': hours}
-
-    return gettext('%(hours)s h %(minutes)s min') % {'hours': hours, 'minutes': minutes}

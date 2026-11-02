@@ -22,6 +22,7 @@ from apps.panel.templatetags.panel_format import (
     clock_note,
     command_summary,
     day_word,
+    duration,
     failure_note,
     icon,
     local_time,
@@ -180,6 +181,16 @@ def test_local_time_shows_journal_timestamps_in_house_time() -> None:
 )
 def test_day_word_names_days_other_than_today(moment: datetime, expected: str) -> None:
     assert day_word(moment) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('lead', 'expected'),
+    [(timedelta(hours=3), '3 ч'), (timedelta(hours=2, minutes=40), '2 ч 40 мин')],
+    ids=['hours', 'hours_and_minutes'],
+)
+def test_duration_reads_a_lead_in_hours_and_minutes(lead: timedelta, expected: str) -> None:
+    assert duration(lead) == expected
 
 
 @pytest.mark.usefixtures('russian')

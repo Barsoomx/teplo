@@ -53,6 +53,7 @@
       <h2 class="tile-name">{{ zone.name }}</h2>
       <p class="tile-chips">
         {% include 'panel/_regime.html' with regime=zone.regime %}
+        {% if zone.air %}<span class="chip path path-{{ zone.path }}">{% if zone.path == 'air' %}{% translate 'Air mode' %}{% elif zone.path == 'air_dry_run' %}{% translate 'Air mode: watching' %}{% else %}{% translate 'Floor mode' %}{% endif %}</span>{% endif %}
         {% if overview.dry_run or not zone.live_control %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}
       </p>
     </header>
@@ -62,7 +63,7 @@
         {% if zone.air %}
         <div class="air{% if not zone.air.available %} is-offline{% endif %}">
           {% if zone.air.available %}<p class="air-value">{{ zone.air.temperature|floatformat:1 }}<span class="readout-unit">°</span>{% if zone.air.humidity is not None %} <span class="air-humidity"><span class="visually-hidden">{% translate 'humidity' %} </span>{{ zone.air.humidity|floatformat:0 }}%</span>{% endif %}</p>{% else %}<p class="air-value readout-missing">—</p>{% endif %}
-          <p class="air-caption">{% translate 'Air' %}</p>
+          <p class="air-caption">{% if zone.air_target is not None %}{% blocktranslate with target=zone.air_target|floatformat:1 %}Air, target {{ target }}°{% endblocktranslate %}{% else %}{% translate 'Air' %}{% endif %}</p>
         </div>
         {% endif %}
       </div>
@@ -71,7 +72,7 @@
       {% if zone.regime == 'boost' %}
       <p class="next next-boost">{% blocktranslate with until=zone.boost_until|time:'H:i' %}Boost until {{ until }}{% endblocktranslate %}</p>
       {% elif zone.next_change %}
-      <p class="next">{% with mode=zone.next_change.mode at=zone.next_change.at|time:'H:i' day=zone.next_change.at|day_word %}{% if mode == 'night' %}{% blocktranslate %}Night from {{ at }}{% endblocktranslate %}{% elif mode == 'preheat' %}{% blocktranslate %}Warm-up from {{ at }}{% endblocktranslate %}{% else %}{% blocktranslate %}Comfort from {{ at }}{% endblocktranslate %}{% endif %}{% if day %} {{ day }}{% endif %}{% endwith %}</p>
+      <p class="next">{% with mode=zone.next_change.mode at=zone.next_change.at|time:'H:i' day=zone.next_change.at|day_word %}{% if mode == 'night' %}{% blocktranslate %}Night from {{ at }}{% endblocktranslate %}{% elif mode == 'preheat' %}{% blocktranslate %}Warm-up from {{ at }}{% endblocktranslate %}{% else %}{% blocktranslate %}Comfort from {{ at }}{% endblocktranslate %}{% endif %}{% if day %} {{ day }}{% endif %}{% endwith %}{% if zone.lead %}. {% blocktranslate with lead=zone.lead|duration %}Warm-up started {{ lead }} ahead{% endblocktranslate %}{% endif %}</p>
       {% endif %}
       {% else %}
       {% failure_note zone.error_code zone.error omit='device_unavailable' as note %}

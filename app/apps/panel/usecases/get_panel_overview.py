@@ -1,17 +1,21 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
 from django.conf import settings
 from django.utils import timezone
 
-from apps.climate.domain.floor_policy import decide_floor_target
-from apps.climate.domain.modes import ScheduleMode, ZoneKind
-from apps.climate.domain.schedule import ScheduleTransition, next_transition, resolve_mode
+from apps.climate.domain.control import ClimateControl
+from apps.climate.domain.learning import ZoneLearningRecord
+from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
+from apps.climate.domain.schedule import ScheduleTransition, next_transition
 from apps.climate.domain.zone import ZoneSettings
+from apps.climate.domain.zone_cycle import CycleConditions, ZoneConditions, ZoneDecision, decide_zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
+from apps.climate.repositories.zone_learning import ZoneLearningRepository
+from apps.climate.services.control_book import ControlBook, control_book
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
@@ -71,7 +75,11 @@ class ZoneOverview:
     target_setpoint: Decimal | None
     boosted: bool
     live_control: bool
+    air_control_live: bool
+    path: ControlPath
+    air_target: Decimal | None
     regime: ZoneRegime
+    lead: timedelta | None
     boost_until: datetime | None
     next_change: ScheduleTransition | None
     air: SensorOverview | None
@@ -108,10 +116,12 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         zones: ZoneRepository,
         devices: DeviceRepository,
         climate_settings: ClimateSettingsRepository,
+        learning: ZoneLearningRepository,
         outages: OutageRepository,
         thermostat_store: ThermostatStateStore,
         plug_store: PlugStateStore,
         temperature_store: TemperatureStateStore,
+        book: ControlBook,
         clock: ClockTrustSource,
         dry_run: bool,
     ) -> None:
@@ -119,10 +129,12 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self._zones = zones
         self._devices = devices
         self._climate_settings = climate_settings
+        self._learning = learning
         self._outages = outages
         self._thermostat_store = thermostat_store
         self._plug_store = plug_store
         self._temperature_store = temperature_store
+        self._book = book
         self._clock = clock
         self._dry_run = dry_run
 
@@ -132,10 +144,12 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             zones=ZoneRepository(),
             devices=DeviceRepository(),
             climate_settings=ClimateSettingsRepository(),
+            learning=ZoneLearningRepository(),
             outages=OutageRepository(),
             thermostat_store=thermostat_state_store,
             plug_store=plug_state_store,
             temperature_store=temperature_state_store,
+            book=control_book,
             clock=clock_trust_source(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
@@ -143,56 +157,88 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
     def _execute(self, input_dto: GetPanelOverviewInputDTO) -> GetPanelOverviewOutputDTO:
         now = timezone.localtime(input_dto.now)
         clock = self._clock.status()
+        control = self._climate_settings.control()
+        learning = self._learning.all_records()
         zones = sorted(self._zones.all_settings(), key=lambda zone: zone.name)
         devices = sorted(self._devices.all_settings(), key=lambda device: device.name)
         sensors = {
             device.slug: self._sensor(device) for device in devices if device.kind == DeviceKind.TEMPERATURE_SENSOR
         }
-        outdoor_slug = self._climate_settings.sensors().outdoor_slug
+        outdoor_slug = control.sensors.outdoor_slug
+        outdoor = None if outdoor_slug is None else sensors.get(outdoor_slug)
+        cycle = CycleConditions(now=now, clock_trusted=clock.trusted, control=control, outdoor=_temperature(outdoor))
+        guarded_zone = self._guarded_zone(control)
         placed = {outdoor_slug, *(zone.air_sensor_slug for zone in zones)}
         return GetPanelOverviewOutputDTO(
-            zones=tuple(self._zone(zone, _air_sensor(zone, sensors), now, clock.trusted) for zone in zones),
+            zones=tuple(
+                self._zone(
+                    zone,
+                    _air_sensor(zone, sensors),
+                    learning.get(zone.slug, ZoneLearningRecord.unlearned()),
+                    cycle,
+                    guarded=zone.slug == guarded_zone,
+                )
+                for zone in zones
+            ),
             plugs=tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG),
             sensors=tuple(sensors.values()),
-            outdoor=None if outdoor_slug is None else sensors.get(outdoor_slug),
+            outdoor=outdoor,
             standalone_sensors=tuple(sensor for slug, sensor in sensors.items() if slug not in placed),
             outages=tuple(self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
         )
 
+    def _guarded_zone(self, control: ClimateControl) -> str | None:
+        guard = control.second_floor_guard
+        if not guard.live or not self._book.guard_active():
+            return None
+
+        return guard.zone_slug
+
     def _zone(
         self,
         zone: ZoneSettings,
         air: SensorOverview | None,
-        now: datetime,
-        clock_trusted: bool,
+        learning: ZoneLearningRecord,
+        cycle: CycleConditions,
+        *,
+        guarded: bool,
     ) -> ZoneOverview:
         snapshot = self._thermostat_store.snapshot(zone.thermostat_slug)
-        mode = resolve_mode(zone.windows, now, zone.preheat_lead)
-        target = decide_floor_target(zone, mode, now, clock_trusted=clock_trusted)
-        boosted = zone.is_boosted(now)
+        conditions = ZoneConditions(
+            air=_temperature(air),
+            learning=learning,
+            guarded=guarded,
+            writes_live=zone.live_control and not self._dry_run,
+        )
+        decision = decide_zone(zone, self._book.zone(zone.slug), conditions, cycle)
+        boosted = zone.is_boosted(cycle.now)
+        regime = _regime(zone, decision.mode, boosted=boosted, clock_trusted=cycle.clock_trusted)
+        lead = _schedule_lead(zone, decision)
         state = snapshot.state
         return ZoneOverview(
             slug=zone.slug,
             name=zone.name,
             kind=zone.kind,
-            mode=mode,
+            mode=decision.mode,
             available=snapshot.available,
             error_code=snapshot.error_code,
             error=snapshot.error,
             floor_temperature=state.floor_temperature if state else None,
             power=state.power if state else None,
             setpoint=state.setpoint if state else None,
-            target_setpoint=target.setpoint,
+            target_setpoint=decision.target.setpoint,
             boosted=boosted,
             live_control=zone.live_control,
-            regime=_regime(zone, mode, boosted=boosted, clock_trusted=clock_trusted),
+            air_control_live=zone.air_control_live,
+            path=decision.path,
+            air_target=None if decision.plan is None else decision.plan.target,
+            regime=regime,
+            lead=lead if regime is ZoneRegime.PREHEAT else None,
             boost_until=zone.boost_until if boosted else None,
             next_change=(
-                next_transition(zone.windows, now, zone.preheat_lead)
-                if clock_trusted and zone.heating_enabled
-                else None
+                next_transition(zone.windows, cycle.now, lead) if cycle.clock_trusted and zone.heating_enabled else None
             ),
             air=air,
         )
@@ -233,6 +279,20 @@ def _air_sensor(zone: ZoneSettings, sensors: dict[str, SensorOverview]) -> Senso
         return None
 
     return sensors.get(zone.air_sensor_slug)
+
+
+def _temperature(sensor: SensorOverview | None) -> Decimal | None:
+    if sensor is None or not sensor.available:
+        return None
+
+    return sensor.temperature
+
+
+def _schedule_lead(zone: ZoneSettings, decision: ZoneDecision) -> timedelta:
+    if decision.path is not ControlPath.AIR or decision.plan is None:
+        return zone.preheat_lead
+
+    return decision.plan.schedule_lead
 
 
 def _regime(zone: ZoneSettings, mode: ScheduleMode, *, boosted: bool, clock_trusted: bool) -> ZoneRegime:

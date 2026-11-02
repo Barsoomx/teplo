@@ -9,8 +9,10 @@ from zoneinfo import ZoneInfo
 import pytest
 from django.test import Client
 
+from apps.climate.domain.modes import ControlPath, ScheduleMode
+from apps.climate.domain.schedule import ScheduleTransition
 from apps.devices.domain.kinds import DeviceKind
-from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SensorOverview
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SensorOverview, ZoneRegime
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO
 from apps.power.domain.outage import OutageCause, OutageRecord
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
@@ -22,6 +24,7 @@ PLUG_DETAIL = 'unexpected plug payload: {}'
 SENSOR_DETAIL = 'temperature: the node reported nan'
 BROKER_DETAIL = 'mqtt connection refused: not authorised'
 CUT = datetime(2026, 10, 31, 20, 24, 40, tzinfo=ZoneInfo('Europe/Moscow'))
+COMFORT_AT = datetime(2026, 10, 29, 6, 30, tzinfo=ZoneInfo('Europe/Moscow'))
 ANSWERS = ('overload', 'grid', 'unknown')
 
 
@@ -70,7 +73,7 @@ def lost_air_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOver
         humidity=Decimal('45.2'),
         age_seconds=640,
     )
-    kitchen = replace(panel_overview.zones[0], air=lost_air)
+    kitchen = replace(panel_overview.zones[0], air=lost_air, path=ControlPath.FLOOR, air_target=None)
     return replace(panel_overview, zones=(kitchen,), outdoor=None, standalone_sensors=())
 
 
@@ -78,6 +81,49 @@ def lost_air_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOver
 def m_lost_air_overview_use_case(lost_air_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = lost_air_overview
+        yield use_case
+
+
+@pytest.fixture
+def air_paths_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverviewOutputDTO:
+    kitchen = panel_overview.zones[0]
+    living_room = replace(
+        kitchen,
+        slug='living-room',
+        name='Гостиная',
+        mode=ScheduleMode.PREHEAT,
+        target_setpoint=Decimal('30.0'),
+        air_control_live=True,
+        path=ControlPath.AIR,
+        regime=ZoneRegime.PREHEAT,
+        lead=timedelta(hours=2, minutes=40),
+        next_change=ScheduleTransition(mode=ScheduleMode.COMFORT, at=COMFORT_AT),
+    )
+    hallway = replace(
+        kitchen,
+        slug='hallway',
+        name='Прихожая',
+        path=ControlPath.FLOOR,
+        air_target=None,
+        air=SensorOverview(
+            slug='air-hallway',
+            name='Воздух: прихожая',
+            kind=DeviceKind.TEMPERATURE_SENSOR,
+            available=False,
+            error_code='device_unavailable',
+            error=None,
+            temperature=None,
+            humidity=None,
+            age_seconds=None,
+        ),
+    )
+    return replace(panel_overview, zones=(living_room, kitchen, hallway))
+
+
+@pytest.fixture
+def m_air_paths_overview_use_case(air_paths_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = air_paths_overview
         yield use_case
 
 
@@ -193,10 +239,31 @@ def test_dashboard_hatches_a_lost_air_sensor_and_says_what_to_check(
         'teplo не может подключиться к MQTT-брокеру' in content,
         '21,3' in content,
         'На улице' in content,
+        'По полу' in content,
         (content.count(BROKER_DETAIL), f'title="{BROKER_DETAIL}"' in content),
         m_lost_air_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
-    ) == (True, True, True, False, False, (1, True), 1, 1)
+    ) == (True, True, True, False, False, True, (1, True), 1, 1)
+
+
+def test_dashboard_names_the_path_the_air_target_and_the_lead_of_a_warm_up(
+    f_russian_client: Client,
+    m_air_paths_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        content.count('class="chip path path-air"'),
+        content.count('По воздуху: наблюдение'),
+        content.count('По полу'),
+        content.count('Воздух, цель 22,0°'),
+        'Комфорт с 06:30' in content,
+        content.count('Разогрев начат за 2 ч 40 мин'),
+        m_air_paths_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (1, 1, 1, 2, True, 1, 1, 1)
 
 
 def test_dashboard_shows_the_phase_currents_and_refreshes_them_on_their_own(
