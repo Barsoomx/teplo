@@ -19,6 +19,7 @@ pytestmark = pytest.mark.django_db
 MORNING = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
 RAW_DETAILS = ('timed out after 5 s', 'Network Error: Device Unreachable', 'thermostat did not answer', 'teplo_stopped')
 PLUG_DETAIL = 'unexpected plug payload: {}'
+BROKER_DETAIL = 'mqtt connection refused: not authorised'
 
 
 @pytest.fixture
@@ -115,6 +116,53 @@ def m_plug_timeline_use_case() -> Iterator[MagicMock]:
                             device_kind=DeviceKind.PLUG,
                             payload={'available': False, 'reason': PLUG_DETAIL, 'error_code': 'device_protocol_error'},
                             created_at=MORNING - timedelta(minutes=5),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
+@pytest.fixture
+def m_sensor_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=(
+                        TimelineEntry(
+                            kind='device_availability_changed',
+                            subject='air-kitchen',
+                            subject_name='Воздух: кухня',
+                            device_kind=DeviceKind.TEMPERATURE_SENSOR,
+                            payload={'available': True, 'reason': 'reading received', 'error_code': None},
+                            created_at=MORNING,
+                        ),
+                        TimelineEntry(
+                            kind='device_availability_changed',
+                            subject='phase-meter',
+                            subject_name='Фазометр',
+                            device_kind=DeviceKind.PHASE_METER,
+                            payload={'available': True, 'reason': 'reading received', 'error_code': None},
+                            created_at=MORNING - timedelta(minutes=1),
+                        ),
+                        TimelineEntry(
+                            kind='device_availability_changed',
+                            subject='outdoor',
+                            subject_name='Улица',
+                            device_kind=DeviceKind.TEMPERATURE_SENSOR,
+                            payload={'available': False, 'reason': BROKER_DETAIL, 'error_code': 'broker_unavailable'},
+                            created_at=MORNING - timedelta(minutes=5),
+                        ),
+                        TimelineEntry(
+                            kind='device_availability_changed',
+                            subject='phase-meter',
+                            subject_name='Фазометр',
+                            device_kind=DeviceKind.PHASE_METER,
+                            payload={'available': False, 'reason': 'no reading', 'error_code': 'device_unavailable'},
+                            created_at=MORNING - timedelta(minutes=10),
                         ),
                     ),
                 ),
@@ -224,6 +272,26 @@ def test_journal_words_plug_events_as_plug_events(
         (content.count(PLUG_DETAIL), f'title="{PLUG_DETAIL}"' in content),
         m_plug_timeline_use_case.init.call_count,
     ) == (True, True, True, False, (1, True), 1)
+
+
+def test_journal_words_sensor_events_as_sensor_events(
+    f_russian_client: Client,
+    m_sensor_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        'Воздух: кухня: датчик на связи' in content,
+        'Фазометр: на связи' in content,
+        'Улица: нет связи с датчиком' in content,
+        'teplo не может подключиться к MQTT-брокеру' in content,
+        'Фазометр: нет связи' in content,
+        'термостат' in content,
+        'Неизвестная ошибка' in content,
+        (content.count(BROKER_DETAIL), f'title="{BROKER_DETAIL}"' in content),
+        m_sensor_timeline_use_case.init.call_count,
+    ) == (True, True, True, True, True, False, False, (1, True), 1)
 
 
 def test_journal_reads_alerts_like_the_telegram_messages(

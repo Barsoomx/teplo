@@ -8,11 +8,13 @@ from freezegun import freeze_time
 
 from apps.core.domain.errors import DomainError, SecretMissingError
 from apps.devices.domain.errors import (
+    BrokerUnavailableError,
     DeviceConfigError,
     DeviceNotFoundError,
     DeviceProtocolError,
     DeviceUnavailableError,
     DriverNotImplementedError,
+    SensorReadingError,
 )
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.templatetags.panel_format import (
@@ -91,6 +93,34 @@ def test_failure_note_names_the_cause_by_error_code(error: DomainError, expected
 )
 def test_failure_note_names_the_plug_for_a_plug(error: DomainError, expected: str) -> None:
     assert failure_note(error.error_code, error.detail, device='plug') == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (DeviceUnavailableError('the node went offline'), 'Нет связи с датчиком'),
+        (DeviceProtocolError('temperature: not a number'), 'Датчик прислал неожиданный ответ'),
+        (SensorReadingError('temperature: the node reported nan'), 'Датчик не смог снять показания'),
+        (BrokerUnavailableError('connection refused'), 'teplo не может подключиться к MQTT-брокеру'),
+    ],
+)
+def test_failure_note_names_the_sensor_for_a_temperature_sensor(error: DomainError, expected: str) -> None:
+    assert failure_note(error.error_code, error.detail, device='temperature_sensor') == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (DeviceUnavailableError('the node went offline'), 'Нет связи с фазометром'),
+        (DeviceProtocolError('l1_current: not a number'), 'Фазометр прислал неожиданный ответ'),
+        (SensorReadingError('l2_current: the node reported nan'), 'Фазометр не смог измерить ток фазы'),
+        (BrokerUnavailableError('connection refused'), 'teplo не может подключиться к MQTT-брокеру'),
+    ],
+)
+def test_failure_note_names_the_phase_meter_for_a_phase_meter(error: DomainError, expected: str) -> None:
+    assert failure_note(error.error_code, error.detail, device='phase_meter') == expected
 
 
 def test_failure_note_leaves_out_what_the_headline_says() -> None:

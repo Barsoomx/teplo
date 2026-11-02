@@ -76,3 +76,35 @@ class PlugProviderStub:
             raise DriverNotImplementedError(slug)
 
         return self._plugs[slug]
+
+
+class MqttReceiverStub:
+    def __init__(self, error: Exception | None = None) -> None:
+        self._error = error
+        self._received: list[tuple[str, bytes, bool]] = []
+        self._made = 0
+        self._lost: list[str] = []
+
+    @property
+    def received(self) -> list[tuple[str, bytes, bool]]:
+        return self._received
+
+    @property
+    def made(self) -> int:
+        return self._made
+
+    @property
+    def lost(self) -> list[str]:
+        return self._lost
+
+    def receive(self, topic: str, payload: bytes, *, retained: bool) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._received.append((topic, payload, retained))
+
+    def connection_made(self) -> None:
+        self._made += 1
+
+    def connection_lost(self, detail: str) -> None:
+        self._lost.append(detail)

@@ -7,6 +7,7 @@ from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransitio
 
 DEVICE_LOST_AFTER = timedelta(minutes=10)
 DEVICE_LOSS_CONFIRMED_AFTER = timedelta(minutes=2)
+LOSS_CONFIRMED_AFTER_BY_KIND = {DeviceKind.PHASE_METER: timedelta(minutes=1)}
 ZONE_OFF_AFTER = timedelta(minutes=35)
 
 
@@ -60,7 +61,7 @@ def device_condition(device: MonitoredDevice) -> Condition:
         device_kind=device.kind,
         failing=not device.available,
         began_ago=device.last_seen_age,
-        raise_after=DEVICE_LOST_AFTER if device.last_seen_age is None else DEVICE_LOSS_CONFIRMED_AFTER,
+        raise_after=_loss_delay(device),
     )
 
 
@@ -141,6 +142,13 @@ def _due(track: AlertTrack, raise_after: timedelta, monotonic: float) -> bool:
 
 def _change(condition: Condition, transition: AlertTransition, track: AlertTrack, clock: _Clock) -> AlertChange:
     return AlertChange(condition=condition, transition=transition, since=clock.wall_of(track.began_at))
+
+
+def _loss_delay(device: MonitoredDevice) -> timedelta:
+    if device.last_seen_age is None:
+        return DEVICE_LOST_AFTER
+
+    return LOSS_CONFIRMED_AFTER_BY_KIND.get(device.kind, DEVICE_LOSS_CONFIRMED_AFTER)
 
 
 def _zone_off(zone: ZoneHeating) -> bool | None:

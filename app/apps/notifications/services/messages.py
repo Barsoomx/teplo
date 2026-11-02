@@ -13,16 +13,19 @@ from apps.notifications.domain.outage import Outage
 DEVICE_LOST = {
     DeviceKind.THERMOSTAT: gettext_lazy('%(name)s: no connection to the thermostat since %(since)s'),
     DeviceKind.PLUG: gettext_lazy('%(name)s: no connection to the plug since %(since)s'),
+    DeviceKind.TEMPERATURE_SENSOR: gettext_lazy('%(name)s: no connection to the sensor since %(since)s'),
 }
 ANY_DEVICE_LOST = gettext_lazy('%(name)s: no connection since %(since)s')
 UNDATED_DEVICE_LOST = {
     DeviceKind.THERMOSTAT: gettext_lazy('%(name)s: no connection to the thermostat'),
     DeviceKind.PLUG: gettext_lazy('%(name)s: no connection to the plug'),
+    DeviceKind.TEMPERATURE_SENSOR: gettext_lazy('%(name)s: no connection to the sensor'),
 }
 ANY_UNDATED_DEVICE_LOST = gettext_lazy('%(name)s: no connection')
 DEVICE_FOUND = {
     DeviceKind.THERMOSTAT: gettext_lazy('%(name)s: the thermostat is back online'),
     DeviceKind.PLUG: gettext_lazy('%(name)s: the plug is back online'),
+    DeviceKind.TEMPERATURE_SENSOR: gettext_lazy('%(name)s: the sensor is back online'),
 }
 ANY_DEVICE_FOUND = gettext_lazy('%(name)s: back online')
 ZONE_OFF = gettext_lazy('%(name)s: the thermostat has been off since %(since)s although the schedule wants heat')

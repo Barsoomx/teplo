@@ -110,23 +110,50 @@ ESPHome firmware publishes readings to the Mosquitto broker on the router. Confi
 - **Air sensors:** ESP32-C3 with SHT3x over I2C, the sensor 5–10 cm away from the board. Reports every 30 seconds.
 - **Outdoor sensor:** DS18B20 on a 3 m cable with a 4.7 kΩ pull-up, the board indoors.
 
+The firmware and teplo share one MQTT contract:
+
+- **Broker:** Mosquitto on the router, port 1883, on the LAN address only, with a username and password for every client (`docs/deploy.md`). teplo takes its credentials from the `[mqtt]` table of the secrets file (section 11), the nodes from `esphome/secrets.yaml` (`mqtt_broker`, `mqtt_username`, `mqtt_password`), which stays out of the repository.
+- **Nodes:** a node is named `teplo-` and the slug of its device, e.g. `teplo-air-kitchen`. It publishes under `teplo/<node>` without Home Assistant discovery, and its birth and will messages, `online` and `offline`, go to `teplo/<node>/status`.
+- **Readings:** every sensor publishes to `teplo/<node>/sensor/<object_id>/state` with QoS 0, not retained: a decimal string, or `nan` when the reading failed.
+
+| Node | Device kind | Object ids | Every |
+|---|---|---|---|
+| `teplo-air-living-room`, `teplo-air-kitchen`, `teplo-air-hallway`, `teplo-air-second-floor` | temperature sensor | `temperature` (°C) and `humidity` (%), 1 decimal | 30 s |
+| `teplo-outdoor` | temperature sensor | `temperature` (°C), 1 decimal | 30 s |
+| `teplo-phase-meter` | phase meter | `l1_current`, `l2_current`, `l3_current` (A RMS), 2 decimals | 1 s |
+
+A node may also publish `wifi_signal` (dBm, every 60 seconds) and `uptime`, which teplo ignores. `teplo-ir-bedroom` and `teplo-spare` use the same broker but are not teplo devices.
+
+teplo subscribes to `teplo/+/sensor/+/state` and `teplo/+/status`:
+
+- A node maps to the device of its slug whose driver is `esphome_temperature` (kind `temperature_sensor`) or `esphome_phase_meter` (kind `phase_meter`). teplo reads these devices from the database when it starts, so a device added later is heard after a restart.
+- Retained messages, nodes without such a device and object ids the device's driver does not read are ignored. The first message of an unknown node is logged as `esphome_node_unknown`, which points at a misspelt node name.
+- A temperature sensor's `temperature` becomes a new reading, stamped when it arrives. `humidity` joins the latest reading without making it younger, so the age of a reading is always the age of its temperature; a new temperature keeps the previous humidity until the next one arrives.
+- The phase meter's `l1_current`, `l2_current` and `l3_current` are the currents of phases A, B and C. Its store keeps the latest current of each phase with the moment it arrived on the monotonic clock, and the mean and maximum of each phase since they were last taken for history. The meter is stale while a phase has no current from the last 10 seconds, and the store names each such phase. The driver of a stale meter refuses to read, and the readings it gives are dated by the oldest of the three.
+- Values stay decimals. `nan` records the failure `sensor_reading_failed`, and a payload that is not a number `device_protocol_error`, instead of a reading; a failed humidity also leaves the latest reading without humidity. `offline` on the status topic records `device_unavailable`. A broker that teplo cannot reach, that refuses its credentials or that drops the connection records `broker_unavailable` for every ESPHome device; the next connection clears that failure and no other, so a node that stays silent once the broker is back, such as one unplugged before a broker restart or one still booting when teplo connects late, is journaled as a device without a reading rather than blamed on a broker that works. As for a Tuya device, a failure keeps the last reading until it ages out, and the next reading clears it. A driver asked for a reading it no longer has raises the failure recorded for its device, with that failure's code, or `device_unavailable` when none was recorded. A failing reading is logged once, and again only after a good one.
+- Without an `[mqtt]` table teplo does not connect and logs `mqtt_not_configured` once at start; the ESPHome devices stay unavailable and everything else runs as before.
+- Nothing polls these devices, so a job of their own checks their stores every 30 seconds. Its first check waits a minute after the start, by when every node that is up has reported, so a restart does not journal working sensors as lost. Availability changes are journaled as for a thermostat, with the code of the recorded failure, or `device_unavailable` with the reason `no reading` when none was recorded, so the panel's journal explains every loss: a device that has not reported since the start is journaled unavailable at the first check, with the failure recorded for it, such as `broker_unavailable`, or else as `device_unavailable`. The phase meter becomes unavailable, like any device, 10 minutes after its newest current; its staleness is not journaled.
+- Every minute the recorder samples `air_temperature` (°C) of every available temperature sensor, with `air_humidity` (%) when the reading has one, and the mean and maximum current of each phase since the previous sample, `phase_current_mean` and `phase_current_max` (A) under the subjects `l1`, `l2` and `l3`. Each sample starts the mean and maximum over, and an unavailable phase meter records none.
+
 ## 5. Architecture
 
 ### Process
 
 One process on the router runs an asyncio runtime:
 
-- device drivers and the MQTT client feed a **state store** per device kind (latest readings and availability);
+- device drivers and the MQTT client feed a **state store** per device kind (latest readings and availability): jobs poll the Tuya devices, the MQTT client writes the ESPHome readings as they arrive, and a job checks the ESPHome stores for availability changes (section 4);
+- the MQTT client runs in paho's network thread from just after the start journal entry until after the last sample flush. It subscribes again on every connection and reconnects on its own, 1 second after a failure and then doubling the wait up to 30 seconds. A message that fails in handling is logged and dropped, so it never ends the thread;
 - control loops read the state stores, decide, and send commands through drivers;
-- a recorder batches history to SQLite;
+- a recorder samples every available device each minute and writes the history to SQLite in batches every 5 minutes. The metrics are `floor_temperature`, `floor_setpoint` and `thermostat_power` for a thermostat, `plug_on`, `plug_power`, `plug_current` and `plug_voltage` for a plug, `air_temperature` and `air_humidity` for a temperature sensor, and `phase_current_mean` and `phase_current_max` for each phase of the phase meter;
 - an alert job checks the state stores every minute and queues alerts, which a second job sends to Telegram (section 9);
 - uvicorn serves the Django ASGI app (panel and API) from the same loop;
 - use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
-- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox) is guarded by locks, and the Tuya drivers serialize calls to each device.
+- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox) is guarded by locks, the Tuya drivers serialize calls to each device, and the MQTT thread writes the sensor stores while jobs and the panel read them.
 
 ```mermaid
 flowchart LR
-    drivers["Drivers"] -->|"readings, every 30 s"| store["State stores"]
+    drivers["Tuya drivers"] -->|"readings, every 30 s"| store["State stores"]
+    mqtt["MQTT client"] -->|"ESPHome readings, as they arrive"| store
     store --> loops["Control loops<br/>every minute"]
     loops -->|commands| drivers
     store --> panel["Panel and API"]
@@ -158,6 +185,7 @@ Control policies in `climate/domain` and `power/domain` import nothing from Djan
 - **Air zone:** has an air sensor; teplo switches the floor to hold the room air at the target.
 - **Floor zone:** no air sensor; teplo sets the thermostat's floor setpoint from the schedule and the thermostat regulates itself.
 - A zone has one or more heat sources ordered by priority. v1 uses floor thermostats only; a heat pump can become the first source later with the floor as backup.
+- A zone's air sensor is a `temperature_sensor` device linked to the zone. The climate settings name the outdoor sensor and the second-floor sensor. Both come from the site data and are edited in the admin; no control reads them yet, and the panel shows their readings (section 10).
 
 ### Schedules and targets
 
@@ -275,7 +303,7 @@ A step of 10–22 A on one phase that no controllable load explains and that las
 
 ### Phase meter lost
 
-No new starts while the meter is stale. After 1 minute stale, keep at most one floor per phase running and send an alert.
+No new starts while the meter is stale. After 1 minute stale, keep at most one floor per phase running and send an alert. The alert is sent already (section 9) and the panel hatches the phase bars (section 10); the rest comes with load management.
 
 ### Journal
 
@@ -290,9 +318,9 @@ Uses: optimal start prefers to finish pre-heating within a cheap interval when c
 
 - **Clock.** The clock is trusted when NTP has synchronised since boot. Otherwise schedules pause (section 6) and the panel offers "take time from this device", which stores an offset inside teplo without touching the system clock. A last command stamped later than the clock (the clock moved back, e.g. after a reboot) does not hold back the next write. Likewise a boost counts only while it ends within its 2-hour duration from now, trusted clock or not, so a boost stamped before the clock moved back cannot hold a zone at the boost setpoint. Each job that asks whether the clock is trusted reads the NTP status before it reads the time, so a time read just before NTP sets the clock is never taken as trusted.
 - **Supervision.** An Entware init script starts teplo at boot; a cron job restarts it if the process is gone and lists each restart in `restarts.log`. Planned: an alert after more than 3 restarts an hour. The teplo resumed alert does not catch a restart loop, as each gap is shorter than its 3 minutes.
-- **Device loss.** A device without a reading for 10 minutes appears in the panel as unavailable; one that stays unavailable sends an alert (see Alerts below). A failed read or write keeps its error code (`device_unavailable`, `device_protocol_error`, `driver_not_implemented`, `device_not_found`, `secret_missing`, `device_config_invalid`) beside the driver's own error text: the state store holds both, the log records both, and the journal entries `device_availability_changed` and `zone_command_failed` store the code as `error_code` next to `reason` and `error`. A secrets table with an empty address or a protocol other than 3.1–3.5, or one tinytuya refuses, fails as `device_config_invalid` for that device alone: the poll records it and goes on to the next device.
+- **Device loss.** A device without a reading for 10 minutes appears in the panel as unavailable; one that stays unavailable, or a phase meter that stays stale, sends an alert (see Alerts below). A failed read or write keeps its error code (`device_unavailable`, `device_protocol_error`, `driver_not_implemented`, `device_not_found`, `secret_missing`, `device_config_invalid`, and for the ESPHome devices `sensor_reading_failed` and `broker_unavailable`) beside the driver's own error text: the state store holds both, the log records both, and the journal entries `device_availability_changed` and `zone_command_failed` store the code as `error_code` next to `reason` and `error`. A secrets table with an empty address or a protocol other than 3.1–3.5, or one tinytuya refuses, fails as `device_config_invalid` for that device alone: the poll records it and goes on to the next device.
 - **Power loss.** On start teplo reads every device, reconciles the desired state, and journals the outage interval from the last heartbeat. Thermostats may come back switched off and the zone's next allowed write switches them on. Every Tuya driver takes its client from one shared function that disables tinytuya's device22 fallback, so the client keeps the full status query and a device that answers badly while booting is read normally afterwards.
-- **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately. Pruning history to one year of minute samples is planned; until then it only grows, in the reference house by 23 rows a minute (three per thermostat, four per plug), about 12 million rows a year. The start takes the latest time among the newest 5000 samples by row id, about three and a half hours of history in the reference house, rather than scanning the whole table, so it does not slow down as history grows. It also takes the last activity the previous start recorded, so the last time taken on a set clock carries across starts that come before NTP synchronises, until the clock, still running behind, stamps a later time (see Alerts below).
+- **Flash wear.** History is written in batches every 5 minutes; journal events are written immediately. Pruning history to one year of minute samples is planned; until then it only grows, in the reference house by 38 rows a minute (three per thermostat, four per plug, two per air sensor, one for the outdoor sensor and six for the phase meter), about 20 million rows a year. The start takes the latest time among the newest 5000 samples by row id, a little over two hours of history in the reference house, rather than scanning the whole table, so it does not slow down as history grows. It also takes the last activity the previous start recorded, so the last time taken on a set clock carries across starts that come before NTP synchronises, until the clock, still running behind, stamps a later time (see Alerts below).
 - **Coexistence.** teplo runs at nice 10 on its own ports (panel 8088, MQTT 1883); the watchdog restarts it when its resident memory exceeds 300 MB.
 
 ### Alerts
@@ -301,40 +329,45 @@ The `notifications` context sends alerts to one Telegram chat. A pure policy dec
 
 | Alert | Raised when | Cleared when |
 |---|---|---|
-| Device lost | a thermostat or plug has stayed unavailable for 2 minutes, about 12 minutes after its last reading; a device without a reading since teplo started, 10 minutes after the start | the device reads again |
+| Device lost | a thermostat, plug or temperature sensor has stayed unavailable for 2 minutes, about 12 minutes after its last reading; the phase meter has stayed stale for 1 minute (section 7), one to two minutes after its last current; a device without a reading since teplo started, or a phase meter without a current of every phase, 10 minutes after the start | the device reads again; the phase meter is no longer stale |
 | Zone off | the zone's floor target wants the thermostat on (any heating-enabled zone, day or night, live or dry-run) and the thermostat has reported power off for 35 minutes | the thermostat reports power on, or the zone no longer wants it on |
 | teplo resumed | teplo starts more than 3 minutes after its last activity | — |
 
 - A job checks the alerts every minute. An alert is sent once and its recovery once. The state lives in memory, so a restart forgets which alerts were raised: a device that is still lost alerts again 10 minutes later and a zone that is still off 35 minutes later, while one that recovers before that sends no recovery. For example, «Кухня: нет связи с термостатом с 20:24» goes out, a deploy restarts teplo at 20:40, the thermostat answers at 20:45, and no «снова на связи» follows; the panel and the journal show the thermostat back. Restoring raised alerts from the journal would instead send recoveries of alerts that never reached the chat, as the journal does not record delivery.
 - Durations are measured on the monotonic clock, so a clock step after a reboot neither raises nor hides an alert; a reading taken before the step keeps its true age, so a device that goes silent right after NTP sets the clock alerts about 12 minutes after its last reading, as any other.
 - The moment a message names is kept on the monotonic clock as well: when teplo first notices the condition it records the last reading's age, or the notice itself for a device that has not answered since the start and for a zone that is off. The moment becomes wall-clock time only when the alert is raised, so a clock set in between does not shift it; an alert raised while the clock is untrusted names no time, e.g. «Кухня: нет связи с термостатом», and is not held back. The text itself is written when the message is sent, and a moment on an earlier day than the sending names its date: an alert raised on 1 November that waits out a Telegram outage until 3 November reads «Бойлер 1 этаж: нет связи с розеткой с 1 ноября 21:15», where one sent the same evening reads «… с 21:15».
-- The monitored devices come from a list of sources: the thermostats, named by their zone, and the metered plugs, named by their device name. The text names the kind of device that went silent, e.g. «Кухня: нет связи с термостатом с 20:24» and «Бойлер 1 этаж: нет связи с розеткой с 20:24», and its recovery «Бойлер 1 этаж: розетка снова на связи».
+- The monitored devices come from a list of sources: the thermostats, named by their zone, and the metered plugs, the temperature sensors and the phase meter, named by their device names. The text names the kind of device that went silent, e.g. «Кухня: нет связи с термостатом с 20:24», «Бойлер 1 этаж: нет связи с розеткой с 20:24» and «Воздух: кухня: нет связи с датчиком с 20:24», and its recovery «Бойлер 1 этаж: розетка снова на связи» or «Воздух: кухня: датчик снова на связи». The phase meter's own name says what it is, so its texts name no kind: «Фазометр: нет связи с 20:24» and «Фазометр: снова на связи».
+- The phase meter counts as lost while it is stale (section 4), so a phase that stops reporting alerts as well as a silent node, and its message names the last current of the phase silent longest. The delay after teplo notices a loss is set per device kind in the alert policy: 1 minute for the phase meter, which load management cannot do without, and 2 minutes for the other kinds.
 - Zone off takes the floor target from the climate policy (`resolve_mode`, `decide_floor_target`). 35 minutes exceed the 30-minute write budget, so a correction teplo is about to make never alerts. While the thermostat is unavailable its power is unknown and the zone-off timer stops; it starts over once the power is known again, as teplo can correct the thermostat only after it answers. The message still names the moment teplo first saw the thermostat off.
-- teplo resumed: the outage runs from the last journal entry or flushed sample to the start, in local time, e.g. «teplo снова работает. Перерыв 20:24–20:33 (9 мин)». Like the alerts, the notice is dated against its sending: an outage from 23:10 to 23:40 whose notice goes out after midnight reads «teplo снова работает. Перерыв 31 октября 23:10–23:40 (30 мин)». A deploy restart flushes the samples on stop and takes under a minute; after a power loss the outage may start up to 5 minutes early, one sample flush period, and if no device was readable and nothing was journaled for a while, it reaches back to the last record. The notice waits for a trusted clock and dates the start by teplo's uptime; should the start still fall before the last activity, as when a clock that ran ahead stamped the last activity, no outage can be measured from it, and the notice is held back instead of being dropped. The start stays the same at every check, so such a notice goes out only if a later clock step moves the start past the last activity. It is not journaled again, as `teplo_started` already holds the last activity. After a boot the router's clock runs hours behind until NTP sets it, and the samples flushed meanwhile carry those early times, so the outage starts at the latest time among the newest samples, not at the time of the newest one: a second power cut before NTP synchronised is measured from the last sample taken on the set clock, and two cuts 13 minutes apart read as one outage spanning both, not as «Перерыв 15:32–20:40 (5 ч 8 мин)». The newest samples reach back only about three and a half hours, so the start also takes the last activity the previous start recorded: the last time taken on a set clock carries across starts that come before NTP synchronises, until the clock, still running behind, stamps a later time. A clock 5 hours behind does so after about 5 hours without internet, and a power cut after that is measured from the last time it stamped, which reads 5 hours before the cut.
+- teplo resumed: the outage runs from the last journal entry or flushed sample to the start, in local time, e.g. «teplo снова работает. Перерыв 20:24–20:33 (9 мин)». Like the alerts, the notice is dated against its sending: an outage from 23:10 to 23:40 whose notice goes out after midnight reads «teplo снова работает. Перерыв 31 октября 23:10–23:40 (30 мин)». A deploy restart flushes the samples on stop and takes under a minute; after a power loss the outage may start up to 5 minutes early, one sample flush period, and if no device was readable and nothing was journaled for a while, it reaches back to the last record. The notice waits for a trusted clock and dates the start by teplo's uptime; should the start still fall before the last activity, as when a clock that ran ahead stamped the last activity, no outage can be measured from it, and the notice is held back instead of being dropped. The start stays the same at every check, so such a notice goes out only if a later clock step moves the start past the last activity. It is not journaled again, as `teplo_started` already holds the last activity. After a boot the router's clock runs hours behind until NTP sets it, and the samples flushed meanwhile carry those early times, so the outage starts at the latest time among the newest samples, not at the time of the newest one: a second power cut before NTP synchronised is measured from the last sample taken on the set clock, and two cuts 13 minutes apart read as one outage spanning both, not as «Перерыв 15:32–20:40 (5 ч 8 мин)». The newest samples reach back only about two hours, so the start also takes the last activity the previous start recorded: the last time taken on a set clock carries across starts that come before NTP synchronises, until the clock, still running behind, stamps a later time. A clock 5 hours behind does so after about 5 hours without internet, and a power cut after that is measured from the last time it stamped, which reads 5 hours before the cut.
 - Texts are translated with gettext into `TEPLO_ALERT_LANGUAGE`, Russian by default.
 - Delivery is best effort and never holds up control: a second job sends queued messages every minute, oldest first, through the Bot API `sendMessage` over HTTPS with the standard library, with a 10-second timeout and the optional HTTP proxy from the secrets file. A failed send stays queued and is retried. A raised alert waits as long as it lasts, so an outage of Telegram, the internet or the proxy delays it but never silences it; once the alert clears, it and its recovery wait one more hour and are dropped together, so a recovery never arrives without its alert. A recovery whose alert already went out and the teplo resumed notice wait an hour. A message Telegram refuses (4xx other than 429) is dropped and logged, and a refused alert takes its recovery with it, queued or still to come, so the chat never gets «Кухня: термостат снова на связи» without the alert before it. Without a `[telegram]` table alerts are only journaled, and the log says so once.
 - `manage.py send_test_alert` sends a test message at once and prints `ok`, or fails with the error code and the reason, so a wrong token or chat, missing CA certificates or a blocked network shows up when the table is set rather than at the next outage. `docs/deploy.md` lists the codes.
 
 ## 10. Panel
 
-Server-rendered Django templates with HTMX; zone cards and the loads block refresh every 10 seconds (thermostats and plugs are polled every 30 seconds) and the stage 2 phase-current widget every 3 seconds; all assets are served locally.
+Server-rendered Django templates with HTMX; zone cards, the house facts above them and the loads block refresh every 10 seconds (thermostats and plugs are polled every 30 seconds, the air sensors report every 30 seconds) and the phase bars every 3 seconds from a partial of their own; all assets are served locally.
 
 - **Dashboard:** zone cards (air, floor, target, state: heating, waiting, shed), `+/-` and boost, a loads block, phase bars to 25 A with the EV marker, outdoor temperature, clock and device warnings.
 - **Schedules:** weekly periods per zone and mode targets.
 - **Settings:** tariffs, phase thresholds, shedding priority (drag to reorder), floor limits, water heater cheap-only switch, calibration.
 - **History:** temperatures, phase currents, zone states; the event journal.
 
-A JSON API under `api/v1` exposes the same state: `zones/` and `plugs/`. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
+A JSON API under `api/v1` exposes the same state: `zones/`, `plugs/`, `sensors/` and `phases/`. `sensors/` lists every temperature sensor by name with its slug, kind, temperature, humidity, availability and the age of its reading in whole seconds, `age_seconds`; a sensor keeps its last reading once it is unavailable, as the store does. `phases/` lists `l1`, `l2` and `l3` with the latest current of each in amperes, whether it is stale and its `age_seconds`, and is empty without a phase meter. Access requires the panel password: a single Django user `owner` is created from the secrets file, and the session is remembered per device. Until the schedules and settings pages land, configuration is edited in the Django admin.
 
 The visual language is a thermal camera. An ironbow ramp maps 14 to 32 °C and is the only saturated colour, so colour always means floor temperature. Each room is a floor tile: its reading is set in large type, and its floor band glows in the ramp colour at the point of the scale where the floor reads, with the target marked on the same scale. Dark and light themes follow the device setting. Fonts (Unbounded for readings, Golos Text for text, both OFL) and the Lucide icons (ISC) are vendored with their licenses. The interface is English and Russian, picked from the browser's language; zones are listed by name.
 
+A room with an air sensor shows the air temperature beside the floor reading, in large type with the humidity small, and in ink, as colour means floor temperature. A lost air sensor is hatched and says what to check, like a lost plug, while the floor reading stays. The house facts above the tiles start with the outdoor temperature from the climate settings' outdoor sensor, and a row below them lists the other air sensors that belong to no zone, such as the second floor's, with their temperature and humidity.
+
 Below the floor tiles, the loads block lists the metered plugs by name with their relay state, power and voltage. It is drawn in ink only, so colour keeps meaning floor temperature; a lost plug is hatched and says what to check, like a lost thermostat.
 
-Diagnostic text never reaches the page. A failure or an untrusted clock is explained by a translated message chosen by its code; a message that would only repeat its headline is left out, and an unknown code or a journal entry written before codes existed gets a generic one. The raw text stays in the element's tooltip, and for a device failure also in the journal payload and the log.
+Below the loads, the phase bars show the current of L1, L2 and L3 against a scale to 25 A with the value beside each bar, and tick marks at the 20 A start ceiling and the 24 A shed threshold (section 7). The scale and the ticks are section 7's defaults, held by the panel's use case, as no setting holds the phase thresholds yet; once load management stores them, the bars read them from there. They are drawn in ink only. A stale meter is hatched and says what to check, and a phase without a current from the last 10 seconds shows neither bar nor value; without a phase meter the block is left out.
+
+Diagnostic text never reaches the page. A failure or an untrusted clock is explained by a translated message chosen by its code; a message that would only repeat its headline is left out, and an unknown code or a journal entry written before codes existed gets a generic one. The raw text stays in the element's tooltip, and for a device failure also in the journal payload and the log. The journal and these messages name the kind of device, as the alerts do: a thermostat, a plug or a sensor, while the phase meter's own name says what it is, e.g. «Фазометр: нет связи».
 
 ## 11. Configuration and reuse
 
-- **Site app.** `sites/<name>/` is a Django app whose data migrations create zones, devices, schedules, tariffs, thresholds and the shedding priority. The active site is selected by setting. `sites/example` is the template.
+- **Site app.** `sites/<name>/` is a Django app whose data migrations create zones, devices, schedules, tariffs, thresholds and the shedding priority, link the air zones to their air sensors and fill the climate settings. The active site is selected by setting. `sites/example` is the template.
 - **Secrets file.** TOML on the router, default `/opt/etc/teplo/secrets.toml`:
 
 ```toml
@@ -357,11 +390,19 @@ proxy = 'http://...'
 
 [panel]
 password = '...'
+
+[mqtt]
+host = '192.0.2.1'
+port = 1883
+username = 'teplo'
+password = '...'
 ```
+
+`port` defaults to 1883. Without the `[mqtt]` table, or with an empty `host`, `username` or `password`, or a port outside 1–65535, teplo runs without MQTT. The password never reaches the log.
 
 ## 12. Deployment
 
-- **Entware packages:** python3, python3-pip, python3-sqlite3, python3-asyncio, python3-cryptography, mosquitto-nossl.
+- **Entware packages:** python3, python3-pip, python3-sqlite3, python3-asyncio, python3-cryptography, mosquitto-nossl, and mosquitto-client-nossl for checking the broker.
 - **Paths:** code `/opt/share/teplo`, settings and secrets `/opt/etc/teplo`, database `/opt/var/lib/teplo`, logs `/opt/var/log/teplo`.
 - **Install:** a virtualenv with system site packages, so the Entware build of `cryptography` is reused.
 - **Deploy:** from the workstation over SSH (port 222): ship the code, install dependencies, run migrations, restart the service.
@@ -373,15 +414,15 @@ password = '...'
 - **Infrastructure:** protocol encoding against captured frames; repositories against the test database with factories.
 - **Views:** mocks.
 - **Scenarios:** a house simulator (thermal model per zone, phase currents, EV and appliance events) drives the control loops through days of simulated time, e.g. "EV at 22 A, water heater and microwave on the same phase: no phase above 24 A for more than 3 s".
-- **Architecture:** AST tests fail when a domain module imports Django, a driver or a network client, and when any module but the shared Tuya client builder imports tinytuya.
+- **Architecture:** AST tests fail when a domain module imports Django, a driver or a network client, when any module but the shared Tuya client builder imports tinytuya, and when any module but the MQTT client imports paho.
 - **CI:** GitHub Actions runs ruff, mypy, `makemigrations --check` and pytest on every push; any failure fails the build.
 - **Rollout:** every stage first runs in dry-run, journalling the commands it would send, then is enabled zone by zone.
 
 ## 14. Roadmap
 
 1. Thermostats in floor mode: schedules, night setback, timed pre-heat, boost, dry-run, dashboard and journal.
-2. Phase meter and load management.
-3. Air sensors, air regulation, learned optimal start.
+2. Phase meter and load management (the meter is already read and alerts when stale).
+3. Air sensors, air regulation, learned optimal start (the sensors are already read and alert when lost).
 4. Smart plugs: water heaters as sheddable loads (their plugs are already read and alert when lost), washing machine monitoring.
 
 Later: heat pump driver, EV charger driver, away and frost modes.

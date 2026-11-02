@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timedelta
 
 
@@ -21,3 +22,16 @@ class WallClockStub:
 
     def advance(self, step: timedelta) -> None:
         self._now += step
+
+
+class SleepStub:
+    def __init__(self, timeline: list[object], wakeups: int) -> None:
+        self._timeline = timeline
+        self._wakeups = wakeups
+
+    async def __call__(self, seconds: float) -> None:
+        self._timeline.append(seconds)
+        if self._wakeups == 0:
+            raise asyncio.CancelledError
+
+        self._wakeups -= 1

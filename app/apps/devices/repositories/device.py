@@ -1,6 +1,6 @@
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.errors import DeviceNotFoundError
-from apps.devices.domain.kinds import DeviceKind
+from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.models import Device
 
 
@@ -20,6 +20,14 @@ class DeviceRepository:
     @staticmethod
     def plug_slugs() -> list[str]:
         return list(Device.objects.filter(kind=DeviceKind.PLUG).order_by('slug').values_list('slug', flat=True))
+
+    @staticmethod
+    def slugs_of_kind(kind: DeviceKind) -> list[str]:
+        return list(Device.objects.filter(kind=kind).order_by('slug').values_list('slug', flat=True))
+
+    @staticmethod
+    def slugs_with_driver(driver: DeviceDriver) -> list[str]:
+        return list(Device.objects.filter(driver=driver).order_by('slug').values_list('slug', flat=True))
 
     @staticmethod
     def all_settings() -> list[DeviceSettings]:

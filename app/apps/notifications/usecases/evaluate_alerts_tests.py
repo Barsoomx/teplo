@@ -50,6 +50,14 @@ LOST_PLUG = MonitoredDevice(
     available=False,
     last_seen_age=READING_AGE,
 )
+STALE_METER = MonitoredDevice(
+    slug='phase-meter',
+    name='Фазометр',
+    kind=DeviceKind.PHASE_METER,
+    available=False,
+    last_seen_age=timedelta(seconds=15),
+)
+METER_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='phase-meter')
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
 CLOCK_STEP = timedelta(hours=3)
 RESTART_NOTE = StartupNote(last_activity=NOW - timedelta(minutes=16), monotonic=NOTICED)
@@ -72,6 +80,15 @@ def _use_case(
 def _thermostats_and_plugs_use_case(book: AlertBook, dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return EvaluateAlertsUseCase(
         devices=(DeviceSourceStub(devices=[LOST_THERMOSTAT]), DeviceSourceStub(devices=[LOST_PLUG])),
+        zones=ZoneSourceStub(zones=[]),
+        book=book,
+        dispatcher=dispatcher,
+    )
+
+
+def _thermostat_and_meter_use_case(book: AlertBook, dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return EvaluateAlertsUseCase(
+        devices=(DeviceSourceStub(devices=[LOST_THERMOSTAT]), DeviceSourceStub(devices=[STALE_METER])),
         zones=ZoneSourceStub(zones=[]),
         book=book,
         dispatcher=dispatcher,
@@ -134,6 +151,13 @@ def f_plug_noticed_book() -> AlertBook:
 
 
 @pytest.fixture
+def f_meter_noticed_book() -> AlertBook:
+    book = AlertBook()
+    _thermostat_and_meter_use_case(book, EventDispatcher()).execute(_input(timedelta(0)))
+    return book
+
+
+@pytest.fixture
 def f_restarted_book() -> AlertBook:
     book = AlertBook()
     book.note_startup(RESTART_NOTE)
@@ -175,6 +199,11 @@ def f_silent_use_case(f_silence_noticed_book: AlertBook, f_dispatcher: EventDisp
 @pytest.fixture
 def f_plug_lost_use_case(f_plug_noticed_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return _thermostats_and_plugs_use_case(f_plug_noticed_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_meter_stale_use_case(f_meter_noticed_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _thermostat_and_meter_use_case(f_meter_noticed_book, f_dispatcher)
 
 
 @pytest.fixture
@@ -240,6 +269,27 @@ def test_lost_plug_raises_the_same_alert_under_its_own_name(
             since=LAST_READING,
             occurred_at=NOW + timedelta(minutes=2),
         ),
+    )
+
+
+def test_stale_phase_meter_alerts_a_minute_before_a_lost_thermostat(
+    f_meter_stale_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_meter_stale_use_case.execute(_input(timedelta(minutes=1)))
+
+    assert (output.raised, f_events) == (
+        (METER_KEY,),
+        [
+            AlertRaised(
+                kind=AlertKind.DEVICE_LOST,
+                subject='phase-meter',
+                name='Фазометр',
+                device_kind=DeviceKind.PHASE_METER,
+                since=NOW - timedelta(seconds=15),
+                occurred_at=NOW + timedelta(minutes=1),
+            ),
+        ],
     )
 
 

@@ -17,6 +17,10 @@ msgid "%(name)s: no connection to the plug since %(since)s"
 msgstr "%(name)s: нет связи с розеткой с %(since)s"
 
 #, python-format
+msgid "%(name)s: no connection to the sensor since %(since)s"
+msgstr "%(name)s: нет связи с датчиком с %(since)s"
+
+#, python-format
 msgid "%(name)s: no connection since %(since)s"
 msgstr "%(name)s: нет связи с %(since)s"
 
@@ -29,6 +33,10 @@ msgid "%(name)s: no connection to the plug"
 msgstr "%(name)s: нет связи с розеткой"
 
 #, python-format
+msgid "%(name)s: no connection to the sensor"
+msgstr "%(name)s: нет связи с датчиком"
+
+#, python-format
 msgid "%(name)s: no connection"
 msgstr "%(name)s: нет связи"
 
@@ -39,6 +47,10 @@ msgstr "%(name)s: термостат снова на связи"
 #, python-format
 msgid "%(name)s: the plug is back online"
 msgstr "%(name)s: розетка снова на связи"
+
+#, python-format
+msgid "%(name)s: the sensor is back online"
+msgstr "%(name)s: датчик снова на связи"
 
 #, python-format
 msgid "%(name)s: back online"

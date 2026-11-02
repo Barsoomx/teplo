@@ -21,6 +21,7 @@ NOTICED = 1000.0
 LAST_READING_MONOTONIC = NOTICED - 11 * 60
 CLOCK_STEP = timedelta(hours=3)
 POWER_KNOWN_AGAIN = timedelta(minutes=40)
+STALE_AGE = timedelta(seconds=15)
 THERMOSTAT_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='thermostat-kitchen')
 ZONE_KEY = AlertKey(kind=AlertKind.ZONE_OFF, subject='kitchen')
 
@@ -54,6 +55,17 @@ def f_found_thermostat() -> MonitoredDevice:
 @pytest.fixture
 def f_silent_thermostat() -> MonitoredDevice:
     return _thermostat(available=False, last_seen_age=None)
+
+
+@pytest.fixture
+def f_stale_meter() -> MonitoredDevice:
+    return MonitoredDevice(
+        slug='phase-meter',
+        name='Фазометр',
+        kind=DeviceKind.PHASE_METER,
+        available=False,
+        last_seen_age=STALE_AGE,
+    )
 
 
 @pytest.fixture
@@ -95,6 +107,11 @@ def f_loss_noticed_after_a_clock_step(f_lost_thermostat: MonitoredDevice) -> Tra
 @pytest.fixture
 def f_noticed_silence(f_silent_thermostat: MonitoredDevice) -> Tracks:
     return _evaluate([device_condition(f_silent_thermostat)], {}, timedelta(0)).tracks
+
+
+@pytest.fixture
+def f_noticed_stale_meter(f_stale_meter: MonitoredDevice) -> Tracks:
+    return _evaluate([device_condition(f_stale_meter)], {}, timedelta(0)).tracks
 
 
 @pytest.fixture
@@ -267,6 +284,50 @@ def test_device_without_reading_alerts_ten_minutes_after_teplo_first_saw_it(
     evaluation = _evaluate([device_condition(f_silent_thermostat)], f_noticed_silence, elapsed)
 
     change = AlertChange(condition=device_condition(f_silent_thermostat), transition=AlertTransition.RAISED, since=NOW)
+    assert evaluation.changes == ((change,) if raised else ())
+
+
+@pytest.mark.parametrize(
+    ('kind', 'last_seen_age', 'raise_after'),
+    [
+        (DeviceKind.THERMOSTAT, READING_AGE, timedelta(minutes=2)),
+        (DeviceKind.PLUG, READING_AGE, timedelta(minutes=2)),
+        (DeviceKind.TEMPERATURE_SENSOR, READING_AGE, timedelta(minutes=2)),
+        (DeviceKind.PHASE_METER, STALE_AGE, timedelta(minutes=1)),
+        (DeviceKind.TEMPERATURE_SENSOR, None, timedelta(minutes=10)),
+        (DeviceKind.PHASE_METER, None, timedelta(minutes=10)),
+    ],
+)
+def test_device_loss_waits_the_delay_of_its_kind(
+    kind: DeviceKind,
+    last_seen_age: timedelta | None,
+    raise_after: timedelta,
+) -> None:
+    device = MonitoredDevice(slug='device', name='Device', kind=kind, available=False, last_seen_age=last_seen_age)
+
+    assert device_condition(device).raise_after == raise_after
+
+
+@pytest.mark.parametrize(
+    ('elapsed', 'raised'),
+    [
+        (timedelta(seconds=59), False),
+        (timedelta(minutes=1), True),
+    ],
+)
+def test_stale_phase_meter_alerts_once_stale_for_one_more_minute(
+    f_stale_meter: MonitoredDevice,
+    f_noticed_stale_meter: Tracks,
+    elapsed: timedelta,
+    raised: bool,
+) -> None:
+    evaluation = _evaluate([device_condition(f_stale_meter)], f_noticed_stale_meter, elapsed)
+
+    change = AlertChange(
+        condition=device_condition(f_stale_meter),
+        transition=AlertTransition.RAISED,
+        since=NOW - STALE_AGE,
+    )
     assert evaluation.changes == ((change,) if raised else ())
 
 

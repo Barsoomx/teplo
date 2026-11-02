@@ -5,8 +5,13 @@ from decimal import Decimal
 import pytest
 
 from apps.core.stubs import MonotonicClockStub
-from apps.devices.domain.readings import ThermostatMode, ThermostatState
-from apps.devices.services.state_store import ThermostatSnapshot, ThermostatStateStore
+from apps.devices.domain.readings import TemperatureReading, ThermostatMode, ThermostatState
+from apps.devices.services.state_store import (
+    TemperatureSnapshot,
+    TemperatureStateStore,
+    ThermostatSnapshot,
+    ThermostatStateStore,
+)
 
 NOW = datetime(2026, 10, 29, 3, 0, tzinfo=UTC)
 CLOCK_STEP = timedelta(hours=5)
@@ -57,6 +62,35 @@ def f_stepped_store(clock: MonotonicClockStub, f_state: ThermostatState) -> Ther
     return store
 
 
+@pytest.fixture
+def f_reading() -> TemperatureReading:
+    return TemperatureReading(temperature=Decimal('21.5'), humidity=None, read_at=NOW)
+
+
+@pytest.fixture
+def f_amended_store(clock: MonotonicClockStub, f_reading: TemperatureReading) -> TemperatureStateStore:
+    store = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record_state('air-kitchen', f_reading)
+    store.record_failure('air-kitchen', error_code='sensor_reading_failed', error='humidity: the node reported nan')
+    clock.advance(30)
+    store.amend_state('air-kitchen', lambda reading: replace(reading, humidity=Decimal('41.2')))
+    store.amend_state('air-hallway', lambda reading: replace(reading, humidity=Decimal('41.2')))
+    return store
+
+
+@pytest.fixture
+def f_store_with_failures(
+    clock: MonotonicClockStub,
+    f_reading: TemperatureReading,
+    request: pytest.FixtureRequest,
+) -> TemperatureStateStore:
+    store = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record_state('air-kitchen', f_reading)
+    for error_code, error in request.param:
+        store.record_failure('air-kitchen', error_code=error_code, error=error)
+    return store
+
+
 def test_failure_keeps_last_state_and_error(f_store: ThermostatStateStore, f_state: ThermostatState) -> None:
     assert f_store.snapshot('thermostat-kitchen') == ThermostatSnapshot(
         slug='thermostat-kitchen',
@@ -97,3 +131,49 @@ def test_unknown_device_is_unavailable(f_store: ThermostatStateStore) -> None:
         error_code=None,
         error=None,
     )
+
+
+def test_amended_reading_keeps_its_age_and_failure(
+    f_amended_store: TemperatureStateStore,
+    f_reading: TemperatureReading,
+) -> None:
+    assert f_amended_store.snapshot('air-kitchen') == TemperatureSnapshot(
+        slug='air-kitchen',
+        state=replace(f_reading, humidity=Decimal('41.2')),
+        age=timedelta(seconds=30),
+        available=True,
+        error_code='sensor_reading_failed',
+        error='humidity: the node reported nan',
+    )
+
+
+def test_amending_a_device_without_a_reading_records_nothing(f_amended_store: TemperatureStateStore) -> None:
+    assert f_amended_store.snapshot('air-hallway') == TemperatureSnapshot(
+        slug='air-hallway',
+        state=None,
+        age=None,
+        available=False,
+        error_code=None,
+        error=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_store_with_failures', 'failure'),
+    [
+        ([('broker_unavailable', 'mqtt broker unreachable')], (None, None)),
+        ([('device_unavailable', 'the node went offline')], ('device_unavailable', 'the node went offline')),
+        ([], (None, None)),
+    ],
+    ids=['of-that-code', 'of-another-code', 'none'],
+    indirect=['f_store_with_failures'],
+)
+def test_clearing_a_failure_removes_only_one_of_that_code_and_keeps_the_reading(
+    f_store_with_failures: TemperatureStateStore,
+    f_reading: TemperatureReading,
+    failure: tuple[str | None, str | None],
+) -> None:
+    f_store_with_failures.clear_failure('air-kitchen', 'broker_unavailable')
+
+    snapshot = f_store_with_failures.snapshot('air-kitchen')
+    assert (snapshot.state, (snapshot.error_code, snapshot.error)) == (f_reading, failure)

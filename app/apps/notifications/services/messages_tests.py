@@ -71,10 +71,8 @@ def f_late_evening_outage() -> OutageContent:
             'Кухня: нет связи с термостатом с 20:24',
         ),
         (AlertKind.DEVICE_LOST, AlertTransition.RAISED, DeviceKind.PLUG, 'Кухня: нет связи с розеткой с 20:24'),
-        (AlertKind.DEVICE_LOST, AlertTransition.RAISED, DeviceKind.TEMPERATURE_SENSOR, 'Кухня: нет связи с 20:24'),
         (AlertKind.DEVICE_LOST, AlertTransition.CLEARED, DeviceKind.THERMOSTAT, 'Кухня: термостат снова на связи'),
         (AlertKind.DEVICE_LOST, AlertTransition.CLEARED, DeviceKind.PLUG, 'Кухня: розетка снова на связи'),
-        (AlertKind.DEVICE_LOST, AlertTransition.CLEARED, DeviceKind.TEMPERATURE_SENSOR, 'Кухня: снова на связи'),
         (
             AlertKind.ZONE_OFF,
             AlertTransition.RAISED,
@@ -100,11 +98,41 @@ def test_alert_reads_in_russian(
 
 @pytest.mark.usefixtures('russian')
 @pytest.mark.parametrize(
+    ('transition', 'name', 'device_kind', 'expected'),
+    [
+        (
+            AlertTransition.RAISED,
+            'Воздух: кухня',
+            DeviceKind.TEMPERATURE_SENSOR,
+            'Воздух: кухня: нет связи с датчиком с 20:24',
+        ),
+        (
+            AlertTransition.CLEARED,
+            'Воздух: кухня',
+            DeviceKind.TEMPERATURE_SENSOR,
+            'Воздух: кухня: датчик снова на связи',
+        ),
+        (AlertTransition.RAISED, 'Фазометр', DeviceKind.PHASE_METER, 'Фазометр: нет связи с 20:24'),
+        (AlertTransition.CLEARED, 'Фазометр', DeviceKind.PHASE_METER, 'Фазометр: снова на связи'),
+    ],
+)
+def test_sensor_and_phase_meter_alerts_read_in_russian(
+    transition: AlertTransition,
+    name: str,
+    device_kind: DeviceKind,
+    expected: str,
+) -> None:
+    assert alert_text(AlertKind.DEVICE_LOST, transition, name, device_kind, SINCE, AT) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
     ('kind', 'device_kind', 'expected'),
     [
         (AlertKind.DEVICE_LOST, DeviceKind.THERMOSTAT, 'Кухня: нет связи с термостатом'),
         (AlertKind.DEVICE_LOST, DeviceKind.PLUG, 'Кухня: нет связи с розеткой'),
-        (AlertKind.DEVICE_LOST, DeviceKind.TEMPERATURE_SENSOR, 'Кухня: нет связи'),
+        (AlertKind.DEVICE_LOST, DeviceKind.TEMPERATURE_SENSOR, 'Кухня: нет связи с датчиком'),
+        (AlertKind.DEVICE_LOST, DeviceKind.PHASE_METER, 'Кухня: нет связи'),
         (AlertKind.ZONE_OFF, DeviceKind.THERMOSTAT, 'Кухня: термостат выключен, хотя по расписанию должен греть'),
     ],
 )

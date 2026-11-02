@@ -4,6 +4,9 @@ from pathlib import Path
 
 from apps.core.domain.errors import SecretMissingError
 
+DEFAULT_MQTT_PORT = 1883
+LAST_PORT = 65535
+
 
 @dataclass(frozen=True, kw_only=True)
 class DeviceSecret:
@@ -20,16 +23,26 @@ class TelegramSecret:
     proxy: str | None = field(repr=False)
 
 
+@dataclass(frozen=True, kw_only=True)
+class MqttSecret:
+    host: str = field(repr=False)
+    port: int
+    username: str = field(repr=False)
+    password: str = field(repr=False)
+
+
 class SecretsFile:
     def __init__(
         self,
         devices: dict[str, DeviceSecret],
         panel_password: str | None,
         telegram: TelegramSecret | None = None,
+        mqtt: MqttSecret | None = None,
     ) -> None:
         self._devices = devices
         self._panel_password = panel_password
         self._telegram = telegram
+        self._mqtt = mqtt
 
     @classmethod
     def init(cls, path: Path) -> 'SecretsFile':
@@ -47,6 +60,7 @@ class SecretsFile:
             devices=devices,
             panel_password=data.get('panel', {}).get('password'),
             telegram=_telegram(data.get('telegram', {})),
+            mqtt=_mqtt(data.get('mqtt', {})),
         )
 
     @property
@@ -56,6 +70,10 @@ class SecretsFile:
     @property
     def telegram(self) -> TelegramSecret | None:
         return self._telegram
+
+    @property
+    def mqtt(self) -> MqttSecret | None:
+        return self._mqtt
 
     def device(self, slug: str) -> DeviceSecret:
         if slug not in self._devices:
@@ -71,3 +89,23 @@ def _telegram(entry: dict[str, object]) -> TelegramSecret | None:
         return None
 
     return TelegramSecret(token=token, chat_id=chat_id, proxy=str(entry.get('proxy') or '').strip() or None)
+
+
+def _mqtt(entry: dict[str, object]) -> MqttSecret | None:
+    host = str(entry.get('host') or '').strip()
+    username = str(entry.get('username') or '').strip()
+    password = str(entry.get('password') or '')
+    port = _port(entry.get('port', DEFAULT_MQTT_PORT))
+    if not host or not username or not password or port is None:
+        return None
+
+    return MqttSecret(host=host, port=port, username=username, password=password)
+
+
+def _port(value: object) -> int | None:
+    try:
+        port = int(str(value))
+    except ValueError:
+        return None
+
+    return port if 0 < port <= LAST_PORT else None

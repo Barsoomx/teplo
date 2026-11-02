@@ -10,9 +10,10 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from apps.climate.models import ComfortPeriod, Zone
-from apps.devices.domain.readings import PlugState, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import Phase, PlugState, TemperatureReading, ThermostatMode, ThermostatState
 from apps.devices.models import Device
-from apps.devices.services.state_store import plug_state_store, thermostat_state_store
+from apps.devices.services.phase_meter_store import phase_meter_store
+from apps.devices.services.state_store import plug_state_store, temperature_state_store, thermostat_state_store
 from apps.telemetry.models import JournalEntry
 
 ENGLISH_NAMES = {
@@ -22,9 +23,15 @@ ENGLISH_NAMES = {
     'bathroom-1f': 'Washroom',
     'bathroom-2f': 'Bathroom',
 }
-ENGLISH_PLUG_NAMES = {
+ENGLISH_DEVICE_NAMES = {
     'plug-boiler-1f': 'Water heater 1F',
     'plug-boiler-2f': 'Water heater 2F',
+    'air-living-room': 'Living room air',
+    'air-kitchen': 'Kitchen air',
+    'air-hallway': 'Hallway air',
+    'air-second-floor': 'Second floor air',
+    'outdoor': 'Outdoor',
+    'phase-meter': 'Phase meter',
 }
 COMFORT_STARTS = {
     'living-room': time(6, 30),
@@ -42,10 +49,19 @@ PLUG_READINGS = {
     'plug-boiler-1f': ('1305.4', '6.02', '216.8'),
     'plug-boiler-2f': ('0.0', '0.0', '223.1'),
 }
+SENSOR_READINGS = {
+    'air-living-room': ('22.4', '41.3'),
+    'air-kitchen': ('21.6', '44.8'),
+    'air-hallway': ('20.9', '39.5'),
+    'air-second-floor': ('23.1', '37.2'),
+    'outdoor': ('-4.2', None),
+}
+PHASE_METER = 'phase-meter'
+PHASE_CURRENTS = {Phase.A: '18.42', Phase.B: '6.08', Phase.C: '2.37'}
 OFFLINE_THERMOSTAT = 'thermostat-bathroom-1f'
 OFFLINE_DETAIL = 'Network Error: Device Unreachable'
 OFFLINE_CODE = 'device_unavailable'
-REFRESH_SECONDS = 20
+REFRESH_SECONDS = 2
 
 
 def main() -> None:
@@ -55,7 +71,7 @@ def main() -> None:
     if os.environ.get('DEMO_LANGUAGE') == 'en':
         for slug, name in ENGLISH_NAMES.items():
             Zone.objects.filter(slug=slug).update(name=name)
-        for slug, name in ENGLISH_PLUG_NAMES.items():
+        for slug, name in ENGLISH_DEVICE_NAMES.items():
             Device.objects.filter(slug=slug).update(name=name)
     _seed_zones(now)
     _seed_journal(now)
@@ -94,6 +110,18 @@ def _seed_journal(now: datetime) -> None:
             'device_availability_changed',
             'plug-boiler-1f',
             {'slug': 'plug-boiler-1f', 'available': True, 'reason': 'reading received', 'error_code': None},
+        ),
+        (
+            at(21, 16, days_ago=1),
+            'device_availability_changed',
+            'air-kitchen',
+            {'slug': 'air-kitchen', 'available': True, 'reason': 'reading received', 'error_code': None},
+        ),
+        (
+            at(21, 16, days_ago=1),
+            'device_availability_changed',
+            PHASE_METER,
+            {'slug': PHASE_METER, 'available': True, 'reason': 'reading received', 'error_code': None},
         ),
         (at(23, 30, days_ago=1), 'zone_command_issued', 'living-room', setpoint('living-room', '22.0')),
         (at(23, 30, days_ago=1), 'zone_command_issued', 'kitchen', setpoint('kitchen', '22.0')),
@@ -160,4 +188,15 @@ def _keep_readings_fresh() -> None:
                     read_at=read_at,
                 ),
             )
+        for slug, (temperature, humidity) in SENSOR_READINGS.items():
+            temperature_state_store.record_state(
+                slug,
+                TemperatureReading(
+                    temperature=Decimal(temperature),
+                    humidity=None if humidity is None else Decimal(humidity),
+                    read_at=read_at,
+                ),
+            )
+        for phase, amps in PHASE_CURRENTS.items():
+            phase_meter_store.record_current(PHASE_METER, phase, Decimal(amps), read_at)
         clock.sleep(REFRESH_SECONDS)

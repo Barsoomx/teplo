@@ -23,6 +23,13 @@ msgstr "Буст"
 msgid "Off"
 msgstr "Выключено"
 
+#, python-format
+msgid "Outside %(temperature)s°"
+msgstr "На улице %(temperature)s°"
+
+msgid "Outside: no connection to the sensor"
+msgstr "На улице: нет связи с датчиком"
+
 msgid "Watching only: commands are not sent"
 msgstr "Режим наблюдения: команды не отправляются"
 
@@ -40,6 +47,16 @@ msgstr "%(house_time)s, время не сверено (%(reason)s): держу 
 #, python-format
 msgid "%(house_time)s, clock not synced: holding comfort"
 msgstr "%(house_time)s, время не сверено: держу комфорт"
+
+msgid "Air"
+msgstr "Воздух"
+
+msgid "humidity"
+msgstr "влажность"
+
+#, python-format
+msgid "%(name)s: no connection. Check that the sensor has power and Wi-Fi."
+msgstr "%(name)s: нет связи. Проверьте питание датчика и Wi-Fi."
 
 msgid "Watching"
 msgstr "Наблюдение"
@@ -83,6 +100,9 @@ msgstr "Буст на 2 часа"
 msgid "No connection. Check that the thermostat has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание термостата и Wi-Fi."
 
+msgid "No connection to the air sensor. Check that it has power and Wi-Fi."
+msgstr "Нет связи с датчиком воздуха. Проверьте его питание и Wi-Fi."
+
 msgid "Loads"
 msgstr "Нагрузки"
 
@@ -99,6 +119,16 @@ msgstr "%(voltage)s В"
 
 msgid "No connection. Check that the plug has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание розетки и Wi-Fi."
+
+msgid "Phase currents"
+msgstr "Ток по фазам"
+
+#, python-format
+msgid "%(amps)s A"
+msgstr "%(amps)s А"
+
+msgid "No fresh readings. Check that the phase meter has power and Wi-Fi."
+msgstr "Нет свежих показаний. Проверьте питание фазометра и Wi-Fi."
 
 msgid "Sections"
 msgstr "Разделы"
@@ -130,12 +160,28 @@ msgid "%(name)s: plug is online"
 msgstr "%(name)s: розетка на связи"
 
 #, python-format
+msgid "%(name)s: sensor is online"
+msgstr "%(name)s: датчик на связи"
+
+#, python-format
+msgid "%(name)s: online"
+msgstr "%(name)s: на связи"
+
+#, python-format
 msgid "%(name)s: no connection to the thermostat"
 msgstr "%(name)s: нет связи с термостатом"
 
 #, python-format
 msgid "%(name)s: no connection to the plug"
 msgstr "%(name)s: нет связи с розеткой"
+
+#, python-format
+msgid "%(name)s: no connection to the sensor"
+msgstr "%(name)s: нет связи с датчиком"
+
+#, python-format
+msgid "%(name)s: no connection"
+msgstr "%(name)s: нет связи"
 
 msgid "Not sent: watching only"
 msgstr "Не отправлено: режим наблюдения"
@@ -196,6 +242,27 @@ msgstr "В файле секретов нет адреса и ключа это�
 
 msgid "The secrets file gives this plug a wrong address or protocol"
 msgstr "В файле секретов у этой розетки неверный адрес или протокол"
+
+msgid "No connection to the sensor"
+msgstr "Нет связи с датчиком"
+
+msgid "The sensor sent an unexpected reply"
+msgstr "Датчик прислал неожиданный ответ"
+
+msgid "The sensor could not take a reading"
+msgstr "Датчик не смог снять показания"
+
+msgid "teplo cannot connect to the MQTT broker"
+msgstr "teplo не может подключиться к MQTT-брокеру"
+
+msgid "No connection to the phase meter"
+msgstr "Нет связи с фазометром"
+
+msgid "The phase meter sent an unexpected reply"
+msgstr "Фазометр прислал неожиданный ответ"
+
+msgid "The phase meter could not measure a phase"
+msgstr "Фазометр не смог измерить ток фазы"
 
 msgid "Unknown error"
 msgstr "Неизвестная ошибка"

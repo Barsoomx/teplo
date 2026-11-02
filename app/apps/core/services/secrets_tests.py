@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from apps.core.domain.errors import SecretMissingError
-from apps.core.services.secrets import DeviceSecret, SecretsFile, TelegramSecret
+from apps.core.services.secrets import DeviceSecret, MqttSecret, SecretsFile, TelegramSecret
 
 SECRETS_TOML = """
 [devices.thermostat-kitchen]
@@ -24,6 +24,12 @@ password = 'panel-secret'
 token = ' 123456:telegram-token '
 chat_id = -1001234
 proxy = 'http://proxy.invalid:3128'
+
+[mqtt]
+host = ' 192.0.2.1 '
+port = 1884
+username = ' teplo '
+password = ' mqtt password '
 """
 DIRECT_TELEGRAM_TOML = """
 [telegram]
@@ -34,6 +40,12 @@ proxy = ''
 TOKENLESS_TELEGRAM_TOML = """
 [telegram]
 chat_id = '42'
+"""
+DEFAULT_PORT_MQTT_TOML = """
+[mqtt]
+host = 'router.invalid'
+username = 'teplo'
+password = 'mqtt-password'
 """
 
 
@@ -60,6 +72,13 @@ def f_direct_telegram_secrets(tmp_path: Path) -> SecretsFile:
 def f_tokenless_telegram_secrets(tmp_path: Path) -> SecretsFile:
     path = tmp_path / 'secrets.toml'
     path.write_text(TOKENLESS_TELEGRAM_TOML, encoding='utf-8')
+    return SecretsFile.init(path)
+
+
+@pytest.fixture
+def f_mqtt_secrets(tmp_path: Path, request: pytest.FixtureRequest) -> SecretsFile:
+    path = tmp_path / 'secrets.toml'
+    path.write_text(request.param, encoding='utf-8')
     return SecretsFile.init(path)
 
 
@@ -110,8 +129,65 @@ def test_missing_telegram_table_configures_nothing(f_empty_secrets: SecretsFile)
     assert f_empty_secrets.telegram is None
 
 
-def test_addresses_keys_and_tokens_stay_out_of_repr(f_secrets: SecretsFile) -> None:
-    assert (repr(f_secrets.device('thermostat-kitchen')), repr(f_secrets.telegram)) == (
+def test_mqtt_secret_is_read_with_its_port(f_secrets: SecretsFile) -> None:
+    assert f_secrets.mqtt == MqttSecret(host='192.0.2.1', port=1884, username='teplo', password=' mqtt password ')
+
+
+@pytest.mark.parametrize('f_mqtt_secrets', [DEFAULT_PORT_MQTT_TOML], indirect=True)
+def test_mqtt_port_defaults_to_1883(f_mqtt_secrets: SecretsFile) -> None:
+    assert f_mqtt_secrets.mqtt == MqttSecret(
+        host='router.invalid',
+        port=1883,
+        username='teplo',
+        password='mqtt-password',
+    )
+
+
+@pytest.mark.parametrize(
+    'f_mqtt_secrets',
+    [
+        DEFAULT_PORT_MQTT_TOML.replace("host = 'router.invalid'", "host = ' '"),
+        DEFAULT_PORT_MQTT_TOML.replace("username = 'teplo'", ''),
+        DEFAULT_PORT_MQTT_TOML.replace("password = 'mqtt-password'", "password = ''"),
+        f'{DEFAULT_PORT_MQTT_TOML}port = 0',
+        f'{DEFAULT_PORT_MQTT_TOML}port = 65536',
+        f"{DEFAULT_PORT_MQTT_TOML}port = '18 83'",
+        f'{DEFAULT_PORT_MQTT_TOML}port = 1883.0',
+        f'{DEFAULT_PORT_MQTT_TOML}port = true',
+    ],
+    ids=[
+        'blank-host',
+        'no-username',
+        'empty-password',
+        'port-zero',
+        'port-too-high',
+        'port-text',
+        'port-float',
+        'port-bool',
+    ],
+    indirect=True,
+)
+def test_incomplete_mqtt_table_configures_nothing(f_mqtt_secrets: SecretsFile) -> None:
+    assert f_mqtt_secrets.mqtt is None
+
+
+@pytest.mark.parametrize('f_mqtt_secrets', [f"{DEFAULT_PORT_MQTT_TOML}port = '1884'"], indirect=True)
+def test_mqtt_port_may_be_written_as_text(f_mqtt_secrets: SecretsFile) -> None:
+    assert f_mqtt_secrets.mqtt == MqttSecret(
+        host='router.invalid',
+        port=1884,
+        username='teplo',
+        password='mqtt-password',
+    )
+
+
+def test_missing_mqtt_table_configures_nothing(f_empty_secrets: SecretsFile) -> None:
+    assert f_empty_secrets.mqtt is None
+
+
+def test_addresses_keys_tokens_and_passwords_stay_out_of_repr(f_secrets: SecretsFile) -> None:
+    assert (repr(f_secrets.device('thermostat-kitchen')), repr(f_secrets.telegram), repr(f_secrets.mqtt)) == (
         "DeviceSecret(protocol='3.3')",
         "TelegramSecret(chat_id='-1001234')",
+        'MqttSecret(port=1884)',
     )

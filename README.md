@@ -33,12 +33,13 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Gentle on the hardware.** A thermostat gets at most one change per zone per 30 minutes. History is buffered in memory and written to the router's USB flash in batches.
 - **Dry-run first.** Globally or per zone, teplo journals the commands it would send without sending them.
 - **Trusted clock.** The schedule follows the clock only while the router reports NTP as synchronized; with a doubtful clock every zone holds comfort.
-- **Offline by design.** Thermostats are reached with the Tuya local protocol. The panel and every asset it loads are served from the router.
+- **Offline by design.** Thermostats and plugs are reached with the Tuya local protocol, the sensors through an MQTT broker on the router. The panel and every asset it loads are served from the router.
 - **Keeps heating when teplo stops.** Each thermostat regulates on its own at the last setpoint, and a cron watchdog restarts the process.
 - **A panel made for the phone.** Server-rendered Django with htmx, dark and light themes, English and Russian, a timeline journal and a JSON API under `api/v1`.
-- **Alerts in Telegram.** One chat hears about a thermostat or water heater plug that stops answering, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
+- **Alerts in Telegram.** One chat hears about a thermostat, water heater plug or sensor that stops answering, a phase meter gone stale, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
 - **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo only reads the plugs.
-- **Reusable.** A house is a site app with data migrations. Device keys, the panel password and the Telegram bot token stay in a secrets file on the router.
+- **Sensors in view.** ESPHome nodes report the air temperature and humidity of the rooms, the outdoor temperature and the current on each phase. The dashboard shows a room's air beside its floor reading, the outdoor temperature above the rooms and the phase currents as bars refreshed every 3 seconds; the history keeps them, and `api/v1/sensors` and `api/v1/phases` give them as JSON. teplo only reads them for now.
+- **Reusable.** A house is a site app with data migrations. Device keys, the panel password, the Telegram bot token and the MQTT credentials stay in a secrets file on the router.
 
 ## Panel
 
@@ -62,16 +63,20 @@ flowchart LR
     subgraph lan [Home LAN]
         thermostats["5 floor thermostats<br/>Tuya ET-44W"]
         plugs["2 water heater plugs<br/>Tuya, read-only"]
+        nodes["ESPHome nodes<br/>air, outdoor, phase meter"]
         phone["Phone or laptop"]
     end
     subgraph router [Keenetic router, Entware on USB flash]
         teplo["teplo<br/>one Python process"]
+        broker["Mosquitto<br/>MQTT broker"]
         db[("SQLite")]
         ntp["Router NTP status"]
     end
     telegram["Telegram Bot API"]
     teplo <-->|"Tuya local protocol 3.3<br/>read every 30 s"| thermostats
     teplo -->|"Tuya local protocol 3.5<br/>read every 30 s"| plugs
+    nodes -->|"readings every 1–30 s"| broker
+    broker -->|"MQTT, port 1883"| teplo
     phone -->|"panel and API, port 8088"| teplo
     teplo -->|"batched writes every 5 min"| db
     ntp -.->|"clock trust"| teplo
@@ -117,7 +122,7 @@ flowchart TB
     usecases --> domain["Domain policies<br/>pure Python, no Django"]
     usecases --> repositories["Repositories<br/>Django ORM, SQLite"]
     usecases --> ports["Capability ports<br/>FloorThermostat, PhaseMeter, ..."]
-    ports --> drivers["Drivers<br/>Tuya, stubs"]
+    ports --> drivers["Drivers<br/>Tuya, ESPHome over MQTT, stubs"]
     usecases -->|events| handlers["Handlers<br/>journal, Telegram alerts"]
 ```
 
@@ -131,7 +136,7 @@ app/
   apps/
     core/           BaseUseCase, DomainError, domain events, asyncio runtime
     climate/        zones, schedules, floor policy, heating cycle
-    devices/        device registry, capability ports, Tuya drivers, state stores
+    devices/        device registry, capability ports, Tuya and ESPHome drivers, state stores
     telemetry/      samples and the event journal
     notifications/  Telegram alerts: policy, outbox, Bot API client
     system/         trusted clock
@@ -176,8 +181,8 @@ Heat your own house:
 | Role | Device | Integration | Stage |
 |---|---|---|---|
 | Floor thermostats | Tuya Wi-Fi thermostats (tested: Warmfloor ET-44W) | Tuya local protocol | 1, live |
-| Phase meter | ESP32 with 3× SCT-013 split-core CT clamps | ESPHome over MQTT | 2 |
-| Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | 3 |
+| Phase meter | ESP32 with 3× SCT-013 split-core CT clamps | ESPHome over MQTT | read-only now, shedding in 2 |
+| Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | read-only now, regulation in 3 |
 | Smart plugs | Tuya Wi-Fi plugs with power metering | Tuya local protocol 3.5 | read-only now, switching in 4 |
 | Heat pump, air conditioner, EV charger | any | driver stub | later |
 
@@ -186,9 +191,10 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 ## Roadmap
 
 - [x] **Thermostats and schedules:** night setback, timed pre-heat, boost, dry-run, panel and journal. Live since 29 October 2026.
-- [x] **Telegram alerts:** a lost thermostat or plug, a zone left off while it should heat, teplo back after an outage.
+- [x] **Telegram alerts:** a lost thermostat, plug or sensor, a stale phase meter, a zone left off while it should heat, teplo back after an outage.
 - [x] **Water heater monitoring:** relay state, power, current and voltage of the water heater plugs, read-only.
-- [ ] **Phase meter:** per-phase current from CT clamps, a configurable shedding priority and staggered starts.
+- [x] **Sensor monitoring:** air temperature and humidity, outdoor temperature and per-phase current from ESPHome nodes over MQTT, on the dashboard and in the history, read-only.
+- [ ] **Phase meter:** a configurable shedding priority and staggered starts on the measured phase currents.
 - [ ] **Air sensors:** air-temperature regulation and a learned optimal start.
 - [ ] **Smart plugs:** water heaters as sheddable loads, washing machine monitoring.
 - [ ] Schedule and settings pages in the panel.

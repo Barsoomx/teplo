@@ -1,5 +1,7 @@
 from apps.core.domain.errors import DomainError
 
+BROKER_UNAVAILABLE = 'broker_unavailable'
+
 
 class DeviceUnavailableError(DomainError):
     def __init__(self, detail: str) -> None:
@@ -24,3 +26,13 @@ class DeviceNotFoundError(DomainError):
 class DeviceConfigError(DomainError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail, error_code='device_config_invalid')
+
+
+class SensorReadingError(DomainError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, error_code='sensor_reading_failed')
+
+
+class BrokerUnavailableError(DomainError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, error_code=BROKER_UNAVAILABLE)

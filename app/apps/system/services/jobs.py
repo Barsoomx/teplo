@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
 from apps.core.runtime.periodic import PeriodicJob
+from apps.devices.usecases.check_sensors import CheckSensorsInputDTO, CheckSensorsUseCase
 from apps.devices.usecases.poll_plugs import PollPlugsInputDTO, PollPlugsUseCase
 from apps.devices.usecases.poll_thermostats import PollThermostatsInputDTO, PollThermostatsUseCase
 from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, DeliverAlertsUseCase
@@ -20,6 +21,12 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
     return (
         PeriodicJob(name='poll_thermostats', interval=timedelta(seconds=30), action=poll_thermostats),
         PeriodicJob(name='poll_plugs', interval=timedelta(seconds=30), action=poll_plugs),
+        PeriodicJob(
+            name='check_sensors',
+            interval=timedelta(seconds=30),
+            action=check_sensors,
+            delay=timedelta(minutes=1),
+        ),
         PeriodicJob(name='capture_samples', interval=timedelta(minutes=1), action=capture_samples),
         PeriodicJob(name='run_heating_cycle', interval=timedelta(minutes=1), action=run_heating_cycle),
         PeriodicJob(name='flush_samples', interval=timedelta(minutes=5), action=flush_samples),
@@ -41,6 +48,10 @@ def poll_thermostats() -> object:
 
 def poll_plugs() -> object:
     return PollPlugsUseCase.init().execute(PollPlugsInputDTO(now=timezone.now()))
+
+
+def check_sensors() -> object:
+    return CheckSensorsUseCase.init().execute(CheckSensorsInputDTO(now=timezone.now()))
 
 
 def capture_samples() -> object:

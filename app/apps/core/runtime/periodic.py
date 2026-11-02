@@ -16,20 +16,27 @@ class PeriodicJob:
     name: str
     interval: timedelta
     action: Action
+    delay: timedelta = timedelta(0)
 
 
 class JobRunner:
-    def __init__(self, run_in_thread: Callable[[Action], Awaitable[object]]) -> None:
+    def __init__(
+        self,
+        run_in_thread: Callable[[Action], Awaitable[object]],
+        sleep: Callable[[float], Awaitable[None]],
+    ) -> None:
         self._run_in_thread = run_in_thread
+        self._sleep = sleep
 
     @classmethod
     def init(cls) -> 'JobRunner':
-        return cls(run_in_thread=asyncio.to_thread)
+        return cls(run_in_thread=asyncio.to_thread, sleep=asyncio.sleep)
 
     async def run_forever(self, job: PeriodicJob) -> None:
+        await self._sleep(job.delay.total_seconds())
         while True:
             await self.run_once(job)
-            await asyncio.sleep(job.interval.total_seconds())
+            await self._sleep(job.interval.total_seconds())
 
     async def run_once(self, job: PeriodicJob) -> None:
         try:

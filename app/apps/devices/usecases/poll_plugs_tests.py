@@ -134,6 +134,8 @@ def f_misconfigured_use_case(
         secrets=secrets,
         thermostat_factories={},
         plug_factories={DeviceDriver.TUYA_PLUG: _checked_plug_factory(f_state)},
+        temperature_sensor_factories={},
+        phase_meter_factories={},
     )
     return PollPlugsUseCase(devices=DeviceRepository(), provider=registry, store=f_store, dispatcher=dispatcher)
 
