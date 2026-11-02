@@ -13,6 +13,7 @@ class MorningReading:
     at: datetime
     mode: ScheduleMode
     previous_mode: ScheduleMode | None
+    last_morning_comfort_at: datetime | None
     windows: tuple[ComfortWindow, ...]
     target: Decimal
     air: Decimal | None
@@ -105,7 +106,7 @@ def _start_morning(reading: MorningReading) -> Morning | None:
         return None
 
     comfort_at = next_comfort_start(reading.windows, reading.at)
-    if comfort_at is None:
+    if comfort_at is None or comfort_at == reading.last_morning_comfort_at:
         return None
 
     return Morning(comfort_at=comfort_at, target=reading.target, outdoor=reading.outdoor, samples=(sample,))

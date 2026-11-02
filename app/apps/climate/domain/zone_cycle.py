@@ -93,6 +93,7 @@ def follow_zone(
             would_be=memory.would_be,
             preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
             morning=morning.morning,
+            last_morning_comfort_at=_last_morning_comfort_at(memory, morning),
         ),
         air_dry_run=None,
         optimal_start=None,
@@ -254,6 +255,7 @@ def _observe_morning(
             at=cycle.now,
             mode=decision.mode,
             previous_mode=memory.mode,
+            last_morning_comfort_at=memory.last_morning_comfort_at,
             windows=zone.windows,
             target=zone.air_targets.comfort,
             air=conditions.air,
@@ -268,6 +270,10 @@ def _observe_morning(
             air_state=_followed_air_state(memory, decision, outcome),
         ),
     )
+
+
+def _last_morning_comfort_at(memory: ZoneMemory, progress: MorningProgress) -> datetime | None:
+    return memory.last_morning_comfort_at if progress.morning is None else progress.morning.comfort_at
 
 
 def _followed_air_state(memory: ZoneMemory, decision: ZoneDecision, outcome: ZoneCycleOutcome) -> AirState | None:

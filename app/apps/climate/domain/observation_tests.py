@@ -35,6 +35,7 @@ def _reading(at: datetime, *, air: str = '20.1', mode: ScheduleMode = ScheduleMo
         at=at,
         mode=mode,
         previous_mode=ScheduleMode.PREHEAT,
+        last_morning_comfort_at=None,
         windows=WINDOWS,
         target=TARGET,
         air=Decimal(air),
@@ -105,6 +106,7 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
         at=PREHEAT_START,
         mode=mode,
         previous_mode=previous_mode,
+        last_morning_comfort_at=None,
         windows=WINDOWS,
         target=TARGET,
         air=air,
@@ -112,6 +114,42 @@ def test_morning_starts_only_from_night_with_both_sensors_and_scheduled_heat(
         heating=heating,
         outcome=ZoneCycleOutcome.APPLIED,
         air_state=None,
+    )
+
+    assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
+
+
+@pytest.mark.parametrize(
+    ('at', 'last_morning_comfort_at'),
+    [
+        (PREHEAT_START, COMFORT_AT - timedelta(days=1)),
+        (PREHEAT_START + timedelta(minutes=16), None),
+    ],
+    ids=['last_morning_was_yesterday', 'sensor_back_after_preheat_start'],
+)
+def test_morning_starts_for_a_comfort_start_without_one(
+    f_start_reading: MorningReading,
+    at: datetime,
+    last_morning_comfort_at: datetime | None,
+) -> None:
+    reading = replace(f_start_reading, at=at, last_morning_comfort_at=last_morning_comfort_at)
+
+    assert observe_morning(None, reading) == MorningProgress(
+        morning=Morning(
+            comfort_at=COMFORT_AT,
+            target=TARGET,
+            outdoor=OUTDOOR,
+            samples=(AirSample(at=at, air=Decimal('20.0')),),
+        ),
+        finished=None,
+    )
+
+
+def test_no_second_morning_starts_for_the_same_comfort_start(f_start_reading: MorningReading) -> None:
+    reading = replace(
+        f_start_reading,
+        at=PREHEAT_START + timedelta(minutes=16),
+        last_morning_comfort_at=COMFORT_AT,
     )
 
     assert observe_morning(None, reading) == MorningProgress(morning=None, finished=None)
@@ -163,6 +201,7 @@ def test_morning_is_dropped_when_its_conditions_break(
         at=PREHEAT_START + timedelta(hours=1),
         mode=mode,
         previous_mode=ScheduleMode.PREHEAT,
+        last_morning_comfort_at=None,
         windows=WINDOWS,
         target=TARGET,
         air=air,

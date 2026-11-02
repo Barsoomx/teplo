@@ -48,6 +48,7 @@ NIGHT = datetime(2026, 10, 29, 1, 0, tzinfo=MOSCOW)
 COMFORT_AT = datetime(2026, 10, 29, 6, 30, tzinfo=MOSCOW)
 FIXED_START = datetime(2026, 10, 29, 3, 30, tzinfo=MOSCOW)
 OPTIMAL_START = datetime(2026, 10, 29, 3, 50, tzinfo=MOSCOW)
+CAPPED_START = COMFORT_AT - timedelta(hours=4)
 FRESH = timedelta(0)
 MINUTE = timedelta(minutes=1)
 UNAVAILABLE_AFTER = timedelta(minutes=10)
@@ -1458,6 +1459,7 @@ def f_unsaved_morning_cycle(
                 outdoor=Decimal('-3.4'),
                 samples=tuple(AirSample(at=at, air=Decimal(air)) for at, air in MORNING_AIR[1:]),
             ),
+            last_morning_comfort_at=COMFORT_AT,
         ),
     )
     return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, learning=locked_learning)
@@ -1549,7 +1551,7 @@ def test_morning_that_fails_to_save_is_lost_while_the_cycle_goes_on(
             _issued('kitchen', '28.0', COMFORT_AT),
             _issued('living-room', '28.0', COMFORT_AT),
         ],
-        ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT),
+        ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT, last_morning_comfort_at=COMFORT_AT),
     )
 
 
@@ -1659,4 +1661,93 @@ def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
         [_issued('bathroom-2f', '30.0', MORNING), _issued('living-room', '28.0', MORNING)],
         ZoneMemory(),
         ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT),
+    )
+
+
+@pytest.fixture
+def capped_lead_thermostats(
+    temperatures: TemperatureStateStore,
+    f_thermostat: FloorThermostatStub,
+) -> dict[str, FloorThermostat]:
+    _learned(_air_zone(air_control_live=True), rate='0.500')
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor'))
+    _read(temperatures, {'air-kitchen': '19.4', 'outdoor': '-3.4'})
+    return {KITCHEN: f_thermostat}
+
+
+@pytest.fixture
+def f_air_sensor_flap_cycle(
+    capped_lead_thermostats: dict[str, FloorThermostat],
+    clock: MonotonicClockStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    store.record_state(KITCHEN, _state('18.0'))
+    for at in (CAPPED_START - MINUTE, CAPPED_START):
+        _use_case(store, temperatures, capped_lead_thermostats, f_book, EventDispatcher()).execute(_at(at))
+    clock.advance(STALE.total_seconds())
+    store.record_state(KITCHEN, _state('30.0'))
+    temperatures.record_state('outdoor', _reading('-3.4'))
+    _use_case(store, temperatures, capped_lead_thermostats, f_book, EventDispatcher()).execute(
+        _at(CAPPED_START + timedelta(minutes=15)),
+    )
+    temperatures.record_state('air-kitchen', _reading('19.5'))
+    return _use_case(store, temperatures, capped_lead_thermostats, f_book, dispatcher)
+
+
+@pytest.fixture
+def f_air_sensor_lost_at_preheat_start_cycle(
+    capped_lead_thermostats: dict[str, FloorThermostat],
+    clock: MonotonicClockStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    store.record_state(KITCHEN, _state('22.0'))
+    _use_case(store, temperatures, capped_lead_thermostats, f_book, EventDispatcher()).execute(
+        _at(CAPPED_START - timedelta(minutes=15)),
+    )
+    clock.advance(STALE.total_seconds())
+    store.record_state(KITCHEN, _state('18.0'))
+    temperatures.record_state('outdoor', _reading('-3.4'))
+    _use_case(store, temperatures, capped_lead_thermostats, f_book, EventDispatcher()).execute(_at(CAPPED_START))
+    temperatures.record_state('air-kitchen', _reading('19.4'))
+    return _use_case(store, temperatures, capped_lead_thermostats, f_book, dispatcher)
+
+
+def test_air_sensor_back_in_preheat_starts_no_second_morning_for_its_comfort_start(
+    f_air_sensor_flap_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_book: ControlBook,
+) -> None:
+    output = f_air_sensor_flap_cycle.execute(_at(CAPPED_START + timedelta(minutes=16)))
+
+    assert (output.outcomes, f_thermostat.commands, f_book.zone('kitchen').morning) == (
+        {'kitchen': ZoneCycleOutcome.UNCHANGED},
+        [('setpoint', Decimal('30.0'))],
+        None,
+    )
+
+
+def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(
+    f_air_sensor_lost_at_preheat_start_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_book: ControlBook,
+) -> None:
+    now = CAPPED_START + timedelta(minutes=16)
+
+    output = f_air_sensor_lost_at_preheat_start_cycle.execute(_at(now))
+
+    assert (output.outcomes, f_thermostat.commands, f_book.zone('kitchen').morning) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('18.0')), ('setpoint', Decimal('30.0'))],
+        Morning(
+            comfort_at=COMFORT_AT,
+            target=Decimal('22.0'),
+            outdoor=Decimal('-3.4'),
+            samples=(AirSample(at=now, air=Decimal('19.4')),),
+        ),
     )

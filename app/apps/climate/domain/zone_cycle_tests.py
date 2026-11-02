@@ -33,6 +33,7 @@ OPTIMAL_START = datetime(2026, 11, 2, 3, 50, tzinfo=MOSCOW)
 MORNING = datetime(2026, 11, 2, 7, 0, tzinfo=MOSCOW)
 AIR_MODE_STOP = datetime(2026, 11, 2, 5, 40, tzinfo=MOSCOW)
 NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
+SENSOR_BACK = datetime(2026, 11, 2, 2, 46, tzinfo=MOSCOW)
 OUTDOOR = Decimal('-3.4')
 TARGET = Decimal('22.0')
 CONTROL = ClimateControl(
@@ -50,6 +51,10 @@ UNLEARNED = ZoneLearningRecord.unlearned()
 LEARNED = ZoneLearningRecord(
     early_stop_offset=None,
     heat_up=HeatUpModel(dead_time=timedelta(minutes=40), rates={-5: Decimal('0.800')}, mornings=3),
+)
+SLOW_LEARNED = ZoneLearningRecord(
+    early_stop_offset=None,
+    heat_up=HeatUpModel(dead_time=timedelta(minutes=40), rates={-5: Decimal('0.500')}, mornings=3),
 )
 COMFORT = ThermostatTarget(power=True, setpoint=Decimal('28.0'))
 HEAT = ThermostatTarget(power=True, setpoint=Decimal('29.0'))
@@ -533,6 +538,55 @@ def test_finished_morning_is_handed_over_once(f_zone: ZoneSettings, f_morning: M
     follow_up = _follow(f_zone, memory, _conditions('21.9'), _cycle(COMFORT_AT), ZoneCycleOutcome.UNCHANGED)
 
     assert (follow_up.morning, follow_up.memory.morning) == (f_morning, None)
+
+
+def test_air_sensor_back_in_preheat_starts_no_second_morning_for_its_comfort_start(f_live_zone: ZoneSettings) -> None:
+    memory = ZoneMemory(
+        path=ControlPath.FLOOR,
+        mode=ScheduleMode.NIGHT,
+        preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=4)),
+        last_morning_comfort_at=COMFORT_AT,
+    )
+
+    follow_up = _follow(
+        f_live_zone,
+        memory,
+        _conditions('20.0', learning=SLOW_LEARNED),
+        _cycle(SENSOR_BACK),
+        ZoneCycleOutcome.UNCHANGED,
+    )
+
+    assert (follow_up.memory.mode, follow_up.memory.morning, follow_up.memory.last_morning_comfort_at) == (
+        ScheduleMode.PREHEAT,
+        None,
+        COMFORT_AT,
+    )
+
+
+def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(f_live_zone: ZoneSettings) -> None:
+    memory = ZoneMemory(
+        path=ControlPath.FLOOR,
+        mode=ScheduleMode.NIGHT,
+        last_morning_comfort_at=COMFORT_AT - timedelta(days=1),
+    )
+
+    follow_up = _follow(
+        f_live_zone,
+        memory,
+        _conditions('20.0', learning=SLOW_LEARNED),
+        _cycle(SENSOR_BACK),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.memory.morning, follow_up.memory.last_morning_comfort_at) == (
+        Morning(
+            comfort_at=COMFORT_AT,
+            target=TARGET,
+            outdoor=OUTDOOR,
+            samples=(AirSample(at=SENSOR_BACK, air=Decimal('20.0')),),
+        ),
+        COMFORT_AT,
+    )
 
 
 def test_untrusted_clock_keeps_held_preheat(f_live_zone: ZoneSettings, f_preheating_memory: ZoneMemory) -> None:
