@@ -118,7 +118,7 @@ def test_first_check_reports_every_sensor_once(f_use_case: CheckSensorsUseCase, 
                 slug='air-hallway',
                 available=False,
                 reason='no reading',
-                error_code=None,
+                error_code='device_unavailable',
                 occurred_at=NOW,
             ),
             DeviceAvailabilityChanged(
@@ -164,7 +164,7 @@ def test_sensor_silent_for_10_minutes_is_reported_unavailable_with_its_failure(
             slug='phase-meter',
             available=False,
             reason='no reading',
-            error_code=None,
+            error_code='device_unavailable',
             occurred_at=LATER,
         ),
     ]

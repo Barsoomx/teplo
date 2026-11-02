@@ -82,7 +82,7 @@ class CheckSensorsUseCase(BaseUseCase[CheckSensorsInputDTO, CheckSensorsOutputDT
                 slug=slug,
                 available=snapshot.available,
                 reason='reading received' if snapshot.available else snapshot.error or 'no reading',
-                error_code=None if snapshot.available else snapshot.error_code,
+                error_code=None if snapshot.available else snapshot.error_code or 'device_unavailable',
                 occurred_at=now,
             ),
         )
