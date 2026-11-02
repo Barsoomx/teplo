@@ -39,7 +39,7 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Alerts in Telegram.** One chat hears about a thermostat, water heater plug or sensor that stops answering, a phase meter gone stale, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
 - **Power cuts on record.** After a power cut the panel asks whether our breaker tripped or the village lost power, so outages of the grid never count as overloads.
 - **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo only reads the plugs.
-- **Sensors in view.** ESPHome nodes report the air temperature and humidity of the rooms, the outdoor temperature and the current on each phase. The dashboard shows a room's air beside its floor reading, the outdoor temperature above the rooms and the phase currents as bars refreshed every 3 seconds; the history keeps them, and `api/v1/sensors` and `api/v1/phases` give them as JSON. teplo only reads them for now.
+- **Sensors in view.** ESPHome nodes report the air temperature and humidity of the rooms, the outdoor temperature and the current on each phase. The dashboard shows a room's air beside its floor reading, the outdoor temperature above the rooms and the phase currents as bars refreshed every 3 seconds; the history keeps them, and `api/v1/sensors` and `api/v1/phases` give them as JSON. Air control from the room and outdoor sensors ships in dry-run and is switched on zone by zone in the admin; the phase currents are only read for now.
 - **Reusable.** A house is a site app with data migrations. Device keys, the panel password, the Telegram bot token and the MQTT credentials stay in a secrets file on the router.
 
 ## Panel
@@ -184,7 +184,7 @@ Heat your own house:
 |---|---|---|---|
 | Floor thermostats | Tuya Wi-Fi thermostats (tested: Warmfloor ET-44W) | Tuya local protocol | 1, live |
 | Phase meter | ESP32 with 3× SCT-013 split-core CT clamps | ESPHome over MQTT | read-only now, shedding in 2 |
-| Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | read-only now, regulation in 3 |
+| Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | regulation in 3, in dry-run until switched on per zone |
 | Smart plugs | Tuya Wi-Fi plugs with power metering | Tuya local protocol 3.5 | read-only now, switching in 4 |
 | Heat pump, air conditioner, EV charger | any | driver stub | later |
 
@@ -197,7 +197,7 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 - [x] **Water heater monitoring:** relay state, power, current and voltage of the water heater plugs, read-only.
 - [x] **Sensor monitoring:** air temperature and humidity, outdoor temperature and per-phase current from ESPHome nodes over MQTT, on the dashboard and in the history, read-only.
 - [ ] **Phase meter:** a configurable shedding priority and staggered starts on the measured phase currents.
-- [ ] **Air sensors:** air-temperature regulation, a learned optimal start and a guard for the unheated second floor. Shipped in dry-run: the journal and the room tiles show what they would do until they are switched on in the admin, air control zone by zone.
+- [ ] **Air sensors:** air-temperature regulation, a learned optimal start and a guard for the unheated second floor. Shipped in dry-run: the journal shows what they would do, and each room tile names the path that drives it and its air target, until they are switched on in the admin, air control zone by zone.
 - [ ] **Smart plugs:** water heaters as sheddable loads, washing machine monitoring.
 - [ ] Schedule and settings pages in the panel.
 
