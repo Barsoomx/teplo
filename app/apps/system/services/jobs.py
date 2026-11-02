@@ -41,13 +41,14 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
 
 def journal_startup() -> object:
     router_uptime = UptimeReader.init().read()
+    monotonic = time.monotonic()
     started = JournalStartupUseCase.init().execute(
         JournalStartupInputDTO(now=timezone.now(), boot_id=BootIdReader.init().read(), router_uptime=router_uptime),
     )
     return NoteStartupUseCase.init().execute(
         NoteStartupInputDTO(
             last_activity=started.last_activity,
-            monotonic=time.monotonic(),
+            monotonic=monotonic,
             router_uptime=router_uptime,
             boot=started.boot,
         ),
