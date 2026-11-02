@@ -28,6 +28,17 @@ def next_transition(
     return None
 
 
+def next_comfort_start(windows: Sequence[ComfortWindow], now: datetime) -> datetime | None:
+    moment = now
+    while (transition := next_transition(windows, moment, timedelta(0))) is not None:
+        if transition.mode is ScheduleMode.COMFORT:
+            return transition.at
+
+        moment = transition.at
+
+    return None
+
+
 def resolve_mode(windows: Sequence[ComfortWindow], now: datetime, preheat_lead: timedelta) -> ScheduleMode:
     occurrences = _occurrences(windows, now)
     if any(start <= now < end for start, end in occurrences):
