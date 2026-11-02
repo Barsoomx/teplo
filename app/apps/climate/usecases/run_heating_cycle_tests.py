@@ -3,6 +3,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
+from django.db import OperationalError
 
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.events import (
@@ -12,14 +13,20 @@ from apps.climate.domain.events import (
     ZoneCommandFailed,
     ZoneCommandIssued,
 )
-from apps.climate.domain.memory import ZoneMemory
+from apps.climate.domain.floor_policy import ThermostatTarget
+from apps.climate.domain.learning import AirSample, Morning
+from apps.climate.domain.memory import AirDecision, ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
+from apps.climate.domain.observation import StopWatch
+from apps.climate.domain.ports import ZoneLearningStore, ZoneStore
+from apps.climate.domain.zone import ZoneSettings
 from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, ZoneFactory, ZoneLearningFactory
 from apps.climate.models import ClimateSettings, Zone, ZoneLearning
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
+from apps.climate.stubs import ZoneLearningStoreStub, ZoneStoreStub
 from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
@@ -47,6 +54,8 @@ UNAVAILABLE_AFTER = timedelta(minutes=10)
 STALE = timedelta(minutes=11)
 KITCHEN = 'thermostat-kitchen'
 BATHROOM = 'thermostat-bathroom-2f'
+LIVING_ROOM = 'thermostat-living-room'
+LOCKED = 'database is locked'
 HOUSE_AIR = {'air-kitchen': '20.4', 'outdoor': '-3.4', 'air-second-floor': '18.5'}
 MORNING_AIR = (
     (FIXED_START - MINUTE, '20.0'),
@@ -96,11 +105,13 @@ def _use_case(
     dispatcher: EventDispatcher,
     *,
     dry_run: bool = False,
+    zones: ZoneStore | None = None,
+    learning: ZoneLearningStore | None = None,
 ) -> RunHeatingCycleUseCase:
     return RunHeatingCycleUseCase(
-        zones=ZoneRepository(),
+        zones=ZoneRepository() if zones is None else zones,
         climate_settings=ClimateSettingsRepository(),
-        learning=ZoneLearningRepository(),
+        learning=ZoneLearningRepository() if learning is None else learning,
         store=store,
         temperatures=temperatures,
         provider=ThermostatProviderStub(thermostats=thermostats),
@@ -159,6 +170,21 @@ def _guard_zone() -> Zone:
     )
     ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
     return zone
+
+
+def _living_room() -> Zone:
+    zone = ZoneFactory.create(slug='living-room', kind=ZoneKind.FLOOR, thermostat__slug=LIVING_ROOM, live_control=True)
+    ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
+    return zone
+
+
+def _issued(zone: str, setpoint: str, at: datetime) -> ZoneCommandIssued:
+    return ZoneCommandIssued(
+        zone=zone,
+        change=ThermostatChange(setpoint=Decimal(setpoint)),
+        dry_run=False,
+        occurred_at=at,
+    )
 
 
 def _house_settings(*, guard_live: bool = False) -> ClimateSettings:
@@ -1374,3 +1400,263 @@ def test_stop_in_dry_run_teaches_nothing(f_dry_run_stop_cycle: RunHeatingCycleUs
     f_dry_run_stop_cycle.execute(_at(MORNING + timedelta(hours=2, minutes=1)))
 
     assert not ZoneLearning.objects.exists()
+
+
+@pytest.fixture
+def f_living_room_thermostat() -> FloorThermostatStub:
+    return FloorThermostatStub(state=None)
+
+
+@pytest.fixture
+def f_book() -> ControlBook:
+    return ControlBook()
+
+
+@pytest.fixture
+def house_zones() -> list[ZoneSettings]:
+    _guard_zone()
+    _air_zone()
+    _living_room()
+    return ZoneRepository.all_settings()
+
+
+@pytest.fixture
+def house_thermostats(
+    house_zones: list[ZoneSettings],
+    store: ThermostatStateStore,
+    f_thermostat: FloorThermostatStub,
+    f_guard_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+) -> dict[str, FloorThermostat]:
+    for zone in house_zones:
+        store.record_state(zone.thermostat_slug, _state('22.0'))
+    return {BATHROOM: f_guard_thermostat, KITCHEN: f_thermostat, LIVING_ROOM: f_living_room_thermostat}
+
+
+@pytest.fixture
+def locked_learning() -> ZoneLearningStoreStub:
+    return ZoneLearningStoreStub(records={}, errors={'kitchen': OperationalError(LOCKED)})
+
+
+@pytest.fixture
+def f_unsaved_morning_cycle(
+    house_thermostats: dict[str, FloorThermostat],
+    locked_learning: ZoneLearningStoreStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    f_book.remember_zone(
+        'kitchen',
+        ZoneMemory(
+            path=ControlPath.FLOOR,
+            mode=ScheduleMode.PREHEAT,
+            morning=Morning(
+                comfort_at=COMFORT_AT,
+                target=Decimal('22.0'),
+                outdoor=Decimal('-3.4'),
+                samples=tuple(AirSample(at=at, air=Decimal(air)) for at, air in MORNING_AIR[1:]),
+            ),
+        ),
+    )
+    return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, learning=locked_learning)
+
+
+@pytest.fixture
+def f_unsaved_stop_cycle(
+    house_thermostats: dict[str, FloorThermostat],
+    locked_learning: ZoneLearningStoreStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(slug='kitchen').update(air_control_live=True)
+    temperatures.record_state('air-kitchen', _reading('22.1'))
+    f_book.remember_zone(
+        'kitchen',
+        ZoneMemory(
+            path=ControlPath.AIR,
+            mode=ScheduleMode.COMFORT,
+            air_state=AirState.IDLE,
+            heat_target=Decimal('22.0'),
+            stop=StopWatch(stopped_at=MORNING, target=Decimal('22.0'), peak=Decimal('22.3')),
+        ),
+    )
+    return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, learning=locked_learning)
+
+
+@pytest.fixture
+def f_locked_air_stamp_zones(house_zones: list[ZoneSettings]) -> ZoneStoreStub:
+    return ZoneStoreStub(
+        zones=house_zones,
+        errors={('last_air_dry_run_at', 'kitchen'): OperationalError(LOCKED)},
+    )
+
+
+@pytest.fixture
+def f_unstamped_air_dry_run_cycle(
+    house_thermostats: dict[str, FloorThermostat],
+    f_locked_air_stamp_zones: ZoneStoreStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    store.record_state(KITCHEN, _state('28.0'))
+    temperatures.record_state('air-kitchen', _reading('20.4'))
+    return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, zones=f_locked_air_stamp_zones)
+
+
+@pytest.fixture
+def f_locked_command_stamp_zones(house_zones: list[ZoneSettings]) -> ZoneStoreStub:
+    return ZoneStoreStub(
+        zones=house_zones,
+        errors={('last_command_at', 'kitchen'): OperationalError(LOCKED)},
+    )
+
+
+@pytest.fixture
+def f_unstamped_command_cycle(
+    house_thermostats: dict[str, FloorThermostat],
+    f_locked_command_stamp_zones: ZoneStoreStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, zones=f_locked_command_stamp_zones)
+
+
+def test_morning_that_fails_to_save_is_lost_while_the_cycle_goes_on(
+    f_unsaved_morning_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    f_book: ControlBook,
+) -> None:
+    output = f_unsaved_morning_cycle.execute(_at(COMFORT_AT))
+
+    assert (output.outcomes, f_living_room_thermostat.commands, f_events, f_book.zone('kitchen')) == (
+        {
+            'bathroom-2f': ZoneCycleOutcome.APPLIED,
+            'kitchen': ZoneCycleOutcome.APPLIED,
+            'living-room': ZoneCycleOutcome.APPLIED,
+        },
+        [('setpoint', Decimal('28.0'))],
+        [
+            _issued('bathroom-2f', '30.0', COMFORT_AT),
+            _issued('kitchen', '28.0', COMFORT_AT),
+            _issued('living-room', '28.0', COMFORT_AT),
+        ],
+        ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT),
+    )
+
+
+def test_stop_that_fails_to_save_is_lost_while_the_cycle_goes_on(
+    f_unsaved_stop_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    f_book: ControlBook,
+) -> None:
+    now = MORNING + timedelta(hours=2, minutes=1)
+
+    output = f_unsaved_stop_cycle.execute(_at(now))
+
+    assert (output.outcomes, f_living_room_thermostat.commands, f_events, f_book.zone('kitchen')) == (
+        {
+            'bathroom-2f': ZoneCycleOutcome.APPLIED,
+            'kitchen': ZoneCycleOutcome.APPLIED,
+            'living-room': ZoneCycleOutcome.APPLIED,
+        },
+        [('setpoint', Decimal('28.0'))],
+        [_issued('bathroom-2f', '30.0', now), _issued('kitchen', '18.0', now), _issued('living-room', '28.0', now)],
+        ZoneMemory(
+            path=ControlPath.AIR,
+            mode=ScheduleMode.COMFORT,
+            air_state=AirState.IDLE,
+            heat_target=Decimal('22.0'),
+        ),
+    )
+
+
+def test_air_dry_run_stamp_that_fails_to_save_is_skipped_while_the_cycle_goes_on(
+    f_unstamped_air_dry_run_cycle: RunHeatingCycleUseCase,
+    f_locked_air_stamp_zones: ZoneStoreStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    f_book: ControlBook,
+) -> None:
+    output = f_unstamped_air_dry_run_cycle.execute(_at(MORNING))
+
+    assert (
+        output.outcomes,
+        f_living_room_thermostat.commands,
+        f_locked_air_stamp_zones.stamps,
+        f_events,
+        f_book.zone('kitchen'),
+    ) == (
+        {
+            'bathroom-2f': ZoneCycleOutcome.APPLIED,
+            'kitchen': ZoneCycleOutcome.UNCHANGED,
+            'living-room': ZoneCycleOutcome.APPLIED,
+        },
+        [('setpoint', Decimal('28.0'))],
+        [('last_command_at', 'bathroom-2f', MORNING), ('last_command_at', 'living-room', MORNING)],
+        [
+            _issued('bathroom-2f', '30.0', MORNING),
+            AirControlDryRun(
+                zone='kitchen',
+                air=Decimal('20.4'),
+                target=Decimal('22.0'),
+                mode=ScheduleMode.COMFORT,
+                state=AirState.HEAT,
+                previous_state=None,
+                power=True,
+                setpoint=Decimal('30.0'),
+                early_stop_offset=Decimal('0.30'),
+                lead_minutes=None,
+                occurred_at=MORNING,
+            ),
+            _issued('living-room', '28.0', MORNING),
+        ],
+        ZoneMemory(
+            path=ControlPath.AIR_DRY_RUN,
+            mode=ScheduleMode.COMFORT,
+            air_state=AirState.HEAT,
+            would_be=AirDecision(state=AirState.HEAT, target=ThermostatTarget(power=True, setpoint=Decimal('30.0'))),
+        ),
+    )
+
+
+def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
+    f_unstamped_command_cycle: RunHeatingCycleUseCase,
+    f_locked_command_stamp_zones: ZoneStoreStub,
+    f_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    f_book: ControlBook,
+) -> None:
+    output = f_unstamped_command_cycle.execute(_at(MORNING))
+
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        f_living_room_thermostat.commands,
+        f_locked_command_stamp_zones.stamps,
+        f_events,
+        f_book.zone('kitchen'),
+        f_book.zone('living-room'),
+    ) == (
+        {
+            'bathroom-2f': ZoneCycleOutcome.APPLIED,
+            'kitchen': ZoneCycleOutcome.FAILED,
+            'living-room': ZoneCycleOutcome.APPLIED,
+        },
+        [],
+        [('setpoint', Decimal('28.0'))],
+        [('last_command_at', 'bathroom-2f', MORNING), ('last_command_at', 'living-room', MORNING)],
+        [_issued('bathroom-2f', '30.0', MORNING), _issued('living-room', '28.0', MORNING)],
+        ZoneMemory(),
+        ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT),
+    )
