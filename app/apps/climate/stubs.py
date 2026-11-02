@@ -39,15 +39,26 @@ class ZoneStoreStub:
 
 
 class ZoneLearningStoreStub:
-    def __init__(self, records: dict[str, ZoneLearningRecord], errors: dict[str, Exception]) -> None:
+    def __init__(
+        self,
+        records: dict[str, ZoneLearningRecord],
+        errors: dict[str, Exception],
+        read_errors: tuple[Exception, ...],
+    ) -> None:
         self._records = records
         self._errors = errors
+        self._read_errors = read_errors
+        self._reads = 0
 
     @property
     def records(self) -> dict[str, ZoneLearningRecord]:
         return self._records
 
     def all_records(self) -> dict[str, ZoneLearningRecord]:
+        self._reads += 1
+        if self._reads <= len(self._read_errors):
+            raise self._read_errors[self._reads - 1]
+
         return dict(self._records)
 
     def save_heat_up(self, slug: str, heat_up: HeatUpModel) -> None:

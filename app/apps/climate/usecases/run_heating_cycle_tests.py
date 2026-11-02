@@ -1514,7 +1514,7 @@ def house_thermostats(
 
 @pytest.fixture
 def locked_learning() -> ZoneLearningStoreStub:
-    return ZoneLearningStoreStub(records={}, errors={'kitchen': OperationalError(LOCKED)})
+    return ZoneLearningStoreStub(records={}, errors={'kitchen': OperationalError(LOCKED)}, read_errors=())
 
 
 @pytest.fixture
@@ -1740,6 +1740,43 @@ def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
         ZoneMemory(),
         ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT),
     )
+
+
+@pytest.fixture
+def f_guard_after_unread_learning_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_guard_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _house_settings()
+    store.record_state(BATHROOM, _state('22.0'))
+    temperatures.record_state('air-second-floor', _reading('18.8'))
+    thermostats: dict[str, FloorThermostat] = {BATHROOM: f_guard_thermostat}
+    learning = ZoneLearningStoreStub(records={}, errors={}, read_errors=(OperationalError(LOCKED),))
+    with pytest.raises(OperationalError):
+        _use_case(store, temperatures, thermostats, book, EventDispatcher(), learning=learning).execute(_at(NIGHT))
+    return _use_case(store, temperatures, thermostats, book, dispatcher, learning=learning)
+
+
+def test_guard_change_of_a_cycle_that_fails_to_read_learning_is_journaled_by_the_next_one(
+    f_guard_after_unread_learning_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    now = NIGHT + MINUTE
+
+    f_guard_after_unread_learning_cycle.execute(_at(now))
+
+    assert f_events == [
+        SecondFloorGuardDryRun(
+            zone='bathroom-2f',
+            active=True,
+            air=Decimal('18.8'),
+            setpoint=Decimal('30.0'),
+            occurred_at=now,
+        ),
+    ]
 
 
 @pytest.fixture

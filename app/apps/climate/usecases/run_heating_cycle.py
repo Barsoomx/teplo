@@ -102,8 +102,8 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         now = timezone.localtime(input_dto.now)
         control = self._climate_settings.control()
         zones = self._zones.all_settings()
-        guarded_zone = self._run_guard(zones, control, now)
         learning = self._learning.all_records()
+        guarded_zone = self._run_guard(zones, control, now)
         cycle = CycleConditions(
             now=now,
             clock_trusted=input_dto.clock_trusted,
