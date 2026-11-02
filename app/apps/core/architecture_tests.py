@@ -17,6 +17,7 @@ FORBIDDEN_LAYERS = (
     'usecases',
 )
 TUYA_CLIENT_BUILDER = 'devices/drivers/tuya_client.py'
+MQTT_CLIENT = 'devices/drivers/mqtt_client.py'
 
 
 def _domain_modules() -> list[Path]:
@@ -92,11 +93,15 @@ def test_from_import_of_a_network_module_is_caught(f_network_module: Path) -> No
     ]
 
 
-def test_only_the_shared_builder_imports_tinytuya() -> None:
+@pytest.mark.parametrize(
+    ('package', 'client_module'),
+    [('tinytuya', TUYA_CLIENT_BUILDER), ('paho', MQTT_CLIENT)],
+)
+def test_only_the_client_module_imports_a_device_library(package: str, client_module: str) -> None:
     importers = [
         path.relative_to(APPS_ROOT).as_posix()
         for path in _app_modules()
-        if any(module.split('.')[0] == 'tinytuya' for module in _imports(path))
+        if any(module.split('.')[0] == package for module in _imports(path))
     ]
 
-    assert importers == [TUYA_CLIENT_BUILDER]
+    assert importers == [client_module]

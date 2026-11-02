@@ -14,6 +14,7 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
 2. Edit `/opt/etc/teplo/teplo.env`: set `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS`. Keep `TEPLO_DRY_RUN=true` for the first run. The installer fills in a random `DJANGO_SECRET_KEY` when the file has none; teplo refuses to start without it.
 3. Create `/opt/etc/teplo/secrets.toml` from `deploy/router/secrets.toml.example`, one `[devices.<slug>]` table per device slug of the site, and `chmod 600` it. The `barsoom` site has five thermostats and the water heater plugs `plug-boiler-1f` and `plug-boiler-2f`. Tuya plugs need `protocol = '3.5'`: a table without it gets 3.3, the thermostats' protocol, and the plug shows as unavailable. A protocol other than `'3.1'`–`'3.5'`, e.g. `'3,5'`, or an empty `address` shows on the panel as a wrong address or protocol for that device only. A device without a table stays unavailable and raises a device-lost alert 10 minutes after the start. Local keys come from the Smart Life QR login described in `docs/design.md`.
 4. For alerts, add the `[telegram]` table described in [Telegram alerts](#telegram-alerts).
+5. For the ESPHome sensors, set up the broker and add the `[mqtt]` table as described in [MQTT broker](#mqtt-broker).
 
 ## Deploy a release
 
@@ -46,6 +47,7 @@ Layout on the router:
   teplo.env             settings, read at start
   secrets.toml          device addresses and keys, panel password, Telegram bot (chmod 600)
 /opt/etc/init.d/S90teplo
+/opt/etc/mosquitto/     broker settings and password file (chmod 600)
 /opt/var/lib/teplo/     SQLite database and static files
 /opt/var/log/teplo/     teplo.log, restarts.log
 ```
@@ -80,6 +82,69 @@ It prints `ok` once Telegram has accepted the message, and otherwise fails with 
 - `telegram_not_configured`: the table is missing, or its `token` or `chat_id` is empty.
 - `alert_rejected`: Telegram refused the message. HTTP 401 or 404 means a wrong token; 400 or 403, a wrong `chat_id` or a chat the bot may not write to: open the chat with the bot and press Start.
 - `alert_delivery_failed`: Telegram could not be reached. `CERTIFICATE_VERIFY_FAILED` in the reason means the router lacks CA certificates: `opkg install ca-bundle`. A timeout points at the network or the `proxy`. `malformed proxy or API address` means the `proxy` is not a URL like `http://user:password@host:3128`; the reason leaves the value out, as it may carry the proxy's password.
+
+## MQTT broker
+
+The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquitto on the router, and teplo subscribes there. Entware's `mosquitto-nossl` has no TLS and no `mosquitto_passwd`: it reads its password file as plain text, so the file holds the passwords as written and only the broker may read it. Persistence stays off, as no message is retained and the flash is spared. Run the steps on the router (`ssh -p 222 root@192.168.1.1`).
+
+1. Install the broker and the command-line clients:
+
+   ```sh
+   opkg update
+   opkg install mosquitto-nossl mosquitto-client-nossl
+   ```
+
+2. Replace `/opt/etc/mosquitto/mosquitto.conf` with a listener on the LAN address only, so the broker is not reachable from the internet side:
+
+   ```sh
+   cat > /opt/etc/mosquitto/mosquitto.conf <<'EOF'
+   listener 1883 192.168.1.1
+   allow_anonymous false
+   password_file /opt/etc/mosquitto/passwd
+   persistence false
+   EOF
+   ```
+
+3. Create the password file with one user for the nodes and one for teplo, one `user:password` line each. The broker drops to the `mosquitto` user before it reads the file:
+
+   ```sh
+   cat > /opt/etc/mosquitto/passwd <<'EOF'
+   esphome:choose-a-node-password
+   teplo:choose-a-teplo-password
+   EOF
+   chown mosquitto:mosquitto /opt/etc/mosquitto/passwd
+   chmod 600 /opt/etc/mosquitto/passwd
+   ```
+
+   The nodes take the broker address, `esphome` and its password from `esphome/secrets.yaml`: `mqtt_broker`, `mqtt_username`, `mqtt_password`.
+
+4. Start the broker. Its init script, `/opt/etc/init.d/S80mosquitto`, also starts it at boot, before `S90teplo`:
+
+   ```sh
+   /opt/etc/init.d/S80mosquitto restart
+   ```
+
+5. Give teplo its user in `/opt/etc/teplo/secrets.toml` and restart teplo (`/opt/etc/init.d/S90teplo restart`):
+
+   ```toml
+   [mqtt]
+   host = '192.168.1.1'
+   port = 1883
+   username = 'teplo'
+   password = 'choose-a-teplo-password'
+   ```
+
+   `port` may be left out for 1883. Without the table, or with an empty `host`, `username` or `password`, teplo runs without the sensors.
+
+6. Check that readings arrive:
+
+   ```sh
+   mosquitto_sub -h 192.168.1.1 -u teplo -P 'choose-a-teplo-password' -t 'teplo/#' -v
+   ```
+
+   Every node that is up prints its retained `teplo/<node>/status online` at once, then its readings, e.g. `teplo/teplo-air-kitchen/sensor/temperature/state 21.5`: the air and outdoor sensors every 30 seconds, the phase meter every second. Stop with Ctrl-C.
+
+`teplo.log` says `mqtt_connected` once teplo has subscribed. `mqtt_connection_refused` means a wrong `username` or `password` in `[mqtt]`; `mqtt_connect_failed` means the broker is down or listens on another address. teplo keeps retrying on its own, 1 second after a failure and then up to every 30 seconds. `esphome_node_unknown` names a node that publishes but matches no teplo device, e.g. a misspelt node name, and `mqtt_not_configured` a missing `[mqtt]` table. The broker logs to standard error, which the init script discards; to watch it, stop the service and run `/opt/sbin/mosquitto -c /opt/etc/mosquitto/mosquitto.conf -v` in the foreground.
 
 ## Operate
 

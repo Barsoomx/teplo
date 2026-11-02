@@ -24,3 +24,13 @@ class DeviceNotFoundError(DomainError):
 class DeviceConfigError(DomainError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail, error_code='device_config_invalid')
+
+
+class SensorReadingError(DomainError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, error_code='sensor_reading_failed')
+
+
+class BrokerUnavailableError(DomainError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, error_code='broker_unavailable')

@@ -30,12 +30,41 @@ def f_devices() -> list[Device]:
     ]
 
 
+@pytest.fixture
+def f_sensors() -> list[Device]:
+    return [
+        DeviceFactory.create(
+            slug='outdoor',
+            kind=DeviceKind.TEMPERATURE_SENSOR,
+            driver=DeviceDriver.ESPHOME_TEMPERATURE,
+        ),
+        DeviceFactory.create(
+            slug='phase-meter',
+            kind=DeviceKind.PHASE_METER,
+            driver=DeviceDriver.ESPHOME_PHASE_METER,
+        ),
+        DeviceFactory.create(
+            slug='air-kitchen',
+            kind=DeviceKind.TEMPERATURE_SENSOR,
+            driver=DeviceDriver.ESPHOME_TEMPERATURE,
+        ),
+        DeviceFactory.create(slug='thermostat-kitchen'),
+    ]
+
+
 def test_thermostat_slugs_lists_only_thermostats_in_order(f_devices: list[Device]) -> None:
     assert DeviceRepository.thermostat_slugs() == [f_devices[1].slug, f_devices[0].slug]
 
 
 def test_plug_slugs_lists_only_plugs_in_order(f_devices: list[Device]) -> None:
     assert DeviceRepository.plug_slugs() == [f_devices[3].slug, f_devices[2].slug]
+
+
+def test_slugs_with_driver_lists_only_that_driver_in_order(f_sensors: list[Device]) -> None:
+    assert (
+        DeviceRepository.slugs_with_driver(DeviceDriver.ESPHOME_TEMPERATURE),
+        DeviceRepository.slugs_with_driver(DeviceDriver.ESPHOME_PHASE_METER),
+    ) == ([f_sensors[2].slug, f_sensors[0].slug], [f_sensors[1].slug])
 
 
 def test_all_settings_describes_every_device_in_slug_order(f_devices: list[Device]) -> None:
