@@ -22,6 +22,7 @@ class ZoneAdmin(admin.ModelAdmin):
         'air_control_live',
     )
     list_editable = ('heating_enabled', 'live_control', 'air_control_live')
+    readonly_fields = ('boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
     inlines = (ComfortPeriodInline,)
 
 
