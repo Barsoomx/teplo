@@ -182,8 +182,16 @@ def test_shed_whose_write_failed_is_confirmed_by_the_first_reading_since_the_fai
     assert shed_confirmed(UNCONFIRMED_BOILER_SHED, reading) is expected
 
 
-def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading() -> None:
-    resumed = resumed_shed(SHED_BOILER_RECORD, at=AT, default_amps=Decimal('6.0'))
+@pytest.mark.parametrize(
+    ('now', 'resumed_at'),
+    [(NOW + timedelta(minutes=10), AT - 600), (NOW - timedelta(minutes=5), AT)],
+    ids=['shed_ten_minutes_ago', 'shed_stored_later_than_the_clock_reads'],
+)
+def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_dated_by_its_age(
+    now: datetime,
+    resumed_at: float,
+) -> None:
+    resumed = resumed_shed(SHED_BOILER_RECORD, at=AT, now=now, default_amps=Decimal('6.0'))
 
     assert (resumed, relief([] if resumed is None else [resumed], LoadPhase.L2, AT - 1)) == (
         Shed(
@@ -193,7 +201,7 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading() -> Non
             live=True,
             reason=ShedReason.OVERLOAD,
             was_on=True,
-            at=AT,
+            at=resumed_at,
             settled_at=SETTLED,
         ),
         Decimal(0),
@@ -201,7 +209,9 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading() -> Non
 
 
 def test_resumed_shed_of_a_load_not_shed_is_none() -> None:
-    assert resumed_shed(replace(SHED_BOILER_RECORD, shed=None), at=AT, default_amps=Decimal('6.0')) is None
+    resumed = resumed_shed(replace(SHED_BOILER_RECORD, shed=None), at=AT, now=NOW, default_amps=Decimal('6.0'))
+
+    assert resumed is None
 
 
 @pytest.mark.parametrize(

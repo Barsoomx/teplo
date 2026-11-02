@@ -99,7 +99,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
         at = self._clock()
         now = input_dto.now
-        resumed = self._resumed(state, at)
+        resumed = self._resumed(state, at, now)
         shedding = self._confirmed(state, resumed, now)
         shedding = self._overridden(state, shedding, now)
         shedding = self._released(state, shedding, at, now)
@@ -115,7 +115,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             restored=tuple(slug for slug in resumed.sheds if slug not in shedding.sheds),
         )
 
-    def _resumed(self, state: GuardState, at: float) -> ShedState:
+    def _resumed(self, state: GuardState, at: float, now: datetime) -> ShedState:
         shedding = state.shedding
         if shedding.resumed:
             return shedding
@@ -127,7 +127,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         resumed = {
             record.slug: shed
             for record in state.loads.records
-            if (shed := resumed_shed(record, at=at, default_amps=default_amps)) is not None
+            if (shed := resumed_shed(record, at=at, now=now, default_amps=default_amps)) is not None
         }
         if resumed:
             logger.info('load_sheds_resumed', loads=sorted(resumed))

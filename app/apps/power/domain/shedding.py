@@ -86,7 +86,7 @@ def shed_confirmed(unconfirmed: UnconfirmedShed, reading: LoadReading | None) ->
     return reading.closed is False
 
 
-def resumed_shed(record: LoadRecord, *, at: float, default_amps: Decimal) -> Shed | None:
+def resumed_shed(record: LoadRecord, *, at: float, now: datetime, default_amps: Decimal) -> Shed | None:
     if record.shed is None:
         return None
 
@@ -97,7 +97,7 @@ def resumed_shed(record: LoadRecord, *, at: float, default_amps: Decimal) -> She
         live=True,
         reason=record.shed.reason,
         was_on=record.shed.was_on,
-        at=at,
+        at=at - max((now - record.shed.at).total_seconds(), 0.0),
         settled_at=SETTLED,
     )
 
