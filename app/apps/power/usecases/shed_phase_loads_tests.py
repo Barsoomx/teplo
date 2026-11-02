@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from django.db import OperationalError
 from pytest_django import DjangoAssertNumQueries
 
 from apps.core.domain.errors import DomainError
@@ -192,6 +193,7 @@ def _house(
     dry_run: bool = False,
     boiler_on: bool = True,
     boiler_error: DomainError | None = None,
+    write_errors: tuple[Exception, ...] = (),
 ) -> House:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
@@ -206,7 +208,7 @@ def _house(
             plugs.record_state(record.device_slug, _plug(on=boiler_on, second=0))
         else:
             thermostats.record_state(record.device_slug, _heating())
-    loads = LoadStoreStub(records=records, live_zones=live_zones)
+    loads = LoadStoreStub(records=records, live_zones=live_zones, write_errors=write_errors)
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
     zones = ZoneSwitchStub(error=None)
@@ -465,6 +467,17 @@ def f_unswitchable_plug_after_a_failed_release(unswitchable_shed_plug_house: Hou
     _seconds(unswitchable_shed_plug_house.guard, 119, '10.0')
     _plug_read_off(unswitchable_shed_plug_house, 'plug-boiler-2f', 120)
     return unswitchable_shed_plug_house
+
+
+@pytest.fixture
+def house_whose_database_fails_once() -> House:
+    return _house(_live(BOILER), LIVE_CONTROL, frozenset(), write_errors=(OperationalError('database is locked'),))
+
+
+@pytest.fixture
+def f_shed_the_database_failed_to_store(house_whose_database_fails_once: House) -> House:
+    _seconds(house_whose_database_fails_once.guard, 63, '26.0')
+    return house_whose_database_fails_once
 
 
 @pytest.fixture
@@ -1195,6 +1208,31 @@ def test_released_zone_no_longer_written_live_gets_its_thermostat_back_on_at_its
                 reason=ShedReason.OVERLOAD,
                 cause=RestoreCause.RELEASED,
                 occurred_at=_moment(1804),
+            ),
+        ],
+    )
+
+
+def test_live_shed_the_database_fails_to_store_is_kept_and_stored_a_minute_later(
+    f_shed_the_database_failed_to_store: House,
+) -> None:
+    unstored = list(f_shed_the_database_failed_to_store.loads.writes)
+    outputs = _seconds(f_shed_the_database_failed_to_store.guard, 1, '26.0')
+
+    assert (
+        unstored,
+        outputs,
+        f_shed_the_database_failed_to_store.boiler.switches,
+        f_shed_the_database_failed_to_store.loads.writes,
+    ) == (
+        [],
+        [NOTHING],
+        [False],
+        [
+            (
+                'mark_shed',
+                'boiler-1f',
+                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True),
             ),
         ],
     )

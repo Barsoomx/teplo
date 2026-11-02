@@ -1,11 +1,12 @@
 import time
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import structlog
 from django.conf import settings
+from django.db import OperationalError
 
 from apps.climate.domain.write_guard import MIN_WRITE_INTERVAL
 from apps.core.domain.errors import DomainError
@@ -41,6 +42,7 @@ from apps.power.services.load_switcher import LoadSwitcher
 logger = structlog.get_logger(__name__)
 
 LIVE_FIRST = (True, False)
+SAVE_RETRY = timedelta(minutes=1)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -96,6 +98,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             watches, shedding = self._shed_overloads(state, watches, shedding, live=live, at=at, now=now)
             shedding = self._shed_limp(state, shedding, live=live, at=at, now=now)
             shedding = self._restored(state, shedding, live=live, at=at, now=now)
+        shedding = self._saved(shedding, at)
         self._book.remember(replace(state, phases=replace(state.phases, watches=watches), shedding=shedding))
         return ShedPhaseLoadsOutputDTO(
             shed=tuple(slug for slug in shedding.sheds if slug not in resumed.sheds),
@@ -123,7 +126,6 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     def _overridden(self, state: GuardState, shedding: ShedState, now: datetime) -> ShedState:
         taken = [shed for shed in shedding.sheds.values() if switched_back_on(shed, _reading(state, shed.load))]
         for shed in taken:
-            self._loads.clear_shed(shed.load)
             logger.info('load_shed_overridden', load=shed.load)
             self._event_store.add_event(
                 LoadShedOverridden(
@@ -137,6 +139,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         return replace(
             _without(shedding, {shed.load for shed in taken}),
             overridden={**kept, **{shed.load: shed.phase for shed in taken}},
+            unsaved={**shedding.unsaved, **{shed.load: None for shed in taken}},
         )
 
     def _released(self, state: GuardState, shedding: ShedState, at: float, now: datetime) -> ShedState:
@@ -175,7 +178,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 return self._restore_failed(shedding, record, shed, error, at, now)
 
             logger.info('load_released', load=record.slug)
-            self._loads.clear_shed(record.slug)
+            shedding = _stored(shedding, record.slug, None)
         self._event_store.add_event(
             _restore_event(
                 LoadRestored if shed.live else LoadRestoredDryRun,
@@ -272,13 +275,15 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if live and not self._switched_off(record, now):
             return replace(shedding, failed={**shedding.failed, record.slug: at})
 
-        if live:
-            self._loads.mark_shed(record.slug, LiveShed(at=now, reason=reason, phase=phase, was_on=was_on))
         shed = new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at)
         self._event_store.add_event(
             _shed_event(LoadShed if live else LoadShedDryRun, record, shed, amps=amps, now=now),
         )
-        return replace(shedding, sheds={**shedding.sheds, record.slug: shed})
+        shedding = replace(shedding, sheds={**shedding.sheds, record.slug: shed})
+        if not live:
+            return shedding
+
+        return _stored(shedding, record.slug, LiveShed(at=now, reason=reason, phase=phase, was_on=was_on))
 
     def _restored(self, state: GuardState, shedding: ShedState, *, live: bool, at: float, now: datetime) -> ShedState:
         thresholds = state.loads.control.thresholds
@@ -318,7 +323,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 return self._restore_failed(restored, record, shed, error, at, now)
 
             logger.info('load_restored', load=record.slug)
-            self._loads.clear_shed(record.slug)
+            restored = _stored(restored, record.slug, None)
         elif record.kind is LoadKind.PLUG and not self._would_start(load, view, at, thresholds):
             return shedding
 
@@ -426,6 +431,28 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             ),
         )
 
+    def _saved(self, shedding: ShedState, at: float) -> ShedState:
+        if not shedding.unsaved or not elapsed(shedding.save_failed_at, at, SAVE_RETRY):
+            return shedding
+
+        unsaved = dict(shedding.unsaved)
+        for slug, stored in shedding.unsaved.items():
+            try:
+                self._store(slug, stored)
+            except OperationalError as error:
+                logger.warning('load_shed_save_failed', load=slug, error=str(error))
+                return replace(shedding, unsaved=unsaved, save_failed_at=at)
+
+            del unsaved[slug]
+        return replace(shedding, unsaved={}, save_failed_at=None)
+
+    def _store(self, slug: str, stored: LiveShed | None) -> None:
+        if stored is None:
+            self._loads.clear_shed(slug)
+            return
+
+        self._loads.mark_shed(slug, stored)
+
     def _live(self, loads: GuardLoads, record: LoadRecord) -> bool:
         return commands_live(
             loads.control,
@@ -469,6 +496,10 @@ def _name(loads: GuardLoads, slug: str) -> str:
 
 def _without(shedding: ShedState, slugs: Collection[str]) -> ShedState:
     return replace(shedding, sheds={slug: shed for slug, shed in shedding.sheds.items() if slug not in slugs})
+
+
+def _stored(shedding: ShedState, slug: str, stored: LiveShed | None) -> ShedState:
+    return replace(shedding, unsaved={**shedding.unsaved, slug: stored})
 
 
 def _shed_event(

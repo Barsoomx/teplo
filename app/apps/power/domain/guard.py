@@ -6,7 +6,7 @@ from decimal import Decimal
 from apps.power.domain.control import LoadControl
 from apps.power.domain.ev_detection import EvWatch
 from apps.power.domain.load_status import LoadReading, LoadStatus
-from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LoadPhase, LoadRecord
+from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LiveShed, LoadPhase, LoadRecord
 from apps.power.domain.meter_watch import MeterWatch
 from apps.power.domain.phase_learning import LearningState
 from apps.power.domain.phase_samples import SAMPLE_SPAN, PhaseSample
@@ -74,6 +74,8 @@ class ShedState:
     dry_run: TrackTimes = TrackTimes()
     failed: Mapping[str, float] = field(default_factory=dict)
     overridden: Mapping[str, LoadPhase] = field(default_factory=dict)
+    unsaved: Mapping[str, LiveShed | None] = field(default_factory=dict)
+    save_failed_at: float | None = None
 
     def times(self, *, live: bool) -> TrackTimes:
         return self.live if live else self.dry_run

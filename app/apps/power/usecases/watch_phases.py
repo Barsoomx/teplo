@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 import structlog
+from django.db import OperationalError
 
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
@@ -246,7 +247,12 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             if record is None or not learned_changed(record.learned, phase):
                 continue
 
-            self._loads.save_learned(slug, phase)
+            try:
+                self._loads.save_learned(slug, phase)
+            except OperationalError as error:
+                logger.warning('load_phase_save_failed', load=slug, error=str(error))
+                continue
+
             loads = loads.with_learned(slug, phase)
             logger.info('load_phase_learned', load=slug, phase=phase.phase, amps=str(phase.amps))
             self._event_store.add_event(

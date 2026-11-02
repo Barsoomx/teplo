@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
+from django.db import OperationalError
 
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
@@ -88,6 +89,14 @@ def _seconds(rig: GuardRig, count: int, amps: dict[LoadPhase, str]) -> list[Watc
     return [_second(rig, amps) for _ in range(count)]
 
 
+def _switch_boiler_three_times(rig: GuardRig) -> list[WatchPhasesOutputDTO]:
+    outputs: list[WatchPhasesOutputDTO] = []
+    for second in range(1, 141):
+        switched_on = any(second in switched for switched in BOILER_SWITCHED_ON)
+        outputs.append(_second(rig, {LoadPhase.L2: '11.0' if switched_on else '5.0'}, BOILER_POLLS.get(second)))
+    return outputs
+
+
 def _boiler(on: bool, second: int) -> PlugState:
     return PlugState(
         on=on,
@@ -98,8 +107,7 @@ def _boiler(on: bool, second: int) -> PlugState:
     )
 
 
-@pytest.fixture
-def f_rig() -> GuardRig:
+def _rig(write_errors: tuple[Exception, ...]) -> GuardRig:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
     dispatcher = EventDispatcher()
@@ -107,7 +115,7 @@ def f_rig() -> GuardRig:
         dispatcher.register(event_type, events.append)
     meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=timedelta(minutes=10), clock=clock)
     plugs = PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
-    loads = LoadStoreStub(records=[BOILER], live_zones=frozenset())
+    loads = LoadStoreStub(records=[BOILER], live_zones=frozenset(), write_errors=write_errors)
     return GuardRig(
         clock=clock,
         meter=meter,
@@ -126,6 +134,16 @@ def f_rig() -> GuardRig:
             dispatcher=dispatcher,
         ),
     )
+
+
+@pytest.fixture
+def f_rig() -> GuardRig:
+    return _rig(())
+
+
+@pytest.fixture
+def f_rig_whose_database_fails() -> GuardRig:
+    return _rig((OperationalError('database is locked'),))
 
 
 @pytest.fixture
@@ -164,10 +182,7 @@ def test_loads_are_read_from_the_store_once_a_minute(f_rig: GuardRig) -> None:
 
 
 def test_plug_switching_three_times_on_one_phase_teaches_its_phase(f_rig: GuardRig) -> None:
-    outputs: list[WatchPhasesOutputDTO] = []
-    for second in range(1, 141):
-        switched_on = any(second in switched for switched in BOILER_SWITCHED_ON)
-        outputs.append(_second(f_rig, {LoadPhase.L2: '11.0' if switched_on else '5.0'}, BOILER_POLLS.get(second)))
+    outputs = _switch_boiler_three_times(f_rig)
 
     learned = LearnedPhase(phase=LoadPhase.L2, amps=Decimal('6.0'), samples=3)
     assert (
@@ -188,6 +203,18 @@ def test_plug_switching_three_times_on_one_phase_teaches_its_phase(f_rig: GuardR
             ),
         ],
     )
+
+
+def test_learned_phase_the_database_fails_to_store_is_left_for_the_next_vote(
+    f_rig_whose_database_fails: GuardRig,
+) -> None:
+    outputs = _switch_boiler_three_times(f_rig_whose_database_fails)
+
+    assert (
+        [second for second, output in enumerate(outputs, start=1) if output.learned],
+        f_rig_whose_database_fails.loads.writes,
+        f_rig_whose_database_fails.events,
+    ) == ([], [], [])
 
 
 def test_rise_no_load_explains_held_five_minutes_is_an_ev_charging_until_it_drops_back(f_rig: GuardRig) -> None:

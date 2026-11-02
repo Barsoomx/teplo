@@ -29,9 +29,16 @@ class OutageJournalStub:
 
 
 class LoadStoreStub:
-    def __init__(self, records: list[LoadRecord], live_zones: frozenset[str]) -> None:
+    def __init__(
+        self,
+        records: list[LoadRecord],
+        live_zones: frozenset[str],
+        write_errors: tuple[Exception, ...] = (),
+    ) -> None:
         self._records = records
         self._live_zones = live_zones
+        self._write_errors = write_errors
+        self._failed_writes = 0
         self._reads = 0
         self._writes: list[LoadWrite] = []
 
@@ -59,18 +66,25 @@ class LoadStoreStub:
         return self._live_zones
 
     def mark_shed(self, slug: str, shed: LiveShed) -> None:
-        self._writes.append(('mark_shed', slug, shed))
+        self._write(('mark_shed', slug, shed))
         self._records = [replace(record, shed=shed) if record.slug == slug else record for record in self._records]
 
     def clear_shed(self, slug: str) -> None:
-        self._writes.append(('clear_shed', slug, None))
+        self._write(('clear_shed', slug, None))
         self._records = [replace(record, shed=None) if record.slug == slug else record for record in self._records]
 
     def save_learned(self, slug: str, learned: LearnedPhase) -> None:
-        self._writes.append(('save_learned', slug, learned))
+        self._write(('save_learned', slug, learned))
         self._records = [
             replace(record, learned=learned) if record.slug == slug else record for record in self._records
         ]
+
+    def _write(self, write: LoadWrite) -> None:
+        if self._failed_writes < len(self._write_errors):
+            self._failed_writes += 1
+            raise self._write_errors[self._failed_writes - 1]
+
+        self._writes.append(write)
 
 
 class LoadSettingsStoreStub:
@@ -117,6 +131,22 @@ class ZoneSwitchStub:
             raise self._error
 
         self._switched_on.append((zone, thermostat, at))
+
+
+class ZoneWriteStampsStub:
+    def __init__(self, error: Exception | None) -> None:
+        self._error = error
+        self._stamps: list[tuple[str, datetime]] = []
+
+    @property
+    def stamps(self) -> list[tuple[str, datetime]]:
+        return self._stamps
+
+    def mark_commanded(self, slug: str, at: datetime) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._stamps.append((slug, at))
 
 
 class PermitStub:

@@ -2,6 +2,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from django.db import OperationalError
 
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
@@ -9,6 +10,7 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
 from apps.power.services.zone_switch import ThermostatZoneSwitch
+from apps.power.stubs import ZoneWriteStampsStub
 
 pytestmark = pytest.mark.django_db
 
@@ -37,7 +39,7 @@ def unreachable_thermostat() -> FloorThermostatStub:
 @pytest.fixture
 def f_switch(f_thermostat: FloorThermostatStub) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
-        zones=ZoneRepository(),
+        stamps=ZoneRepository(),
         thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': f_thermostat}),
     )
 
@@ -45,8 +47,16 @@ def f_switch(f_thermostat: FloorThermostatStub) -> ThermostatZoneSwitch:
 @pytest.fixture
 def f_unreachable_switch(unreachable_thermostat: FloorThermostatStub) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
-        zones=ZoneRepository(),
+        stamps=ZoneRepository(),
         thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': unreachable_thermostat}),
+    )
+
+
+@pytest.fixture
+def f_switch_without_a_database(f_thermostat: FloorThermostatStub) -> ThermostatZoneSwitch:
+    return ThermostatZoneSwitch(
+        stamps=ZoneWriteStampsStub(error=OperationalError('database is locked')),
+        thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': f_thermostat}),
     )
 
 
@@ -77,3 +87,12 @@ def test_failed_switch_still_spends_the_write_budget(
 
     f_kitchen.refresh_from_db()
     assert f_kitchen.last_command_at == NOW
+
+
+def test_switch_reaches_the_thermostat_when_the_database_cannot_stamp_the_write(
+    f_switch_without_a_database: ThermostatZoneSwitch,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    f_switch_without_a_database.switch_off('kitchen', 'thermostat-kitchen', NOW)
+
+    assert f_thermostat.commands == [('power', False)]
