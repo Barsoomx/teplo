@@ -147,22 +147,22 @@ A sensor that fails when its node starts also yields `nan`. An SHT30 that does n
 
    `upload` builds the node first and authenticates with `ota_password`.
 
-6. Calibrate the phase meter with a kettle once the clamps sit on the phase conductors. The firmware starts from the clamps' nominal 50 A per volt (`multiply: 50`).
+6. Calibrate the phase meter with a kettle once the clamps sit on the phase conductors. The firmware starts from the clamps' nominal 50 A per volt (`multiply: 50`). The clamps sit on the input conductors, before the stabilizers, so on L1 and L2 a clamp carries the stabilizer's input current, which runs above the current of the load behind it, the more so the lower the mains voltage. Calibrate on L3, which has no stabilizer yet.
 
-   1. The kettle draws `I_k = P / U`: `P` from its label, `U` the mains voltage, 230 V or what a metered plug shows in the panel. A 2000 W kettle at 230 V draws 8.7 A.
-   2. Switch off large loads, open `http://teplo-phase-meter/` and switch the kettle on: the current of its phase rises.
-   3. On that phase, note the current just before the kettle starts, `I_off`, and while it boils, `I_on`.
-   4. In `esphome/teplo-phase-meter.yaml`, replace `- multiply: 50` on all three clamps with a line from 0 to the kettle: `(I_on − I_off) / 50` is the RMS voltage the kettle adds at the clamp, `I_k` its current. For a reading that rose from 0.90 A to 9.40 A with an 8.7 A kettle:
+   1. Plug the kettle through a metered plug into an outlet on L3: with the kettle on, L3 is the phase that rises on `http://teplo-phase-meter/`.
+   2. Quiet L3 until it reads 0.3 A or less: switch off what runs on it and, if the fridge is on L3, wait for its compressor to stop. The idle current of a fridge or of power supplies is mostly out of phase with the kettle's, so it does not simply add to it: `I_on − I_off` can fall short of the kettle's current by up to `I_off`, which at 0.3 A is under 4 % of a 2 kW kettle's.
+   3. Note L3 just before the kettle starts, `I_off`, and while it boils, `I_on`, together with the plug's power `P` and voltage `U` from the panel or the Smart Life app. The current the kettle adds at the clamp is then its own, `I_k = P / U`. Take both from the plug, not from the label: a kettle's power follows the square of the voltage.
+   4. The clamps' factor is `50 × I_k / (I_on − I_off)`. Between 48 and 52, keep `multiply: 50`: a kettle measures no closer than that. Otherwise, in `esphome/teplo-phase-meter.yaml`, replace `- multiply: 50` on all three clamps with a line from 0 to the kettle: `(I_on − I_off) / 50` is the RMS voltage the kettle adds at the clamp, `I_k` its current. For a reading that rose from 0.20 A to 9.40 A while the plug showed 1960 W at 228 V, so 8.60 A, the factor is 46.7:
 
       ```yaml
       - calibrate_linear:
           - 0.0 -> 0.0
-          - 0.170 -> 8.7
+          - 0.184 -> 8.60
       ```
 
-   5. Upload the phase meter and switch the kettle on again: its phase rises by `I_k`.
+   5. Upload the phase meter, switch the kettle on again and check that L3 rises by `I_k`.
 
-   The three clamps are one model, so one kettle calibrates all three; for a clamp of its own, repeat with an outlet on that phase.
+   The three clamps are one model on one ADC, so the factor from L3 serves all three. Without an outlet on L3, take the same steps on L1 or L2, where the kettle adds `I_k = P / (0.95 × U_in)` at the clamp: `U_in` is the input voltage on the stabilizer's display while the kettle boils, and 0.95 is the stabilizer's efficiency of about 96 % times its input power factor of 0.99. A factor from L1 or L2 is a few percent less certain than one from L3.
 
 7. Confirm the air conditioner's IR protocol from the receiver dump before teplo ever drives it. `teplo-ir-bedroom` assumes `midea_ir`: the Ballu BSYI-10HN8_V4 is probably a Midea OEM, and its remote has Follow Me. Open `http://teplo-ir-bedroom/`, point the original remote at the receiver from 30–50 cm and press On, Heat, 22 °C, Cool and Off, 3 s apart. Each press logs `Received …` lines. `Received Midea` confirms `midea_ir`, and `Received Coolix` calls for the `coolix` platform. Without either, ESPHome does not know the protocol: try the `ballu` platform, or replay the codes captured in the `Received Pronto` lines. Until the dump confirms the protocol, the climate controls on the node's page serve only to test that the unit answers.
 
