@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -25,16 +26,23 @@ from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewInputDTO,
     GetPanelOverviewOutputDTO,
     GetPanelOverviewUseCase,
+    LoadOverview,
     PlugOverview,
     SensorOverview,
     ZoneOverview,
     ZoneRegime,
 )
-from apps.power.domain.loads import LoadPhase
+from apps.power.domain.guard import GuardLoads, GuardState, ShedState
+from apps.power.domain.load_state import LoadState
+from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin, ShedReason
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
-from apps.power.factories import OutageFactory
+from apps.power.domain.shedding import Shed
+from apps.power.factories import LoadSettingsFactory, OutageFactory, PlugLoadFactory, ZoneLoadFactory
 from apps.power.models import Outage
+from apps.power.repositories.load import LoadRepository
+from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.guard_book import GuardBook
 from apps.power.services.outage_overloads import OutageOverloads
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 from apps.system.stubs import ClockStub
@@ -53,6 +61,17 @@ LEARNED_LEAD = timedelta(hours=2, minutes=40)
 EVENING_CUT = datetime(2026, 10, 28, 20, 24, tzinfo=MOSCOW)
 MARKED_CUT = EVENING_CUT - timedelta(days=1)
 NIGHT_CUT = datetime(2026, 10, 29, 3, 10, tzinfo=MOSCOW)
+GUARD_AT = 1000.0
+BOILER_SHED = Shed(
+    load='boiler-1f',
+    phase=LoadPhase.L2,
+    amps=Decimal('6.0'),
+    live=False,
+    reason=ShedReason.OVERLOAD,
+    was_on=True,
+    at=GUARD_AT,
+    settled_at=GUARD_AT + 5,
+)
 
 
 def _sensor(slug: str) -> Device:
@@ -90,10 +109,13 @@ def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPane
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=temperatures,
         book=book,
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -122,10 +144,13 @@ def f_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -144,10 +169,13 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=False),
         dry_run=False,
     )
@@ -169,10 +197,13 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -194,10 +225,13 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -214,10 +248,13 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -257,10 +294,13 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=plug_store,
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -325,10 +365,13 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=store,
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -349,10 +392,13 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -432,10 +478,13 @@ def f_outages_use_case() -> GetPanelOverviewUseCase:
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
         overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
+        guard_book=GuardBook(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -448,6 +497,109 @@ def overload_before_the_night_cut() -> None:
         subject='l2',
         payload={'phase': 'l2', 'amps': '26.4'},
         created_at=NIGHT_CUT - timedelta(minutes=1),
+    )
+
+
+@pytest.fixture
+def f_loads_use_case() -> GetPanelOverviewUseCase:
+    kitchen = ZoneFactory.create(slug='kitchen', name='Кухня', thermostat__slug='thermostat-kitchen', live_control=True)
+    hallway = ZoneFactory.create(slug='hallway', name='Прихожая', thermostat__slug='thermostat-hallway')
+    living_room = ZoneFactory.create(slug='living-room', name='Гостиная', thermostat__slug='thermostat-living-room')
+    PlugLoadFactory.create(
+        slug='boiler-1f',
+        name='Бойлер 1 этаж',
+        device__slug='plug-boiler-1f',
+        device__name='Бойлер 1 этаж',
+        priority=1,
+        phase=LoadPhase.L2,
+        nominal_amps=Decimal('6.0'),
+    )
+    PlugLoadFactory.create(
+        slug='boiler-2f',
+        name='Бойлер 2 этаж',
+        device__slug='plug-boiler-2f',
+        device__name='Бойлер 2 этаж',
+        priority=2,
+        learned_phase=LoadPhase.L3,
+        learned_amps=Decimal('6.4'),
+        learning_samples=3,
+        live=True,
+    )
+    ZoneLoadFactory.create(slug='hallway', name='Прихожая', zone=hallway, priority=4)
+    ZoneLoadFactory.create(slug='kitchen', name='Кухня', zone=kitchen, priority=5, live=True)
+    ZoneLoadFactory.create(
+        slug='living-room',
+        name='Гостиная',
+        zone=living_room,
+        priority=7,
+        phase=LoadPhase.L1,
+        nominal_amps=Decimal('8.0'),
+    )
+    LoadSettingsFactory.create(load_management_live=True)
+    thermostats = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
+    thermostats.record_state(
+        'thermostat-kitchen',
+        ThermostatState(
+            power=True,
+            mode=ThermostatMode.HOLD,
+            setpoint=Decimal('28.0'),
+            floor_temperature=Decimal('24.5'),
+            heating=True,
+            read_at=MORNING,
+        ),
+    )
+    thermostats.record_state(
+        'thermostat-living-room',
+        ThermostatState(
+            power=True,
+            mode=ThermostatMode.HOLD,
+            setpoint=Decimal('28.0'),
+            floor_temperature=Decimal('26.1'),
+            heating=None,
+            read_at=MORNING,
+        ),
+    )
+    thermostats.record_failure('thermostat-hallway', error_code='device_unavailable', error='timeout')
+    plugs = PlugStateStore(unavailable_after=timedelta(minutes=10))
+    for slug, on, current in (('plug-boiler-1f', True, '6.02'), ('plug-boiler-2f', False, '0.0')):
+        plugs.record_state(
+            slug,
+            PlugState(
+                on=on,
+                power_watts=Decimal('1305.4') if on else Decimal('0.0'),
+                current_amps=Decimal(current),
+                voltage_volts=Decimal('216.8'),
+                read_at=MORNING,
+            ),
+        )
+    guard_loads = GuardLoads(
+        records=tuple(LoadRepository.all_records()),
+        control=LoadSettingsRepository.control(),
+        live_zones=frozenset({'kitchen'}),
+        meter='phase-meter',
+        read_at=GUARD_AT,
+    )
+    guard_book = GuardBook()
+    guard_book.remember(
+        replace(GuardState.started(guard_loads, GUARD_AT), shedding=ShedState(sheds={'boiler-1f': BOILER_SHED})),
+    )
+    guard_book.note_waiting(frozenset({'kitchen'}))
+    return GetPanelOverviewUseCase(
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
+        outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
+        thermostat_store=thermostats,
+        plug_store=plugs,
+        temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
+        guard_book=guard_book,
+        clock=ClockStub(trusted=True),
+        dry_run=False,
     )
 
 
@@ -484,6 +636,7 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
             ),
         ),
         plugs=(),
+        loads=(),
         sensors=(),
         outdoor=None,
         standalone_sensors=(),
@@ -523,6 +676,7 @@ def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: Get
             ),
         ),
         plugs=(),
+        loads=(),
         sensors=(),
         outdoor=None,
         standalone_sensors=(),
@@ -778,3 +932,102 @@ def test_overview_notes_an_overload_journaled_right_before_a_cut(
         (f_outages[2].pk, PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('26.4'))),
         (f_outages[0].pk, None),
     ]
+
+
+def test_overview_lists_the_loads_by_priority_with_their_phase_current_and_state(
+    f_loads_use_case: GetPanelOverviewUseCase,
+) -> None:
+    output = f_loads_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert output.loads == (
+        LoadOverview(
+            slug='boiler-1f',
+            name='Бойлер 1 этаж',
+            kind=LoadKind.PLUG,
+            zone=None,
+            device='plug-boiler-1f',
+            priority=1,
+            phase=LoadPhase.L2,
+            phase_origin=PhaseOrigin.SET,
+            learned_phase=None,
+            learned_amps=None,
+            learning_samples=0,
+            nominal_amps=Decimal('6.0'),
+            amps=Decimal('6.0'),
+            amps_origin=AmpsOrigin.NOMINAL,
+            state=LoadState.SHED_DRY_RUN,
+            live=False,
+        ),
+        LoadOverview(
+            slug='boiler-2f',
+            name='Бойлер 2 этаж',
+            kind=LoadKind.PLUG,
+            zone=None,
+            device='plug-boiler-2f',
+            priority=2,
+            phase=LoadPhase.L3,
+            phase_origin=PhaseOrigin.LEARNED,
+            learned_phase=LoadPhase.L3,
+            learned_amps=Decimal('6.4'),
+            learning_samples=3,
+            nominal_amps=None,
+            amps=Decimal('6.4'),
+            amps_origin=AmpsOrigin.LEARNED,
+            state=LoadState.IDLE,
+            live=True,
+        ),
+        LoadOverview(
+            slug='hallway',
+            name='Прихожая',
+            kind=LoadKind.ZONE,
+            zone='hallway',
+            device='thermostat-hallway',
+            priority=4,
+            phase=LoadPhase.UNKNOWN,
+            phase_origin=PhaseOrigin.UNKNOWN,
+            learned_phase=None,
+            learned_amps=None,
+            learning_samples=0,
+            nominal_amps=None,
+            amps=Decimal('6.0'),
+            amps_origin=AmpsOrigin.DEFAULT,
+            state=LoadState.UNAVAILABLE,
+            live=False,
+        ),
+        LoadOverview(
+            slug='kitchen',
+            name='Кухня',
+            kind=LoadKind.ZONE,
+            zone='kitchen',
+            device='thermostat-kitchen',
+            priority=5,
+            phase=LoadPhase.UNKNOWN,
+            phase_origin=PhaseOrigin.UNKNOWN,
+            learned_phase=None,
+            learned_amps=None,
+            learning_samples=0,
+            nominal_amps=None,
+            amps=Decimal('6.0'),
+            amps_origin=AmpsOrigin.DEFAULT,
+            state=LoadState.WAITING,
+            live=True,
+        ),
+        LoadOverview(
+            slug='living-room',
+            name='Гостиная',
+            kind=LoadKind.ZONE,
+            zone='living-room',
+            device='thermostat-living-room',
+            priority=7,
+            phase=LoadPhase.L1,
+            phase_origin=PhaseOrigin.SET,
+            learned_phase=None,
+            learned_amps=None,
+            learning_samples=0,
+            nominal_amps=Decimal('8.0'),
+            amps=Decimal('8.0'),
+            amps_origin=AmpsOrigin.NOMINAL,
+            state=LoadState.DRAWING,
+            live=False,
+        ),
+    )

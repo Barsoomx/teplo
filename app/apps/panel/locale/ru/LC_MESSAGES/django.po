@@ -137,6 +137,56 @@ msgstr "%(voltage)s В"
 msgid "No connection. Check that the plug has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание розетки и Wi-Fi."
 
+msgid "Shedding order"
+msgstr "Очередь отключения"
+
+msgid "Priority"
+msgstr "Приоритет"
+
+#, python-format
+msgid "Phase %(phase)s, set"
+msgstr "Фаза %(phase)s, задана"
+
+#, python-format
+msgid "Phase %(phase)s, learned"
+msgstr "Фаза %(phase)s, выучена"
+
+msgid "Phase unknown"
+msgstr "Фаза неизвестна"
+
+#, python-format
+msgid "%(amps)s A, nominal"
+msgstr "%(amps)s А, номинал"
+
+#, python-format
+msgid "%(amps)s A, learned"
+msgstr "%(amps)s А, выучен"
+
+#, python-format
+msgid "%(amps)s A by default"
+msgstr "%(amps)s А по умолчанию"
+
+msgid "Drawing"
+msgstr "Потребляет"
+
+msgid "Idle"
+msgstr "Простаивает"
+
+msgid "Shed"
+msgstr "Отключена"
+
+msgid "Would be shed"
+msgstr "Была бы отключена"
+
+msgid "Waiting to start"
+msgstr "Ждёт включения"
+
+msgid "Would wait to start"
+msgstr "Ждала бы включения"
+
+msgid "No connection"
+msgstr "Нет связи"
+
 msgid "Phase currents"
 msgstr "Ток по фазам"
 

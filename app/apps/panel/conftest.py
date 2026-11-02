@@ -13,12 +13,15 @@ from apps.climate.domain.schedule import ScheduleTransition
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
+    LoadOverview,
     PlugOverview,
     SensorOverview,
     ZoneOverview,
     ZoneRegime,
 )
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO, PhaseCurrent, PhaseMeterOverview
+from apps.power.domain.load_state import LoadState
+from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 
@@ -108,6 +111,44 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
                 power_watts=None,
                 current_amps=None,
                 voltage_volts=None,
+            ),
+        ),
+        loads=(
+            LoadOverview(
+                slug='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                zone=None,
+                device='plug-boiler-1f',
+                priority=1,
+                phase=LoadPhase.L2,
+                phase_origin=PhaseOrigin.LEARNED,
+                learned_phase=LoadPhase.L2,
+                learned_amps=Decimal('6.6'),
+                learning_samples=3,
+                nominal_amps=Decimal('6.0'),
+                amps=Decimal('6.0'),
+                amps_origin=AmpsOrigin.NOMINAL,
+                state=LoadState.SHED_DRY_RUN,
+                live=False,
+            ),
+            LoadOverview(
+                slug='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                zone='kitchen',
+                device='thermostat-kitchen',
+                priority=5,
+                phase=LoadPhase.UNKNOWN,
+                phase_origin=PhaseOrigin.UNKNOWN,
+                learned_phase=None,
+                learned_amps=None,
+                learning_samples=0,
+                nominal_amps=None,
+                amps=Decimal('6.0'),
+                amps_origin=AmpsOrigin.DEFAULT,
+                state=LoadState.DRAWING,
+                live=True,
             ),
         ),
         sensors=(air_second_floor, air_kitchen, outdoor),

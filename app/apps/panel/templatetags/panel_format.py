@@ -13,7 +13,8 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.power.domain.loads import MEASURED_PHASES
+from apps.panel.usecases.get_panel_overview import LoadOverview
+from apps.power.domain.loads import MEASURED_PHASES, AmpsOrigin, PhaseOrigin
 from apps.power.domain.outage import OutageRecord
 from apps.system.domain.clock import ClockStatusCode
 
@@ -79,6 +80,16 @@ GUARD_OFF_UNREAD = gettext_lazy(
     '%(name)s: the second-floor guard would return the zone to its schedule (no second-floor reading)',
 )
 PHASE_LABELS = {phase.value: phase.value.upper() for phase in MEASURED_PHASES}
+LOAD_PHASES = {
+    PhaseOrigin.SET: gettext_lazy('Phase %(phase)s, set'),
+    PhaseOrigin.LEARNED: gettext_lazy('Phase %(phase)s, learned'),
+}
+UNKNOWN_LOAD_PHASE = gettext_lazy('Phase unknown')
+LOAD_AMPS = {
+    AmpsOrigin.NOMINAL: gettext_lazy('%(amps)s A, nominal'),
+    AmpsOrigin.LEARNED: gettext_lazy('%(amps)s A, learned'),
+    AmpsOrigin.DEFAULT: gettext_lazy('%(amps)s A by default'),
+}
 OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut: %(amps)s A')
 UNMEASURED_OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut')
 ANY_OVERLOAD_BEFORE_CUT = gettext_lazy('A phase was overloaded right before the cut')
@@ -249,6 +260,21 @@ def outage_overload_note(outage: OutageRecord) -> str:
         return str(UNMEASURED_OVERLOAD_BEFORE_CUT) % {'phase': phase}
 
     return str(OVERLOAD_BEFORE_CUT) % {'phase': phase, 'amps': amps}
+
+
+@register.filter
+def load_phase(load: LoadOverview) -> str:
+    template = LOAD_PHASES.get(load.phase_origin)
+    phase = PHASE_LABELS.get(load.phase)
+    if template is None or phase is None:
+        return str(UNKNOWN_LOAD_PHASE)
+
+    return str(template) % {'phase': phase}
+
+
+@register.filter
+def load_amps(load: LoadOverview) -> str:
+    return str(LOAD_AMPS[load.amps_origin]) % {'amps': floatformat(load.amps, 1)}
 
 
 def _air_state_kept(entry: TimelineEntry) -> bool:

@@ -29,6 +29,8 @@ from apps.panel.templatetags.panel_format import (
     duration,
     failure_note,
     icon,
+    load_amps,
+    load_phase,
     local_time,
     optimal_start_text,
     outage_overload_note,
@@ -37,7 +39,9 @@ from apps.panel.templatetags.panel_format import (
     second_floor_guard_text,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.power.domain.loads import LoadPhase
+from apps.panel.usecases.get_panel_overview import LoadOverview
+from apps.power.domain.load_state import LoadState
+from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 from apps.system.domain.clock import ClockStatusCode
 
@@ -69,6 +73,24 @@ AIR_CONTROL_PAYLOAD: dict[str, object] = {
     'early_stop_offset': '0.30',
     'lead_minutes': 140,
 }
+BOILER_LOAD = LoadOverview(
+    slug='boiler-1f',
+    name='Бойлер 1 этаж',
+    kind=LoadKind.PLUG,
+    zone=None,
+    device='plug-boiler-1f',
+    priority=1,
+    phase=LoadPhase.L2,
+    phase_origin=PhaseOrigin.LEARNED,
+    learned_phase=LoadPhase.L2,
+    learned_amps=Decimal('6.6'),
+    learning_samples=3,
+    nominal_amps=Decimal('6.0'),
+    amps=Decimal('6.0'),
+    amps_origin=AmpsOrigin.NOMINAL,
+    state=LoadState.DRAWING,
+    live=False,
+)
 
 
 def _entry(kind: str, payload: dict[str, object], name: str = 'Кухня') -> TimelineEntry:
@@ -454,3 +476,31 @@ def test_outage_overload_note_says_which_phase_was_overloaded_before_the_cut(
     expected: str,
 ) -> None:
     assert outage_overload_note(replace(OUTAGE, overload=overload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('load', 'expected'),
+    [
+        (BOILER_LOAD, ('Фаза L2, выучена', '6,0 А, номинал')),
+        (
+            replace(BOILER_LOAD, phase_origin=PhaseOrigin.SET, amps=Decimal('6.6'), amps_origin=AmpsOrigin.LEARNED),
+            ('Фаза L2, задана', '6,6 А, выучен'),
+        ),
+        (
+            replace(
+                BOILER_LOAD,
+                phase=LoadPhase.UNKNOWN,
+                phase_origin=PhaseOrigin.UNKNOWN,
+                amps_origin=AmpsOrigin.DEFAULT,
+            ),
+            ('Фаза неизвестна', '6,0 А по умолчанию'),
+        ),
+    ],
+    ids=['learned_phase_nominal_current', 'set_phase_learned_current', 'unknown_phase_default_current'],
+)
+def test_load_facts_say_where_the_phase_and_the_current_come_from(
+    load: LoadOverview,
+    expected: tuple[str, str],
+) -> None:
+    assert (load_phase(load), load_amps(load)) == expected

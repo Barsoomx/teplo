@@ -356,6 +356,27 @@ def test_dashboard_without_an_overload_before_the_cut_suggests_no_answer(
     ) == (False, False, 1, 1)
 
 
+def test_dashboard_lists_the_loads_in_shedding_order_with_their_phase_current_and_state(
+    f_russian_client: Client,
+    m_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    shedding = content[content.index('class="shedding"') :]
+    assert (
+        'Очередь отключения' in content,
+        shedding.count('class="shed-load"'),
+        shedding.index('Бойлер 1 этаж') < shedding.index('Кухня'),
+        ('Фаза L2, выучена' in shedding, '6,0 А, номинал' in shedding, 'Была бы отключена' in shedding),
+        ('Фаза неизвестна' in shedding, '6,0 А по умолчанию' in shedding, 'Потребляет' in shedding),
+        shedding.count('Наблюдение'),
+        m_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, 2, True, (True, True, True), (True, True, True), 1, 1, 1)
+
+
 def test_dashboard_without_unmarked_outages_asks_nothing(
     f_russian_client: Client,
     m_overview_use_case: MagicMock,
