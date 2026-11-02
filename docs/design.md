@@ -360,7 +360,7 @@ Diagnostic text never reaches the page. A failure or an untrusted clock is expla
 
 ## 11. Configuration and reuse
 
-- **Site app.** `sites/<name>/` is a Django app whose data migrations create zones, devices, schedules, tariffs, thresholds and the shedding priority. The active site is selected by setting. `sites/example` is the template.
+- **Site app.** `sites/<name>/` is a Django app whose data migrations create zones, devices, schedules, tariffs, thresholds and the shedding priority, link the air zones to their air sensors and fill the climate settings. The active site is selected by setting. `sites/example` is the template.
 - **Secrets file.** TOML on the router, default `/opt/etc/teplo/secrets.toml`:
 
 ```toml
