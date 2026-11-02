@@ -70,6 +70,39 @@ def starts_in_two_boots() -> None:
 
 
 @pytest.fixture
+def overloads_around_a_cut() -> None:
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l1',
+        payload={'phase': 'l1', 'amps': '25.1'},
+        created_at=NOW - timedelta(minutes=3),
+    )
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '26.4'},
+        created_at=NOW - timedelta(minutes=1),
+    )
+    JournalEntryFactory.create(
+        kind='phase_calm',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '17.2'},
+        created_at=NOW - timedelta(seconds=30),
+    )
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l3',
+        payload={'phase': 'l3', 'amps': '27.0'},
+        created_at=NOW + timedelta(seconds=1),
+    )
+
+
+@pytest.fixture
+def overload_without_an_object() -> None:
+    JournalEntryFactory.create(kind='phase_overload', subject='l2', payload=['l2'], created_at=NOW)
+
+
+@pytest.fixture
 def starts_beyond_one_query() -> None:
     for uptime in range(STARTS_PER_QUERY + 1):
         JournalEntryFactory.create(
@@ -83,6 +116,29 @@ def starts_beyond_one_query() -> None:
 
 def test_latest_returns_newest_first(f_entries: list[JournalEntry]) -> None:
     assert JournalRepository.latest(limit=1) == [f_entries[1]]
+
+
+@pytest.mark.usefixtures('overloads_around_a_cut')
+@pytest.mark.parametrize(
+    ('kind', 'since', 'expected'),
+    [
+        ('phase_overload', NOW - timedelta(minutes=2), {'phase': 'l2', 'amps': '26.4'}),
+        ('phase_overload', NOW - timedelta(seconds=30), None),
+        ('phase_calm', NOW - timedelta(minutes=2), {'phase': 'l2', 'amps': '17.2'}),
+    ],
+    ids=['newest_within_the_window', 'none_within_the_window', 'another_kind'],
+)
+def test_latest_payload_gives_the_newest_entry_of_a_kind_within_a_window(
+    kind: str,
+    since: datetime,
+    expected: dict[str, object] | None,
+) -> None:
+    assert JournalRepository.latest_payload(kind, since=since, until=NOW) == expected
+
+
+@pytest.mark.usefixtures('overload_without_an_object')
+def test_latest_payload_of_an_entry_without_an_object_is_empty() -> None:
+    assert JournalRepository.latest_payload('phase_overload', since=NOW - timedelta(minutes=2), until=NOW) == {}
 
 
 def test_last_activity_is_newest_entry_time(f_entries: list[JournalEntry]) -> None:
