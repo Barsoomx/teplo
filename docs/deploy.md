@@ -100,3 +100,68 @@ It prints `ok` once Telegram has accepted the message, and otherwise fails with 
 ssh -p 222 root@192.168.1.1 'ls -1t /opt/share/teplo/releases'
 ssh -p 222 root@192.168.1.1 'ln -sfn /opt/share/teplo/releases/<previous> /opt/share/teplo/current && /opt/etc/init.d/S90teplo restart'
 ```
+
+## ESPHome nodes
+
+The sensor nodes run ESPHome firmware built from `esphome/`: one configuration per node on top of the shared packages in `esphome/common/`.
+
+The seven ESP32-C3 SuperMini boards are wired alike, so the spare replaces any of them. 3.3 V feeds the sensors and 5 V only the IR LED. GPIO0 is SDA and GPIO1 SCL of the SHT30 at 0x44; GPIO10 is the DS18B20's 1-Wire line, pulled up by 4.7 kΩ; GPIO3 drives the IR LED through 4.7 kΩ into an S8050 base, the LED fed from 5 V through 100 Ω; GPIO4 reads the VS1838B receiver; GPIO8 is the on-board status LED. The phase meter is an ESP32 DevKit with the clamps L1, L2 and L3 on GPIO34, GPIO35 and GPIO32.
+
+| Node | Board | Publishes |
+|---|---|---|
+| `teplo-air-living-room`, `teplo-air-kitchen`, `teplo-air-hallway`, `teplo-air-second-floor` | ESP32-C3 SuperMini, SHT30 | `temperature`, `humidity` every 30 s |
+| `teplo-outdoor` | ESP32-C3 SuperMini, DS18B20 | `temperature` every 30 s |
+| `teplo-phase-meter` | ESP32 DevKit, three SCT-013-050 clamps | `l1_current`, `l2_current`, `l3_current` every second |
+| `teplo-ir-bedroom` | ESP32-C3 SuperMini, IR LED and receiver | air conditioner control |
+| `teplo-spare` | ESP32-C3 SuperMini | the same as an air node; without a sensor it logs the SHT30 as failed |
+
+Each node also publishes `wifi_signal` and `uptime`. A reading goes to the router's Mosquitto broker, not retained, on `teplo/<node>/sensor/<reading>/state`, as a decimal or `nan` when the read failed; `teplo/<node>/status` carries `online` and `offline`. A node keeps measuring while the broker is down and reconnects when it returns. The nodes have no ESPHome native API.
+
+1. Copy `esphome/secrets.example.yaml` to `esphome/secrets.yaml` and fill it in: the home Wi-Fi network in `wifi_ssid` and `wifi_password`; new passwords in `fallback_ap_password` (8 characters or more) and `ota_password`; the router's LAN address in `mqtt_broker`; the nodes' Mosquitto account in `mqtt_username` and `mqtt_password`. Git ignores `esphome/secrets.yaml` and `esphome/.esphome/`, so the values stay on the machine that builds.
+
+2. Compile every node, or the ones named:
+
+   ```sh
+   sh scripts/esphome.sh compile
+   sh scripts/esphome.sh compile teplo-air-kitchen
+   ```
+
+   The script builds in Docker with the ESPHome image it pins, keeps the toolchains and build trees in the Docker volumes `teplo-esphome-cache` and `teplo-esphome-build`, and copies each firmware to `esphome/.esphome/firmware/<node>.factory.bin`, printing the path. The first build downloads the ESP-IDF toolchains; later builds reuse them. `ESPHOME_JOBS` caps the parallel compile jobs, 3 by default. `sh scripts/esphome.sh config` validates the configurations without building. Under WSL with Docker Desktop, point the script at the Windows binary and at the Windows path of the checkout:
+
+   ```sh
+   export DOCKER='/mnt/c/Program Files/Docker/Docker/resources/bin/docker.exe'
+   export MOUNT_SOURCE="$(wslpath -w .)"
+   ```
+
+3. Flash a new board over USB the first time. Connect it with the 2 m data cable (a charge-only cable shows no port), open https://web.esphome.io in Chrome and press CONNECT. Pick `USB JTAG/serial debug unit` for a SuperMini or `USB-SERIAL CH340` for the DevKit, press INSTALL, choose the node's `.factory.bin` and agree to erase the board. No port, or the upload hangs at `Connecting…`: unplug a SuperMini and plug it back in with BOOT held; hold the DevKit's BOOT button for 2–3 s. LOGS then shows the node joining Wi-Fi and its first readings.
+
+4. Check each node at `http://<node>/`, e.g. `http://teplo-air-kitchen/`, or at `http://<node>.local/` or the address in the router's client list. The node serves the page itself, without files from the internet; it lists the readings and the log. A node that cannot join Wi-Fi for 90 s opens an access point named after itself, with `fallback_ap_password`; a phone that joins it gets a page that takes new Wi-Fi credentials.
+
+5. Update a node over the air from then on, by its address:
+
+   ```sh
+   sh scripts/esphome.sh upload teplo-air-kitchen 192.0.2.21
+   ```
+
+   `upload` builds the node first and authenticates with `ota_password`.
+
+6. Calibrate the phase meter with a kettle once the clamps sit on the phase conductors. The firmware starts from the clamps' nominal 50 A per volt (`multiply: 50`).
+
+   1. The kettle draws `I_k = P / U`: `P` from its label, `U` the mains voltage, 230 V or what a metered plug shows in the panel. A 2000 W kettle at 230 V draws 8.7 A.
+   2. Switch off large loads, open `http://teplo-phase-meter/` and switch the kettle on: the current of its phase rises.
+   3. On that phase, note the current just before the kettle starts, `I_off`, and while it boils, `I_on`.
+   4. In `esphome/teplo-phase-meter.yaml`, replace `- multiply: 50` on all three clamps with a line from 0 to the kettle: `(I_on − I_off) / 50` is the RMS voltage the kettle adds at the clamp, `I_k` its current. For a reading that rose from 0.90 A to 9.40 A with an 8.7 A kettle:
+
+      ```yaml
+      - calibrate_linear:
+          - 0.0 -> 0.0
+          - 0.170 -> 8.7
+      ```
+
+   5. Upload the phase meter and switch the kettle on again: its phase rises by `I_k`.
+
+   The three clamps are one model, so one kettle calibrates all three; for a clamp of its own, repeat with an outlet on that phase.
+
+7. Confirm the air conditioner's IR protocol from the receiver dump before teplo ever drives it. `teplo-ir-bedroom` assumes `midea_ir`: the Ballu BSYI-10HN8_V4 is probably a Midea OEM, and its remote has Follow Me. Open `http://teplo-ir-bedroom/`, point the original remote at the receiver from 30–50 cm and press On, Heat, 22 °C, Cool and Off, 3 s apart. Each press logs `Received …` lines. `Received Midea` confirms `midea_ir`, and `Received Coolix` calls for the `coolix` platform. Without either, ESPHome does not know the protocol: try the `ballu` platform, or replay the codes captured in the `Received Pronto` lines. Until the dump confirms the protocol, the climate controls on the node's page serve only to test that the unit answers.
+
+To replace a failed SuperMini node, wire the spare like it and flash the spare with that node's firmware; it takes over the node's name and topics.
