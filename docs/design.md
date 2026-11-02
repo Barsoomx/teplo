@@ -79,7 +79,7 @@ Every reading carries a timestamp. A device is **unavailable** after 10 minutes 
 
 DP 3 always reads `warming` and does not reflect the relay. DPs 104–117 are vendor-specific and unmapped; 116 is not a temperature. teplo keeps the thermostat in `hold` mode.
 
-- **Write budget:** one state change per zone per 30 minutes. Whether the device persists every write to flash is unknown, so writes stay rare. Dry-run journals at the same cadence on its own timestamp and does not spend the budget, so a zone switched to live control writes at the next cycle.
+- **Write budget:** one state change per zone per 30 minutes. Whether the device persists every write to flash is unknown, so writes stay rare. Dry-run journals at the same cadence on its own timestamp and does not spend the budget, so a zone switched to live control writes at the next cycle. Air mode in dry-run keeps its would-be changes 30 minutes apart on a third timestamp (section 6).
 
 ### Tuya plugs
 
@@ -148,7 +148,7 @@ One process on the router runs an asyncio runtime:
 - an alert job checks the state stores every minute and queues alerts, which a second job sends to Telegram (section 9);
 - uvicorn serves the Django ASGI app (panel and API) from the same loop;
 - use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
-- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox, outage backlog) is guarded by locks, the Tuya drivers serialize calls to each device, and the MQTT thread writes the sensor stores while jobs and the panel read them.
+- jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox, outage backlog, the heating cycle's control book) is guarded by locks, the Tuya drivers serialize calls to each device, and the MQTT thread writes the sensor stores while jobs and the panel read them.
 
 ```mermaid
 flowchart LR
@@ -185,23 +185,34 @@ Control policies in `climate/domain` and `power/domain` import nothing from Djan
 - **Air zone:** has an air sensor; teplo switches the floor to hold the room air at the target.
 - **Floor zone:** no air sensor; teplo sets the thermostat's floor setpoint from the schedule and the thermostat regulates itself.
 - A zone has one or more heat sources ordered by priority. v1 uses floor thermostats only; a heat pump can become the first source later with the floor as backup.
-- A zone's air sensor is a `temperature_sensor` device linked to the zone. The climate settings name the outdoor sensor and the second-floor sensor. Both come from the site data and are edited in the admin; no control reads them yet, and the panel shows their readings (section 10).
+- A zone's air sensor is a `temperature_sensor` device linked to the zone. The climate settings name the outdoor sensor and the second-floor sensor. Both come from the site data and are edited in the admin; the heating cycle reads the outdoor sensor for optimal start and the second-floor sensor for the second-floor guard, and the panel shows their readings (section 10).
+
+### Control paths
+
+Air control ships in dry-run: gates edited in the admin keep the thermostats on their floor-mode writes until the owner switches air control on, zone by zone. Every minute the heating cycle picks one path per zone:
+
+| Path | Zone | The thermostat follows |
+|---|---|---|
+| floor mode | a floor zone, or an air zone whose air sensor is unavailable | floor mode |
+| air mode | an air zone with `air_control_live` on and its air sensor available | air mode |
+| air mode in dry-run | an air zone with `air_control_live` off and its air sensor available | floor mode, while air mode journals what it would do |
+
+`air_control_live` is off by default. `TEPLO_DRY_RUN` and a zone's `live_control` gate every thermostat write on every path as before: a write they hold back is journaled as `zone_command_issued` with `dry_run` set, on its own 30-minute stamp. The second-floor guard has a gate of its own, `second_floor_guard_live` in the climate settings, off by default.
 
 ### Schedules and targets
 
-Weekly schedule per zone; each period selects a mode with a target.
+Weekly schedule per zone; each period selects a mode with a target. The air targets are set per zone.
 
 | Mode | Air target | Default period |
 |---|---|---|
 | comfort | 22.0 °C | 06:30–23:30 every day |
 | night | 19.5 °C | the rest |
 
-Overrides from the panel: `+/-` changes the target until the next period; **boost** holds the zone at its boost floor setpoint for 2 hours.
-Second-floor guard: if the second-floor air falls below 19 °C, Bathroom 2F heats at its comfort floor setpoint.
+Pre-heat, the lead before a comfort period, aims at the comfort target. Overrides from the panel: `+/-` changes the target until the next period; **boost** holds the zone at its boost floor setpoint for 2 hours.
 
 ### Floor mode
 
-Every zone carries three floor setpoints. A floor zone always runs in floor mode; an air zone runs in floor mode while its air sensor is unavailable, which in stage 1 is always.
+Every zone carries a comfort, a night and a boost floor setpoint for floor mode, and an idle floor setpoint and a floor limit for air mode (see Actuation). A floor zone always runs in floor mode; an air zone runs in floor mode while its air sensor is unavailable or its air control is off.
 
 - comfort period and pre-heat: comfort floor setpoint;
 - night: night floor setpoint;
@@ -227,19 +238,16 @@ stateDiagram-v2
     comfort --> night: comfort period ends
 ```
 
-### Optimal start
-
-teplo starts heating early enough to reach the comfort target at the start of the comfort period.
-
-- Lead time = dead time + (target − current air) / heat-up rate.
-- The heat-up rate per zone is learned from past mornings as a function of the indoor-outdoor difference (exponential moving average per outdoor-temperature bucket).
-- Until a zone has 3 learned mornings the lead time is 3 hours. The lead time is capped at 4 hours.
-
 ### Regulation of air zones
 
-- Heat starts when air < target − 0.3 °C.
-- Heat stops when air ≥ target − early-stop offset. The offset is learned from the overshoot observed in the 2 hours after each stop; it starts at 0.3 °C.
-- Minimum 30 minutes between state changes of a zone.
+In air mode a zone is in one of two air states, heat or idle, decided every minute from its air sensor.
+
+- The air target is the comfort air target in the comfort period and in pre-heat, and the night air target at night.
+- Heat starts when air < target − start offset (0.3 °C, climate settings).
+- Heat stops when air ≥ target − early-stop offset. The offset is learned per zone (see Learning) and starts at the initial early-stop offset of the climate settings, 0.3 °C.
+- In between, the zone keeps its air state. A zone entering air mode, when its gate is switched on, its air sensor returns or teplo starts, starts idle unless the start condition holds.
+- Minimum 30 minutes between state changes of a zone: a change that needs a thermostat write waits for the zone's write budget (section 4), and until the write goes out, or is journaled while writes are held back, the zone keeps its previous state. A change that needs no write, as during a boost or while the zone is disabled, takes effect at once.
+- teplo keeps the air state of each zone in memory.
 
 ### Actuation
 
@@ -247,15 +255,53 @@ teplo starts heating early enough to reach the comfort target at the start of th
 |---|---|---|
 | heat | on | floor limit (default 30 °C) |
 | idle | on | idle floor setpoint (default 18 °C) |
+| boost | on | boost floor setpoint, whatever the air state |
 | shed | on | 5 °C |
 | disabled | off | unchanged |
 
-Idle is a raised floor minimum rather than off, so a dead controller leaves the house at no less than 18 °C on the floor.
+Idle is a raised floor minimum rather than off, so a dead controller leaves the house at no less than 18 °C on the floor. The idle floor setpoint, the floor limit and both air targets are set per zone, validated like the other setpoints; the reference house gives its air zones 18 °C, 30 °C, 22.0 °C and 19.5 °C.
+
+### Optimal start
+
+teplo starts heating early enough to reach the comfort target at the start of the comfort period.
+
+- Lead time = dead time + max(0, comfort air target − current air) / heat-up rate. The rate is the one learned for the 5 °C bucket of the current outdoor reading, or else the one of the nearest learned bucket, the colder one on a tie.
+- Until a zone has 3 learned mornings (climate settings), or without an air or an outdoor reading, the lead is the zone's fixed pre-heat lead, 3 hours by default. Every lead is capped at 4 hours (climate settings) and is never below the dead time.
+- Optimal start drives the pre-heat only of an air zone in air mode. Floor zones, and air zones in floor mode or in air mode in dry-run, keep their fixed lead.
+- The lead is computed every minute until the pre-heat starts; from then the start is held until the comfort period begins, so a room that warms faster than planned stays in pre-heat. teplo keeps the start in memory: a cycle after a restart computes it again from the room as it is, and a sensor that drops out and returns finds it held.
+- An untrusted clock pauses optimal start along with the schedules.
+
+### Learning
+
+Each zone keeps what it has learned in its own row (`ZoneLearning`), written at most once per stop and once per morning, so the flash sees few writes. Progress within a stop or a morning stays in memory: a restart loses only the stop or the morning in progress.
+
+- **Early-stop offset.** When heat stops in air mode and the write of the idle floor setpoint goes out live, teplo watches the air: the peak is the highest reading of the next 2 hours, or of the time until heat starts again if that comes sooner. The new offset is old + (peak − target), smoothed by an exponential moving average with alpha 0.3, rounded to 0.01 °C and kept within 0 and 1.5 °C. A stop teaches only under the target the zone last chose to heat for: a stop caused by a falling target, as at the end of the comfort period, teaches nothing, and neither does a stop in dry-run, because the floor keeps heating. A boost, a lost air sensor, the zone leaving live air mode or an untrusted clock drops the watch.
+- **Mornings.** A morning is the pre-heat that drives an air zone, observed from its first minute: the zone goes from night to pre-heat, both seen on a trusted clock, with its air sensor and the outdoor sensor available, its thermostat written live, heating enabled and no boost. Today's floor-mode pre-heat with its fixed lead counts as a morning: the floor is the heat source either way, at its comfort setpoint in floor mode and at its floor limit while air mode heats. So a zone learns while it runs in floor mode or in air mode in dry-run, and has its mornings when air control is switched on. The cycle samples the air every minute. The dead time lasts from the start of the pre-heat until the air has risen 0.1 °C; the rate is the rise after the dead time divided by the hours until the air reaches the comfort target or, short of it, until the comfort period starts. A morning is dropped when a sensor is lost, a boost starts, the zone stops heating on schedule or the pre-heat ends before the comfort period; one whose rise after the dead time is 0.2 °C or less teaches nothing. A learned morning moves the zone's dead time, and the rate of the bucket of the outdoor reading taken when the pre-heat started, by an exponential moving average with alpha 0.3, and counts the learned mornings. A pre-heat already running when teplo starts, or when its clock becomes trusted, is not a morning.
+
+### Second-floor guard
+
+The second floor has no heating of its own and warms from below and from Bathroom 2F, the guarded zone named in the climate settings.
+
+- The guard turns on when the second-floor sensor reads below 19.0 °C and releases at 19.0 + 0.3 °C or more; in between it keeps its state. The threshold, the hysteresis and the guarded zone come from the climate settings. A lost second-floor sensor, or no guarded zone, leaves the guard off and the zone on its schedule.
+- With `second_floor_guard_live` on, the guarded zone heats at least at its comfort floor setpoint, on whichever path drives it. The guard only raises: a zone already at its comfort or boost setpoint keeps it, and a disabled zone stays off. Its writes take the zone's write budget like any other.
+- teplo keeps the guard's state in memory; it starts off.
+
+### Dry-run journal
+
+The dry-run paths journal what they would do only when it changes, never every minute, as each journal entry is written to flash:
+
+| Entry | Written when | Payload |
+|---|---|---|
+| `air_control_dry_run` | the would-be air state or thermostat target of a zone in air mode in dry-run changes | air, target, schedule mode, would-be state, would-be power and setpoint, early-stop offset, and in pre-heat the lead in minutes |
+| `optimal_start_dry_run` | the pre-heat a zone in air mode in dry-run would use begins, once per morning | lead in minutes, would-be start, start of the fixed lead |
+| `second_floor_guard_dry_run` | the guard, with its gate off, would turn on or off | second-floor air, whether the guard would be on, the comfort floor setpoint it would hold |
+
+A zone in air mode in dry-run runs the air regulation and the optimal start of air mode on its own would-be state, so the journal shows what live air control would really do. Its would-be changes keep 30 minutes apart on a stamp of their own, `last_air_dry_run_at`, apart from the write stamp and `last_dry_run_at`; a change held back keeps the previous would-be state, as a held-back write keeps the live one, and a boost clears the stamp as it clears the write stamp. teplo keeps the last would-be state journaled and the would-be start in memory, so after a restart the next cycles journal them again. Each entry names the zone as its subject.
 
 ### Fallbacks
 
-- Air sensor unavailable: the zone runs in floor mode until the sensor returns.
-- Clock untrusted: schedules pause and every zone holds its comfort target.
+- Air sensor unavailable: the zone runs in floor mode until the sensor returns, then enters air mode again.
+- Clock untrusted: schedules pause and every zone holds its comfort target, the comfort floor setpoint in floor mode and the comfort air target in air mode.
 - Manual changes made on a thermostat or in a vendor app are reverted at the zone's next allowed write.
 
 ## 7. Load management
