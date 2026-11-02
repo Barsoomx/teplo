@@ -34,7 +34,10 @@ from apps.power.domain.events import (
     PhaseOverloaded,
     RestoreCause,
 )
+from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
+from apps.power.domain.meter_watch import MeterCondition
+from apps.power.domain.view import GuardView
 from apps.power.factories import PlugLoadFactory, ZoneLoadFactory
 from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.load_settings import LoadSettingsRepository
@@ -114,6 +117,16 @@ BATHROOM = replace(
 )
 BOILER_2F = replace(BOILER, slug='boiler-2f', name='Бойлер 2 этаж', device_slug='plug-boiler-2f', priority=2)
 LIVE_ZONES = frozenset({'kitchen', 'living-room', 'bathroom-1f'})
+KITCHEN_START = LoadStatus(
+    slug='kitchen',
+    kind=LoadKind.ZONE,
+    priority=5,
+    phase=LoadPhase.L2,
+    amps=Decimal('8.0'),
+    available=True,
+    drawing=False,
+    shed=False,
+)
 STORED_SHED = LiveShed(
     at=NOW - timedelta(hours=1),
     reason=ShedReason.OVERLOAD,
@@ -153,6 +166,7 @@ class House:
     loads: LoadStoreStub
     load_settings: LoadSettingsStoreStub
     boiler: SwitchablePlugStub
+    plug_provider: SwitchablePlugProviderStub
     zones: ZoneSwitchStub
     events: list[DomainEvent]
 
@@ -212,6 +226,7 @@ def _house(
     loads = LoadStoreStub(records=records, live_zones=live_zones, write_errors=write_errors)
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
+    plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler})
     zones = ZoneSwitchStub(error=None)
     book = GuardBook()
     return House(
@@ -231,7 +246,7 @@ def _house(
             ),
             shed=ShedPhaseLoadsUseCase(
                 loads=loads,
-                switcher=LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}), zones=zones),
+                switcher=LoadSwitcher(plugs=plug_provider, zones=zones),
                 book=book,
                 clock=clock,
                 dry_run=dry_run,
@@ -243,6 +258,7 @@ def _house(
         loads=loads,
         load_settings=load_settings,
         boiler=boiler,
+        plug_provider=plug_provider,
         zones=zones,
         events=events,
     )
@@ -385,6 +401,22 @@ def f_unknown_phase_house() -> House:
 @pytest.fixture
 def f_restarted_house() -> House:
     return _house([replace(BOILER, live=True, shed=STORED_SHED)], LIVE_CONTROL, frozenset(), boiler_on=False)
+
+
+@pytest.fixture
+def f_restarted_house_after_a_zone_start(f_restarted_house: House) -> House:
+    _seconds(f_restarted_house.guard, 110, '10.0')
+    f_restarted_house.book.permit_start(
+        KITCHEN_START,
+        meter=MeterCondition.FRESH,
+        view=GuardView(
+            currents={LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal('10.0'), LoadPhase.L3: Decimal('4.0')},
+            loads=(),
+        ),
+        at=START + 110,
+        thresholds=LIVE_CONTROL.thresholds,
+    )
+    return f_restarted_house
 
 
 @pytest.fixture
@@ -776,6 +808,18 @@ def test_shed_stored_before_a_restart_is_restored_by_the_same_rule(f_restarted_h
             ),
         ],
     )
+
+
+def test_plug_restore_waiting_for_a_start_permit_looks_its_plug_up_only_once_the_permit_is_due(
+    f_restarted_house_after_a_zone_start: House,
+) -> None:
+    outputs = _seconds(f_restarted_house_after_a_zone_start.guard, 30, '10.0')
+
+    assert (
+        _restored_at(outputs, 111),
+        f_restarted_house_after_a_zone_start.plug_provider.asked,
+        f_restarted_house_after_a_zone_start.book.last_permit_at(),
+    ) == ([(140, ('boiler-1f',))], ['plug-boiler-1f'], START + 140)
 
 
 def test_teplo_in_dry_run_switches_nothing_and_leaves_a_stored_shed_alone(f_teplo_dry_run_house: House) -> None:

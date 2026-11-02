@@ -97,8 +97,14 @@ class PlugProviderStub:
 class SwitchablePlugProviderStub:
     def __init__(self, plugs: dict[str, SwitchablePlug]) -> None:
         self._plugs = plugs
+        self._asked: list[str] = []
+
+    @property
+    def asked(self) -> list[str]:
+        return self._asked
 
     def switchable_plug(self, slug: str) -> SwitchablePlug:
+        self._asked.append(slug)
         if slug not in self._plugs:
             raise PlugNotSwitchableError(slug, 'no switching driver')
 

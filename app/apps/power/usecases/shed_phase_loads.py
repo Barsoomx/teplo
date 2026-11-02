@@ -310,6 +310,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             return shedding
 
         load = next(status for status in view.loads if status.slug == record.slug)
+        if record.kind is LoadKind.PLUG and not self._would_start(load, view, at, thresholds):
+            return shedding
+
         restored = shedding.with_times(replace(times, last_restore_at=at), live=live)
         if live:
             try:
@@ -324,8 +327,6 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
             logger.info('load_restored', load=record.slug)
             restored = _stored(restored, record.slug, None)
-        elif record.kind is LoadKind.PLUG and not self._would_start(load, view, at, thresholds):
-            return shedding
 
         self._event_store.add_event(
             _restore_event(
