@@ -734,6 +734,86 @@ def test_mode_seen_on_untrusted_clock_starts_no_morning(f_zone: ZoneSettings) ->
     assert follow_up.memory.mode is None
 
 
+@pytest.mark.parametrize(
+    ('mode', 'outcome', 'expected'),
+    [
+        (ScheduleMode.COMFORT, ZoneCycleOutcome.APPLIED, ScheduleMode.NIGHT),
+        (None, ZoneCycleOutcome.UNCHANGED, ScheduleMode.NIGHT),
+        (ScheduleMode.NIGHT, ZoneCycleOutcome.DEVICE_UNAVAILABLE, ScheduleMode.NIGHT),
+        (ScheduleMode.COMFORT, ZoneCycleOutcome.THROTTLED, ScheduleMode.COMFORT),
+        (None, ZoneCycleOutcome.DEVICE_UNAVAILABLE, None),
+        (None, ZoneCycleOutcome.FAILED, None),
+        (None, ZoneCycleOutcome.WAITING, None),
+        (None, ZoneCycleOutcome.SHED, None),
+    ],
+    ids=[
+        'night_written',
+        'night_already_held',
+        'night_held_before_the_thermostat_went_silent',
+        'comfort_kept_while_the_night_write_waits',
+        'untrusted_comfort_kept_while_the_thermostat_is_unavailable',
+        'untrusted_comfort_kept_while_the_night_write_fails',
+        'untrusted_comfort_kept_while_the_night_waits_for_a_permit',
+        'untrusted_comfort_kept_while_the_zone_is_shed',
+    ],
+)
+def test_night_counts_once_its_thermostat_takes_it(
+    f_zone: ZoneSettings,
+    mode: ScheduleMode | None,
+    outcome: ZoneCycleOutcome,
+    expected: ScheduleMode | None,
+) -> None:
+    memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=mode)
+
+    follow_up = _follow(f_zone, memory, _conditions('20.0'), _cycle(NIGHT), outcome)
+
+    assert follow_up.memory.mode is expected
+
+
+@pytest.fixture
+def comfort_held_on_untrusted_clock_memory(f_live_zone: ZoneSettings) -> ZoneMemory:
+    return _follow(
+        f_live_zone,
+        ZoneMemory(),
+        _conditions(None, learning=SLOW_LEARNED),
+        _cycle(PREHEAT_WRITE - timedelta(minutes=30), clock_trusted=False),
+        ZoneCycleOutcome.APPLIED,
+    ).memory
+
+
+@pytest.fixture
+def f_night_its_thermostat_never_took_memory(
+    f_live_zone: ZoneSettings,
+    comfort_held_on_untrusted_clock_memory: ZoneMemory,
+) -> ZoneMemory:
+    return _follow(
+        f_live_zone,
+        comfort_held_on_untrusted_clock_memory,
+        _conditions(None, learning=SLOW_LEARNED),
+        _cycle(SENSOR_BACK - timedelta(minutes=2)),
+        ZoneCycleOutcome.DEVICE_UNAVAILABLE,
+    ).memory
+
+
+def test_air_sensor_back_in_preheat_after_a_night_its_thermostat_never_took_starts_no_morning(
+    f_live_zone: ZoneSettings,
+    f_night_its_thermostat_never_took_memory: ZoneMemory,
+) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_night_its_thermostat_never_took_memory,
+        _conditions('20.0', learning=SLOW_LEARNED),
+        _cycle(SENSOR_BACK),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.memory.mode, follow_up.memory.morning, follow_up.memory.preheated_for) == (
+        ScheduleMode.PREHEAT,
+        None,
+        COMFORT_AT,
+    )
+
+
 def test_finished_morning_is_handed_over_once(f_zone: ZoneSettings, f_morning: Morning) -> None:
     memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.PREHEAT, morning=f_morning)
 

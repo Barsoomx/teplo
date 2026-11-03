@@ -2409,6 +2409,29 @@ def f_restart_in_air_mode_preheat_cycle(
     return _use_case(store, temperatures, capped_lead_thermostats, f_book, dispatcher)
 
 
+@pytest.fixture
+def f_untaken_night_cycle(
+    capped_lead_thermostats: dict[str, FloorThermostat],
+    clock: MonotonicClockStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    clock.advance(STALE.total_seconds())
+    store.record_state(KITCHEN, _state('22.0'))
+    _use_case(store, temperatures, capped_lead_thermostats, f_book, EventDispatcher()).execute(
+        _at(CAPPED_START - timedelta(minutes=20), clock_trusted=False),
+    )
+    clock.advance(STALE.total_seconds())
+    _use_case(store, temperatures, capped_lead_thermostats, f_book, EventDispatcher()).execute(
+        _at(CAPPED_START + timedelta(minutes=14)),
+    )
+    store.record_state(KITCHEN, _state('28.0'))
+    _read(temperatures, {'air-kitchen': '19.4', 'outdoor': '-3.4'})
+    return _use_case(store, temperatures, capped_lead_thermostats, f_book, dispatcher)
+
+
 def test_air_sensor_back_in_preheat_starts_no_second_morning_for_its_comfort_start(
     f_air_sensor_flap_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
@@ -2475,6 +2498,26 @@ def test_air_sensor_back_in_preheat_starts_morning_missed_at_its_start(
             outdoor=Decimal('-3.4'),
             samples=(AirSample(at=now, air=Decimal('19.4')),),
         ),
+    )
+
+
+def test_air_sensor_back_in_preheat_after_a_night_its_thermostat_never_took_starts_no_morning(
+    f_untaken_night_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_book: ControlBook,
+) -> None:
+    output = f_untaken_night_cycle.execute(_at(CAPPED_START + timedelta(minutes=16)))
+
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        f_book.zone('kitchen').morning,
+        f_book.zone('kitchen').preheated_for,
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0')), ('setpoint', Decimal('30.0'))],
+        None,
+        COMFORT_AT,
     )
 
 

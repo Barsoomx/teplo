@@ -136,11 +136,26 @@ def _kept_memory(
 ) -> ZoneMemory:
     return ZoneMemory(
         path=decision.path,
-        mode=decision.mode if cycle.clock_trusted else None,
+        mode=_mode_followed(memory, decision, outcome, cycle),
         would_be_target=_would_be_target(zone, memory, decision, outcome),
         preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
         preheated_for=None if reading is None else note_preheat(reading),
     )
+
+
+def _mode_followed(
+    memory: ZoneMemory,
+    decision: ZoneDecision,
+    outcome: ZoneCycleOutcome,
+    cycle: CycleConditions,
+) -> ScheduleMode | None:
+    if not cycle.clock_trusted:
+        return None
+
+    if decision.mode is ScheduleMode.NIGHT and outcome not in FOLLOWED:
+        return memory.mode
+
+    return decision.mode
 
 
 def _would_be_target(
