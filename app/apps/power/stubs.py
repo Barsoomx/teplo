@@ -1,9 +1,11 @@
+from collections.abc import Collection, Mapping
 from dataclasses import replace
 from datetime import datetime
 
 from apps.core.domain.errors import DomainError
 from apps.devices.domain.kinds import DeviceKind
 from apps.power.domain.control import LoadControl
+from apps.power.domain.load_config import LoadConfig, LoadConfigRecord, LoadSettingsConfig, LoadSettingsRecord
 from apps.power.domain.loads import LearnedPhase, LiveShed, LoadRecord
 
 JournalLine = tuple[str, str, dict[str, object], datetime]
@@ -179,3 +181,35 @@ class PermitStub:
     def __call__(self) -> bool:
         self._asked += 1
         return self._granted
+
+
+class LoadSettingsConfigStoreStub:
+    def __init__(self, record: LoadSettingsRecord) -> None:
+        self._record = record
+        self._saved: list[tuple[LoadSettingsConfig, tuple[str, ...]]] = []
+
+    @property
+    def saved(self) -> list[tuple[LoadSettingsConfig, tuple[str, ...]]]:
+        return self._saved
+
+    def config_record(self) -> LoadSettingsRecord:
+        return self._record
+
+    def save_config(self, config: LoadSettingsConfig, fields: Collection[str]) -> None:
+        self._saved.append((config, tuple(fields)))
+
+
+class LoadConfigStoreStub:
+    def __init__(self, records: list[LoadConfigRecord]) -> None:
+        self._records = records
+        self._saved: list[dict[str, LoadConfig]] = []
+
+    @property
+    def saved(self) -> list[dict[str, LoadConfig]]:
+        return self._saved
+
+    def config_records(self) -> list[LoadConfigRecord]:
+        return list(self._records)
+
+    def save_configs(self, configs: Mapping[str, LoadConfig]) -> None:
+        self._saved.append(dict(configs))

@@ -7,6 +7,8 @@ from django.db import IntegrityError
 
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
+from apps.power.domain.errors import LoadNotFoundError
+from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LearnedPhase, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.factories import PlugLoadFactory, ZoneLoadFactory
 from apps.power.models import Load
@@ -100,6 +102,35 @@ def zone_under_live_control_without_a_load() -> Zone:
     return ZoneFactory.create(slug='living-room', live_control=True)
 
 
+@pytest.fixture
+def f_loads() -> list[Load]:
+    return [
+        PlugLoadFactory.create(
+            slug='boiler-1f',
+            name='Бойлер 1 этаж',
+            priority=1,
+            nominal_amps=Decimal('6.0'),
+            live=True,
+        ),
+        ZoneLoadFactory.create(slug='kitchen', name='Кухня', zone__slug='kitchen', priority=2, phase=LoadPhase.L2),
+        ZoneLoadFactory.create(slug='hallway', name='Прихожая', zone__slug='hallway', priority=3),
+    ]
+
+
+@pytest.fixture
+def f_boiler_shed_after_learning(f_loads: list[Load]) -> Load:
+    Load.objects.filter(pk=f_loads[0].pk).update(
+        shed_at=SHED_AT,
+        shed_reason=ShedReason.OVERLOAD,
+        shed_phase=LoadPhase.L3,
+        shed_was_on=True,
+        learned_phase=LoadPhase.L3,
+        learned_amps=Decimal('8.4'),
+        learning_samples=4,
+    )
+    return f_loads[0]
+
+
 @pytest.mark.usefixtures('f_kitchen', 'boiler')
 def test_all_records_list_loads_by_priority_with_the_device_each_controls() -> None:
     assert LoadRepository.all_records() == [BOILER, KITCHEN]
@@ -178,3 +209,105 @@ def test_database_refuses_a_priority_taken_or_below_one(priority: int) -> None:
 def test_database_refuses_a_second_load_of_one_zone(f_kitchen: Load) -> None:
     with pytest.raises(IntegrityError):
         ZoneLoadFactory.create(zone=f_kitchen.zone, priority=6)
+
+
+def test_config_records_list_the_loads_by_priority_with_their_gate(f_loads: list[Load]) -> None:
+    boiler, kitchen, hallway = f_loads
+
+    assert LoadRepository.config_records() == [
+        LoadConfigRecord(
+            id=boiler.pk,
+            slug='boiler-1f',
+            name='Бойлер 1 этаж',
+            kind=LoadKind.PLUG,
+            config=LoadConfig(priority=1, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+            live=True,
+        ),
+        LoadConfigRecord(
+            id=kitchen.pk,
+            slug='kitchen',
+            name='Кухня',
+            kind=LoadKind.ZONE,
+            config=LoadConfig(priority=2, phase=LoadPhase.L2, nominal_amps=None),
+            live=False,
+        ),
+        LoadConfigRecord(
+            id=hallway.pk,
+            slug='hallway',
+            name='Прихожая',
+            kind=LoadKind.ZONE,
+            config=LoadConfig(priority=3, phase=LoadPhase.UNKNOWN, nominal_amps=None),
+            live=False,
+        ),
+    ]
+
+
+@pytest.mark.usefixtures('f_loads')
+def test_saved_configs_swap_two_priorities() -> None:
+    LoadRepository.save_configs(
+        {
+            'boiler-1f': LoadConfig(priority=2, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+            'kitchen': LoadConfig(priority=1, phase=LoadPhase.L2, nominal_amps=None),
+        },
+    )
+
+    assert list(Load.objects.order_by('priority').values_list('slug', 'priority')) == [
+        ('kitchen', 1),
+        ('boiler-1f', 2),
+        ('hallway', 3),
+    ]
+
+
+@pytest.mark.usefixtures('f_loads')
+def test_saved_configs_rotate_three_priorities() -> None:
+    LoadRepository.save_configs(
+        {
+            'boiler-1f': LoadConfig(priority=3, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+            'kitchen': LoadConfig(priority=1, phase=LoadPhase.L2, nominal_amps=None),
+            'hallway': LoadConfig(priority=2, phase=LoadPhase.UNKNOWN, nominal_amps=None),
+        },
+    )
+
+    assert list(Load.objects.order_by('priority').values_list('slug', 'priority')) == [
+        ('kitchen', 1),
+        ('hallway', 2),
+        ('boiler-1f', 3),
+    ]
+
+
+def test_saved_config_sets_phase_and_current_and_keeps_the_gate_the_shed_and_learning(
+    f_boiler_shed_after_learning: Load,
+) -> None:
+    LoadRepository.save_configs({'boiler-1f': LoadConfig(priority=1, phase=LoadPhase.L1, nominal_amps=None)})
+
+    boiler = Load.objects.get(pk=f_boiler_shed_after_learning.pk)
+    assert (
+        boiler.phase,
+        boiler.nominal_amps,
+        boiler.live,
+        (boiler.shed_at, boiler.shed_reason, boiler.shed_phase, boiler.shed_was_on),
+        (boiler.learned_phase, boiler.learned_amps, boiler.learning_samples),
+    ) == (
+        'l1',
+        None,
+        True,
+        (SHED_AT, 'overload', 'l3', True),
+        ('l3', Decimal('8.4'), 4),
+    )
+
+
+@pytest.mark.usefixtures('f_loads')
+def test_saving_a_load_that_is_gone_raises_and_changes_nothing() -> None:
+    with pytest.raises(LoadNotFoundError):
+        LoadRepository.save_configs(
+            {
+                'kitchen': LoadConfig(priority=4, phase=LoadPhase.L2, nominal_amps=None),
+                'attic': LoadConfig(priority=5, phase=LoadPhase.UNKNOWN, nominal_amps=None),
+            },
+        )
+
+    assert list(Load.objects.order_by('priority').values_list('slug', 'priority')) == [
+        ('boiler-1f', 1),
+        ('kitchen', 2),
+        ('hallway', 3),
+    ]
