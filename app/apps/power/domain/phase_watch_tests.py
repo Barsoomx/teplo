@@ -13,6 +13,7 @@ from apps.power.domain.phase_watch import (
     PhaseWatch,
     PhaseWatchStep,
     calm_phases,
+    calming_phases,
     overloaded_phases,
     shed_due,
     watch_phase,
@@ -312,6 +313,22 @@ def test_calm_phases_leave_out_a_phase_gone_silent() -> None:
     watches = {LoadPhase.L1: PhaseWatch(live=OverloadWatch(calm_since=100.0), silent_since=200.0)}
 
     assert calm_phases(watches, 300.0, THRESHOLDS, live=True) == frozenset()
+
+
+def test_calming_phases_are_those_at_or_below_the_restore_threshold_in_the_view_silent_or_not() -> None:
+    watches = {
+        LoadPhase.L1: PhaseWatch(live=OverloadWatch(calm_since=100.0)),
+        LoadPhase.L2: PhaseWatch(dry_run=OverloadWatch(calm_since=150.0), silent_since=200.0),
+        LoadPhase.L3: PhaseWatch(),
+    }
+
+    assert (
+        calming_phases(watches, live=True),
+        calming_phases(watches, live=False),
+    ) == (
+        frozenset({LoadPhase.L1}),
+        frozenset({LoadPhase.L2}),
+    )
 
 
 def test_overloaded_phases_are_those_overloaded_in_the_view() -> None:

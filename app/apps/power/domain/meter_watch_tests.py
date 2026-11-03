@@ -63,6 +63,8 @@ KITCHEN_SHED = Shed(
 HALLWAY_SHED = replace(KITCHEN_SHED, load='hallway', phase=LoadPhase.L1)
 BATHROOM_1F_SHED = replace(KITCHEN_SHED, load='bathroom-1f', amps=Decimal('6.0'))
 BOILER_SHED = replace(KITCHEN_SHED, load='boiler-1f', phase=LoadPhase.L1, amps=Decimal('6.0'), was_on=True)
+LIMP_KITCHEN_SHED = replace(KITCHEN_SHED, reason=ShedReason.METER_LOST)
+EVERY_PHASE = frozenset({LoadPhase.L1, LoadPhase.L2, LoadPhase.L3})
 
 
 @pytest.fixture
@@ -143,6 +145,7 @@ def _limp_restore(
     last_restore_at: float | None = None,
     *,
     calm: frozenset[LoadPhase] = frozenset(),
+    calming: frozenset[LoadPhase] = EVERY_PHASE,
     overloaded: frozenset[LoadPhase] = frozenset(),
     currents: dict[LoadPhase, Decimal] | None = None,
 ) -> Shed | None:
@@ -150,6 +153,7 @@ def _limp_restore(
         sheds,
         loads,
         calm=calm,
+        calming=calming,
         overloaded=overloaded,
         currents={} if currents is None else currents,
         last_restore_at=last_restore_at,
@@ -213,6 +217,27 @@ def test_lost_meter_keeps_a_floor_off_while_the_phase_it_was_shed_for_went_silen
     expected: Shed | None,
 ) -> None:
     assert _limp_restore(sheds, [KITCHEN_OFF, HALLWAY_OFF], overloaded=overloaded) == expected
+
+
+@pytest.mark.parametrize(
+    ('shed', 'calming', 'expected'),
+    [
+        (KITCHEN_SHED, frozenset({LoadPhase.L2}), KITCHEN_SHED),
+        (KITCHEN_SHED, frozenset({LoadPhase.L1, LoadPhase.L3}), None),
+        (LIMP_KITCHEN_SHED, frozenset(), LIMP_KITCHEN_SHED),
+    ],
+    ids=[
+        'shed_for_an_overload_its_phase_read_calm',
+        'shed_for_an_overload_its_phase_read_above_the_restore_threshold',
+        'shed_by_limp_mode_whatever_its_phase_read',
+    ],
+)
+def test_lost_meter_brings_a_floor_shed_for_an_overload_back_only_if_its_phase_went_silent_calm(
+    shed: Shed,
+    calming: frozenset[LoadPhase],
+    expected: Shed | None,
+) -> None:
+    assert _limp_restore([shed], [KITCHEN_OFF], calming=calming) == expected
 
 
 @pytest.mark.parametrize(

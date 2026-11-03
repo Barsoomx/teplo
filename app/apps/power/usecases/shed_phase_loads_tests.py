@@ -1520,6 +1520,25 @@ def test_lost_meter_returns_a_floor_whose_overload_had_ended_once_no_other_floor
     )
 
 
+def test_lost_meter_keeps_an_overload_shed_floor_off_when_its_phase_went_silent_above_the_restore_threshold(
+    f_live_house_after_its_overload_ended: House,
+) -> None:
+    rising = _seconds(f_live_house_after_its_overload_ended.guard, 10, '19.0')
+    silent = _seconds(f_live_house_after_its_overload_ended.guard, 75, None)
+    _thermostat_read_off(f_live_house_after_its_overload_ended, 'thermostat-living-room', 215)
+    stopped = _seconds(f_live_house_after_its_overload_ended.guard, 61, None)
+
+    assert (
+        _restored_at(rising + silent + stopped, 131),
+        f_live_house_after_its_overload_ended.book.held_zones(),
+        f_live_house_after_its_overload_ended.events[3:],
+    ) == (
+        [],
+        frozenset({'kitchen'}),
+        [PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('15.0'), occurred_at=_moment(126))],
+    )
+
+
 def test_partly_lost_meter_returns_a_floor_only_once_the_phase_it_was_shed_for_calms_with_room(
     f_live_house_whose_third_clamp_went_silent: House,
 ) -> None:

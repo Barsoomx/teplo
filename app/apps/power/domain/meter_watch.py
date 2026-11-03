@@ -6,7 +6,7 @@ from enum import StrEnum
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.headroom import Currents
 from apps.power.domain.load_status import LoadStatus
-from apps.power.domain.loads import LoadKind, LoadPhase
+from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 from apps.power.domain.moments import elapsed, held
 from apps.power.domain.shedding import Shed
 
@@ -64,6 +64,7 @@ def choose_limp_restore(
     loads: Sequence[LoadStatus],
     *,
     calm: frozenset[LoadPhase],
+    calming: frozenset[LoadPhase],
     overloaded: frozenset[LoadPhase],
     currents: Currents,
     last_restore_at: float | None,
@@ -85,6 +86,7 @@ def choose_limp_restore(
                 shed,
                 statuses[shed.load].amps,
                 calm=calm,
+                calming=calming,
                 overloaded=overloaded,
                 currents=currents,
                 ceiling=thresholds.start_ceiling,
@@ -101,6 +103,7 @@ def _phase_allows_restore(
     amps: Decimal,
     *,
     calm: frozenset[LoadPhase],
+    calming: frozenset[LoadPhase],
     overloaded: frozenset[LoadPhase],
     currents: Currents,
     ceiling: Decimal,
@@ -108,4 +111,7 @@ def _phase_allows_restore(
     if shed.phase in currents:
         return shed.phase in calm and currents[shed.phase] + amps <= ceiling
 
-    return shed.phase not in overloaded
+    if shed.phase in overloaded:
+        return False
+
+    return shed.reason is not ShedReason.OVERLOAD or shed.phase in calming

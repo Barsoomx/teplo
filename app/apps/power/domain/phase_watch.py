@@ -128,6 +128,10 @@ def calm_phases(
     )
 
 
+def calming_phases(watches: Mapping[LoadPhase, PhaseWatch], *, live: bool) -> frozenset[LoadPhase]:
+    return frozenset(phase for phase, watch in watches.items() if watch.overload(live=live).calm_since is not None)
+
+
 def overloaded_phases(watches: Mapping[LoadPhase, PhaseWatch], *, live: bool) -> frozenset[LoadPhase]:
     return frozenset(phase for phase, watch in watches.items() if watch.overload(live=live).overloaded)
 
