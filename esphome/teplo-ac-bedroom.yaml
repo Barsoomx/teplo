@@ -1,0 +1,67 @@
+# Wi-Fi dongle for the Ballu BSYI-10HN8_V4 split in the second-floor bedroom, probably a Midea OEM: a Seeed XIAO
+# ESP32C3 with its U.FL antenna, on a USB-A plug in the unit's Wi-Fi slot, speaks the Midea UART protocol at 9600 8N1.
+# Plug pin 2 (D-) is the unit's 5 V TX, divided by 4.7 kΩ over 10 kΩ into D7 (GPIO20). D6 (GPIO21) drives an S8050
+# whose collector, pulled up by 10 kΩ to the unit's 5 V, feeds plug pin 3 (D+), the unit's RX, through 1 kΩ: the
+# transistor inverts, so the pin is inverted too. A Schottky diode passes the unit's 5 V to the board's 5V pin, which is
+# its USB-C VBUS. The unit's slot is rated for the vendor's 300 mA dongle, so the radio stays below full power.
+substitutions:
+  node_name: teplo-ac-bedroom
+  friendly_name: Bedroom air conditioner
+
+packages:
+  node: !include common/node.yaml
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_ENABLED: n
+
+wifi:
+  output_power: 15dB
+
+# The page can drive the air conditioner, so it asks for a login; the sensor nodes only show readings.
+web_server:
+  auth:
+    type: digest
+    username: !secret web_username
+    password: !secret web_password
+
+# The logger stays on the USB Serial/JTAG port, which leaves UART0 to the unit.
+uart:
+  tx_pin:
+    number: GPIO21
+    inverted: true
+  rx_pin: GPIO20
+  baud_rate: 9600
+
+climate:
+  - platform: midea
+    id: air_conditioner
+    name: Air conditioner
+    retain: false
+    # autoconf never adds FAN_ONLY, and without the unit's answer to it the entity would have no modes at all.
+    supported_modes:
+      - HEAT_COOL
+      - COOL
+      - HEAT
+      - DRY
+      - FAN_ONLY
+    outdoor_temperature:
+      name: Outdoor temperature
+      state_topic: teplo/${node_name}/sensor/outdoor_temperature/state
+      retain: false
+      qos: 0
+    power_usage:
+      name: Power usage
+      state_topic: teplo/${node_name}/sensor/power_usage/state
+      retain: false
+      qos: 0
+
+# Works over UART only when the unit reports light control; otherwise the component logs a warning and does nothing.
+button:
+  - platform: template
+    name: Display toggle
+    on_press:
+      - midea_ac.display_toggle:

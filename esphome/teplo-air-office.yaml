@@ -1,0 +1,12 @@
+# Second-floor office: SHT30 and an LD2410C radar on an ESP32 DevKit, wired like the bedroom node.
+substitutions:
+  node_name: teplo-air-office
+  friendly_name: Office air
+  i2c_sda: GPIO21
+  i2c_scl: GPIO22
+
+packages:
+  node: !include common/node.yaml
+  devkit: !include common/devkit.yaml
+  air: !include common/air.yaml
+  radar: !include common/radar.yaml

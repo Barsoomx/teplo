@@ -1,0 +1,85 @@
+# HLK-LD2410C 24 GHz radar on a UART at the module's 256000 baud, 8N1: TX to radar_rx, RX to radar_tx, VCC to the
+# board's 5 V, its OUT pin unused. Only presence reaches MQTT: 1 when the radar saw a person at some moment of the last
+# 30 s, 0 when it saw nobody, nan when it has sent no frame for 10 s. In the node's first minute presence waits for the
+# radar's first frame instead. The binary sensors show on the node's page for aiming the radar; state_topic: null keeps
+# them off MQTT.
+substitutions:
+  radar_rx: GPIO16
+  radar_tx: GPIO17
+
+uart:
+  id: radar_uart
+  rx_pin: ${radar_rx}
+  tx_pin: ${radar_tx}
+  baud_rate: 256000
+
+ld2410:
+  id: radar
+  uart_id: radar_uart
+
+globals:
+  - id: presence_seen
+    type: bool
+    initial_value: 'false'
+
+binary_sensor:
+  - platform: ld2410
+    has_target:
+      id: radar_target
+      name: Radar target
+      state_topic: null
+      # The first state after boot or after a timeout fires on_press too, so a person already in the room counts.
+      trigger_on_initial_state: true
+      # Every frame restarts the timeout, so 10 s without frames clears the state. It replaces the default settle
+      # filter and stays the only one: a deduplicating filter after it would drop the first frame after a gap.
+      filters:
+        - timeout: 10s
+      on_press:
+        - lambda: 'id(presence_seen) = true;'
+    has_moving_target:
+      name: Radar moving target
+      state_topic: null
+    has_still_target:
+      name: Radar still target
+      state_topic: null
+
+# Bluetooth is on from the factory with the password HiLink and lets a phone nearby reconfigure the radar. The switch
+# knows its state only once the radar has answered an info request, so the node asks for it first; switching it off
+# restarts the radar.
+switch:
+  - platform: ld2410
+    bluetooth:
+      id: radar_bluetooth
+
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - delay: 15s
+        - lambda: 'id(radar).read_all_info();'
+        - delay: 2s
+        - if:
+            condition:
+              switch.is_on: radar_bluetooth
+            then:
+              - switch.turn_off: radar_bluetooth
+
+sensor:
+  - platform: template
+    id: presence
+    name: Presence
+    accuracy_decimals: 0
+    update_interval: 30s
+    state_topic: teplo/${node_name}/sensor/presence/state
+    retain: false
+    qos: 0
+    lambda: |-
+      bool seen = id(presence_seen);
+      id(presence_seen) = false;
+      if (id(radar_target).has_state())
+        return (seen || id(radar_target).state) ? 1.0f : 0.0f;
+
+      if (millis() < 60000)
+        return {};
+
+      return NAN;

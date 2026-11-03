@@ -1,3 +1,4 @@
+# Second-floor bedroom: SHT30 and an LD2410C radar. The gate bridge joins later on GPIO32 and GPIO34 (docs/deploy.md).
 substitutions:
   node_name: teplo-air-second-floor
   friendly_name: Second floor air
@@ -8,3 +9,4 @@ packages:
   node: !include common/node.yaml
   devkit: !include common/devkit.yaml
   air: !include common/air.yaml
+  radar: !include common/radar.yaml
