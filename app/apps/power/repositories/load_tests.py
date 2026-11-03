@@ -99,6 +99,21 @@ def kitchen_handed_back_after_an_overload(f_kitchen: Load) -> Load:
 
 
 @pytest.fixture
+def loads_shed_by_a_release_that_stored_no_device(f_kitchen: Load, boiler: Load) -> None:
+    Load.objects.filter(pk=boiler.pk).update(
+        shed_at=SHED_AT,
+        shed_reason=ShedReason.OVERLOAD,
+        shed_phase=LoadPhase.L2,
+        shed_was_on=True,
+    )
+    Load.objects.filter(pk=f_kitchen.pk).update(
+        shed_at=SHED_AT,
+        shed_reason=ShedReason.OVERLOAD,
+        shed_phase=LoadPhase.L2,
+    )
+
+
+@pytest.fixture
 def kitchen_written_by_teplo(f_kitchen: Load) -> Load:
     Zone.objects.filter(slug='kitchen').update(last_command_at=SHED_AT)
     return f_kitchen
@@ -170,6 +185,14 @@ def test_stored_shed_of_a_zone_is_read_back_without_a_plug_state() -> None:
                 device='thermostat-kitchen',
             ),
         ),
+    ]
+
+
+@pytest.mark.usefixtures('loads_shed_by_a_release_that_stored_no_device')
+def test_shed_stored_without_its_device_is_read_as_switched_off_on_the_device_its_load_controls() -> None:
+    assert LoadRepository.all_records() == [
+        replace(BOILER, shed=OVERLOAD_SHED),
+        replace(KITCHEN, shed=replace(OVERLOAD_SHED, was_on=None, device='thermostat-kitchen')),
     ]
 
 

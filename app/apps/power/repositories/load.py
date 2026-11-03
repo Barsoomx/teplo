@@ -59,7 +59,7 @@ def _to_record(load: Load) -> LoadRecord | None:
         nominal_amps=load.nominal_amps,
         learned=_learned(load),
         live=load.live,
-        shed=_shed(load),
+        shed=_shed(load, device.slug),
         last_command_at=None if load.zone is None else load.zone.last_command_at,
     )
 
@@ -71,7 +71,7 @@ def _learned(load: Load) -> LearnedPhase | None:
     return LearnedPhase(phase=LoadPhase(load.learned_phase), amps=load.learned_amps, samples=load.learning_samples)
 
 
-def _shed(load: Load) -> LiveShed | None:
+def _shed(load: Load, device: str) -> LiveShed | None:
     if load.shed_at is None:
         return None
 
@@ -80,6 +80,6 @@ def _shed(load: Load) -> LiveShed | None:
         reason=ShedReason(load.shed_reason),
         phase=LoadPhase(load.shed_phase),
         was_on=load.shed_was_on,
-        device=load.shed_device,
+        device=load.shed_device or device,
         handed_back=load.shed_handed_back,
     )
