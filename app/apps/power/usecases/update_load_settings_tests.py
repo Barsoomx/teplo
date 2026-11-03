@@ -4,17 +4,22 @@ from decimal import Decimal
 from functools import partial
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
 from apps.core.stubs import SettingsRecorderStub, TransactionStub
 from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
+from apps.power.factories import LoadSettingsFactory
+from apps.power.models import LoadSettings
 from apps.power.stubs import LoadSettingsConfigStoreStub
 from apps.power.usecases.update_load_settings import (
     UpdateLoadSettingsInputDTO,
     UpdateLoadSettingsOutputDTO,
     UpdateLoadSettingsUseCase,
 )
+from apps.telemetry.models import JournalEntry
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 DEFAULTS = LoadSettingsConfig(
@@ -52,6 +57,11 @@ def f_load_settings() -> LoadSettingsConfigStoreStub:
 @pytest.fixture
 def f_recorder() -> SettingsRecorderStub:
     return SettingsRecorderStub(error=None)
+
+
+@pytest.fixture
+def f_stored_load_settings() -> LoadSettings:
+    return LoadSettingsFactory.create()
 
 
 @pytest.fixture
@@ -146,3 +156,19 @@ def test_shed_threshold_saved_after_another_save_raised_the_start_ceiling_is_wri
         (lowered, ('start_ceiling_amps', 'shed_amps')),
         lowered,
     )
+
+
+@pytest.mark.django_db
+def test_stored_load_settings_are_locked_before_they_are_read_and_their_change_is_journaled_in_one_transaction(
+    f_stored_load_settings: LoadSettings,
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        UpdateLoadSettingsUseCase.init().execute(replace(EDIT, shed_amps=Decimal('25.0')))
+
+    statements = [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]
+    assert (
+        statements[:3],
+        statements[-1],
+        LoadSettings.objects.get(pk=f_stored_load_settings.pk).shed_amps,
+        list(JournalEntry.objects.values_list('kind', 'subject')),
+    ) == (['SAVEPOINT', 'UPDATE', 'SELECT'], 'RELEASE', Decimal('25.0'), [('settings_changed', '')])

@@ -4,6 +4,8 @@ from decimal import Decimal
 from functools import partial
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
@@ -11,8 +13,11 @@ from apps.core.stubs import SettingsRecorderStub, TransactionStub
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LoadKind, LoadPhase
+from apps.power.factories import PlugLoadFactory
+from apps.power.models import Load
 from apps.power.stubs import LoadConfigStoreStub
 from apps.power.usecases.update_loads import LoadEdit, UpdateLoadsInputDTO, UpdateLoadsOutputDTO, UpdateLoadsUseCase
+from apps.telemetry.models import JournalEntry
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 BOILER = LoadConfig(priority=1, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0'))
@@ -41,6 +46,11 @@ def f_loads() -> LoadConfigStoreStub:
 @pytest.fixture
 def f_recorder() -> SettingsRecorderStub:
     return SettingsRecorderStub(error=None)
+
+
+@pytest.fixture
+def f_stored_boiler() -> Load:
+    return PlugLoadFactory.create(slug='boiler-1f', name='Бойлер 1 этаж', priority=1, nominal_amps=Decimal('6.0'))
 
 
 @pytest.fixture
@@ -199,3 +209,24 @@ def test_priority_another_save_took_meanwhile_is_refused_and_nothing_more_is_wri
         [{'hallway': replace(HALLWAY, priority=4)}],
         [],
     )
+
+
+@pytest.mark.django_db
+def test_stored_loads_are_locked_before_they_are_read_and_their_change_is_journaled_in_one_transaction(
+    f_stored_boiler: Load,
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        UpdateLoadsUseCase.init().execute(
+            UpdateLoadsInputDTO(
+                loads=(LoadEdit(slug='boiler-1f', config=replace(BOILER, nominal_amps=Decimal('6.5'))),),
+                now=NOW,
+            ),
+        )
+
+    statements = [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]
+    assert (
+        statements[:3],
+        statements[-1],
+        Load.objects.get(pk=f_stored_boiler.pk).nominal_amps,
+        list(JournalEntry.objects.values_list('kind', 'subject')),
+    ) == (['SAVEPOINT', 'UPDATE', 'SELECT'], 'RELEASE', Decimal('6.5'), [('settings_changed', 'boiler-1f')])

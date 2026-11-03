@@ -4,8 +4,12 @@ from decimal import Decimal
 from functools import partial
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
+from apps.climate.factories import ClimateSettingsFactory
+from apps.climate.models import ClimateSettings
 from apps.climate.stubs import ClimateConfigStoreStub
 from apps.climate.usecases.update_climate_settings import (
     UpdateClimateSettingsInputDTO,
@@ -15,6 +19,7 @@ from apps.climate.usecases.update_climate_settings import (
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
 from apps.core.stubs import SettingsRecorderStub, TransactionStub
+from apps.telemetry.models import JournalEntry
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 DEFAULTS = ClimateConfig(
@@ -46,6 +51,11 @@ def f_climate_settings() -> ClimateConfigStoreStub:
 @pytest.fixture
 def f_recorder() -> SettingsRecorderStub:
     return SettingsRecorderStub(error=None)
+
+
+@pytest.fixture
+def f_stored_climate_settings() -> ClimateSettings:
+    return ClimateSettingsFactory.create()
 
 
 @pytest.fixture
@@ -215,3 +225,19 @@ def test_band_saved_after_another_save_narrowed_the_start_offset_is_written_with
         (widened, ('air_start_offset', 'air_min_band')),
         widened,
     )
+
+
+@pytest.mark.django_db
+def test_stored_climate_settings_are_locked_before_they_are_read_and_their_change_is_journaled_in_one_transaction(
+    f_stored_climate_settings: ClimateSettings,
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        UpdateClimateSettingsUseCase.init().execute(replace(EDIT, air_min_band=Decimal('0.25')))
+
+    statements = [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]
+    assert (
+        statements[:3],
+        statements[-1],
+        ClimateSettings.objects.get(pk=f_stored_climate_settings.pk).air_min_band,
+        list(JournalEntry.objects.values_list('kind', 'subject')),
+    ) == (['SAVEPOINT', 'UPDATE', 'SELECT'], 'RELEASE', Decimal('0.25'), [('settings_changed', '')])
