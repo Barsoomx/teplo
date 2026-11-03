@@ -1,14 +1,23 @@
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from decimal import Decimal
 
 from apps.devices.domain.kinds import DeviceKind
-from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition, MonitoredDevice, ZoneHeating
+from apps.notifications.domain.alerts import (
+    AlertKey,
+    AlertKind,
+    AlertTransition,
+    MonitoredDevice,
+    PhaseAlarm,
+    ZoneHeating,
+)
 
 DEVICE_LOST_AFTER = timedelta(minutes=10)
 DEVICE_LOSS_CONFIRMED_AFTER = timedelta(minutes=2)
 LOSS_CONFIRMED_AFTER_BY_KIND = {DeviceKind.PHASE_METER: timedelta(minutes=1)}
 ZONE_OFF_AFTER = timedelta(minutes=35)
+PHASE_ALARM_RAISED_AFTER = timedelta(0)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -19,6 +28,7 @@ class Condition:
     failing: bool | None
     began_ago: timedelta | None
     raise_after: timedelta
+    amps: Decimal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -73,6 +83,18 @@ def zone_condition(zone: ZoneHeating) -> Condition:
         failing=_zone_off(zone),
         began_ago=None,
         raise_after=ZONE_OFF_AFTER,
+    )
+
+
+def phase_condition(alarm: PhaseAlarm) -> Condition:
+    return Condition(
+        key=AlertKey(kind=AlertKind.PHASE_OVERLOAD, subject=alarm.phase),
+        name=alarm.name,
+        device_kind=DeviceKind.PHASE_METER,
+        failing=alarm.alarmed,
+        began_ago=alarm.began_ago,
+        raise_after=PHASE_ALARM_RAISED_AFTER,
+        amps=alarm.amps,
     )
 
 

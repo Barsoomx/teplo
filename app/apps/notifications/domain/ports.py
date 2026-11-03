@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from apps.notifications.domain.alerts import MonitoredDevice, ZoneHeating
+from apps.notifications.domain.alerts import MonitoredDevice, PhaseAlarm, ZoneHeating
 from apps.power.domain.outage import OutageRecord, PowerCut
 
 
@@ -11,6 +11,10 @@ class DeviceSource(Protocol):
 
 class ZoneSource(Protocol):
     def zones(self, now: datetime, *, clock_trusted: bool) -> list[ZoneHeating]: ...
+
+
+class PhaseSource(Protocol):
+    def phases(self) -> list[PhaseAlarm]: ...
 
 
 class AlertSender(Protocol):

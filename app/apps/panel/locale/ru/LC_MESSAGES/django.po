@@ -137,6 +137,56 @@ msgstr "%(voltage)s В"
 msgid "No connection. Check that the plug has power and Wi-Fi."
 msgstr "Нет связи. Проверьте питание розетки и Wi-Fi."
 
+msgid "Shedding order"
+msgstr "Очередь отключения"
+
+msgid "Priority"
+msgstr "Приоритет"
+
+#, python-format
+msgid "Phase %(phase)s, set"
+msgstr "Фаза %(phase)s, задана"
+
+#, python-format
+msgid "Phase %(phase)s, learned"
+msgstr "Фаза %(phase)s, выучена"
+
+msgid "Phase unknown"
+msgstr "Фаза неизвестна"
+
+#, python-format
+msgid "%(amps)s A, nominal"
+msgstr "%(amps)s А, номинал"
+
+#, python-format
+msgid "%(amps)s A, learned"
+msgstr "%(amps)s А, выучен"
+
+#, python-format
+msgid "%(amps)s A by default"
+msgstr "%(amps)s А по умолчанию"
+
+msgid "Drawing"
+msgstr "Потребляет"
+
+msgid "Idle"
+msgstr "Простаивает"
+
+msgid "Shed"
+msgstr "Отключена"
+
+msgid "Would be shed"
+msgstr "Была бы отключена"
+
+msgid "Waiting to start"
+msgstr "Ждёт включения"
+
+msgid "Would wait to start"
+msgstr "Ждала бы включения"
+
+msgid "No connection"
+msgstr "Нет связи"
+
 msgid "Phase currents"
 msgstr "Ток по фазам"
 
@@ -146,6 +196,16 @@ msgstr "%(amps)s А"
 
 msgid "No fresh readings. Check that the phase meter has power and Wi-Fi."
 msgstr "Нет свежих показаний. Проверьте питание фазометра и Wi-Fi."
+
+#, python-format
+msgid "EV charging: %(amps)s A"
+msgstr "Электромобиль: %(amps)s А"
+
+msgid "Start ceiling"
+msgstr "Порог включения"
+
+msgid "Shed threshold"
+msgstr "Порог отключения"
 
 msgid "Power cuts"
 msgstr "Отключения света"
@@ -165,6 +225,17 @@ msgstr "Пропало в посёлке"
 
 msgid "Not sure"
 msgstr "Не знаю"
+
+#, python-format
+msgid "Phase %(phase)s was overloaded right before the cut: %(amps)s A"
+msgstr "Перед отключением фаза %(phase)s была перегружена: %(amps)s А"
+
+#, python-format
+msgid "Phase %(phase)s was overloaded right before the cut"
+msgstr "Перед отключением фаза %(phase)s была перегружена"
+
+msgid "A phase was overloaded right before the cut"
+msgstr "Перед отключением была перегрузка фазы"
 
 msgid "Sections"
 msgstr "Разделы"
@@ -295,6 +366,9 @@ msgstr "В файле секретов нет адреса и ключа это�
 msgid "The secrets file gives this plug a wrong address or protocol"
 msgstr "В файле секретов у этой розетки неверный адрес или протокол"
 
+msgid "The driver of this plug cannot switch it"
+msgstr "Драйвер этой розетки не умеет её переключать"
+
 msgid "No connection to the sensor"
 msgstr "Нет связи с датчиком"
 
@@ -383,3 +457,126 @@ msgstr "%(name)s: защита второго этажа вернула бы р�
 #, python-format
 msgid "%(name)s: the second-floor guard would return the zone to its schedule (no second-floor reading)"
 msgstr "%(name)s: защита второго этажа вернула бы расписание (нет показаний 2 этажа)"
+
+#, python-format
+msgid "Overload on phase %(phase)s: %(amps)s A"
+msgstr "Перегрузка фазы %(phase)s: %(amps)s А"
+
+#, python-format
+msgid "Overload on phase %(phase)s is over: %(amps)s A"
+msgstr "Перегрузка фазы %(phase)s прошла: %(amps)s А"
+
+#, python-format
+msgid "Phase %(phase)s: an EV seems to be charging, +%(amps)s A"
+msgstr "Фаза %(phase)s: похоже, заряжается электромобиль, +%(amps)s А"
+
+#, python-format
+msgid "Phase %(phase)s: the EV is no longer charging"
+msgstr "Фаза %(phase)s: электромобиль больше не заряжается"
+
+#, python-format
+msgid "%(name)s: switched the plug off"
+msgstr "%(name)s: выключил розетку"
+
+#, python-format
+msgid "%(name)s: switched the thermostat off"
+msgstr "%(name)s: выключил термостат"
+
+#, python-format
+msgid "%(name)s: would switch the plug off"
+msgstr "%(name)s: выключил бы розетку"
+
+#, python-format
+msgid "%(name)s: would switch the thermostat off"
+msgstr "%(name)s: выключил бы термостат"
+
+#, python-format
+msgid "%(name)s: switched the plug back on"
+msgstr "%(name)s: снова включил розетку"
+
+#, python-format
+msgid "%(name)s: handed the thermostat back to its schedule"
+msgstr "%(name)s: вернул термостат расписанию"
+
+#, python-format
+msgid "%(name)s: switched the thermostat back on"
+msgstr "%(name)s: снова включил термостат"
+
+#, python-format
+msgid "%(name)s: would switch the plug back on"
+msgstr "%(name)s: снова включил бы розетку"
+
+#, python-format
+msgid "%(name)s: would hand the thermostat back to its schedule"
+msgstr "%(name)s: вернул бы термостат расписанию"
+
+#, python-format
+msgid "Overload on phase %(phase)s"
+msgstr "Перегрузка фазы %(phase)s"
+
+msgid "No readings from the phase meter: one floor per phase"
+msgstr "Нет данных от фазометра: по одному полу на фазу"
+
+#, python-format
+msgid "Phase %(phase)s back to normal: %(amps)s A"
+msgstr "Фаза %(phase)s в норме: %(amps)s А"
+
+msgid "Phases back to normal"
+msgstr "Фазы в норме"
+
+msgid "Load management was switched in the settings"
+msgstr "Управление нагрузкой переключено в настройках"
+
+msgid "No readings from the phase meter: no other floor heats on this phase"
+msgstr "Нет данных от фазометра: на этой фазе не греет другой пол"
+
+#, python-format
+msgid "%(name)s: the plug was switched on by hand, the shed is dropped"
+msgstr "%(name)s: розетку включили вручную, отключение снято"
+
+#, python-format
+msgid "%(name)s: could not switch the plug off"
+msgstr "%(name)s: не удалось выключить розетку"
+
+#, python-format
+msgid "%(name)s: could not switch the plug back on"
+msgstr "%(name)s: не удалось снова включить розетку"
+
+#, python-format
+msgid "%(name)s: could not switch the thermostat off"
+msgstr "%(name)s: не удалось выключить термостат"
+
+#, python-format
+msgid "%(name)s: could not switch the thermostat back on"
+msgstr "%(name)s: не удалось снова включить термостат"
+
+#, python-format
+msgid "%(name)s: a load management command failed"
+msgstr "%(name)s: команда управления нагрузкой не прошла"
+
+#, python-format
+msgid "%(name)s: would put off switching on"
+msgstr "%(name)s: отложил бы включение"
+
+#, python-format
+msgid "Phase %(phase)s would reach %(amps)s A"
+msgstr "Фаза %(phase)s дошла бы до %(amps)s А"
+
+msgid "Another load has just started"
+msgstr "Другая нагрузка только что включилась"
+
+msgid "No fresh readings from the phase meter"
+msgstr "Нет свежих данных от фазометра"
+
+msgid "The phase meter is silent and another floor already heats on this phase"
+msgstr "Фазометр молчит, а на этой фазе уже греет другой пол"
+
+msgid "The phase meter is silent and the phase was overloaded when it went silent"
+msgstr "Фазометр молчит, а фаза замолчала перегруженной"
+
+msgid "The phase meter is silent and the phase was above the restore threshold when it went silent"
+msgstr "Фазометр молчит, а фаза замолчала выше порога возврата"
+
+#, python-format
+msgid "%(name)s: learned phase %(phase)s, %(amps)s A"
+msgstr "%(name)s: выучил фазу %(phase)s, %(amps)s А"

@@ -18,6 +18,7 @@ def f_hold_state() -> ThermostatState:
         mode=ThermostatMode.HOLD,
         setpoint=Decimal('22.0'),
         floor_temperature=Decimal('21.0'),
+        heating=True,
         read_at=datetime(2026, 10, 29, 2, 0, tzinfo=UTC),
     )
 

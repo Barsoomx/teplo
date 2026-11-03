@@ -1,6 +1,7 @@
-{% load i18n panel_format %}{% if plugs %}
+{% load i18n panel_format %}{% if plugs or loads %}
 <section class="loads" aria-labelledby="loads-title">
   <h2 class="loads-title" id="loads-title">{% translate 'Loads' %}</h2>
+  {% if plugs %}
   <div class="load-tiles">
     {% for plug in plugs %}
     <article class="load{% if not plug.available %} is-offline{% endif %}">
@@ -18,5 +19,24 @@
     </article>
     {% endfor %}
   </div>
+  {% endif %}
+  {% if loads %}
+  <h3 class="shedding-title" id="shedding-title">{% translate 'Shedding order' %}</h3>
+  <ol class="shedding" role="list" aria-labelledby="shedding-title">
+    {% for load in loads %}
+    <li class="shed-load{% if load.state == 'unavailable' %} is-offline{% endif %}">
+      <span class="shed-priority"><span class="visually-hidden">{% translate 'Priority' %} </span>{{ load.priority }}</span>
+      <div class="shed-body">
+        <p class="shed-name">{{ load.name }}</p>
+        <p class="shed-facts">{{ load|load_phase }} · {{ load|load_amps }}</p>
+      </div>
+      <p class="shed-chips">
+        {% include 'panel/_load_state.html' with state=load.state %}
+        {% if not load.live %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}
+      </p>
+    </li>
+    {% endfor %}
+  </ol>
+  {% endif %}
 </section>
 {% endif %}

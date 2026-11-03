@@ -1,4 +1,5 @@
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
@@ -14,10 +15,13 @@ from apps.panel.usecases.get_journal_timeline import (
     TimelineDay,
     TimelineEntry,
 )
-from apps.power.domain.outage import OutageCause, OutageRecord
-from apps.power.factories import OutageFactory
+from apps.power.domain.loads import LoadPhase
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
+from apps.power.factories import OutageFactory, PlugLoadFactory, ZoneLoadFactory
 from apps.power.models import Outage
+from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.outage_overloads import OutageOverloads
 from apps.telemetry.factories import JournalEntryFactory
 from apps.telemetry.repositories.journal import JournalRepository
 
@@ -47,7 +51,9 @@ def f_use_case() -> GetJournalTimelineUseCase:
         journal=JournalRepository(),
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        loads=LoadRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
     )
 
 
@@ -69,7 +75,9 @@ def f_plug_use_case() -> GetJournalTimelineUseCase:
         journal=JournalRepository(),
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        loads=LoadRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
     )
 
 
@@ -97,7 +105,51 @@ def f_outage_use_case(f_outage: Outage) -> GetJournalTimelineUseCase:
         journal=JournalRepository(),
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        loads=LoadRepository(),
         outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+    )
+
+
+@pytest.fixture
+def f_loads_use_case() -> GetJournalTimelineUseCase:
+    PlugLoadFactory.create(slug='boiler-1f', name='Бойлер 1 этаж', device__slug='plug-boiler-1f')
+    ZoneLoadFactory.create(slug='kitchen', name='Кухня', zone__slug='kitchen', zone__name='Кухня')
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '26.4'},
+        created_at=MORNING - timedelta(seconds=2),
+    )
+    JournalEntryFactory.create(
+        kind='load_shed_dry_run',
+        subject='boiler-1f',
+        payload={'load': 'boiler-1f', 'kind': 'plug'},
+        created_at=MORNING - timedelta(seconds=1),
+    )
+    JournalEntryFactory.create(
+        kind='load_command_failed',
+        subject='kitchen',
+        payload={'load': 'kitchen', 'command': 'shed'},
+        created_at=MORNING,
+    )
+    return GetJournalTimelineUseCase(
+        journal=JournalRepository(),
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        loads=LoadRepository(),
+        outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+    )
+
+
+@pytest.fixture
+def overload_before_the_cut() -> None:
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '26.4'},
+        created_at=CUT - timedelta(minutes=1),
     )
 
 
@@ -185,4 +237,25 @@ def test_timeline_carries_the_current_cause_of_a_journaled_power_outage(
             cause_marked_at=MORNING,
         ),
         None,
+    ]
+
+
+@pytest.mark.usefixtures('overload_before_the_cut')
+def test_timeline_notes_the_overload_journaled_right_before_a_power_outage(
+    f_outage_use_case: GetJournalTimelineUseCase,
+) -> None:
+    output = f_outage_use_case.execute(GetJournalTimelineInputDTO(limit=10))
+
+    assert [entry.outage.overload for day in output.days for entry in day.entries if entry.outage is not None] == [
+        PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('26.4')),
+    ]
+
+
+def test_timeline_names_a_load_and_the_kind_of_device_behind_it(f_loads_use_case: GetJournalTimelineUseCase) -> None:
+    output = f_loads_use_case.execute(GetJournalTimelineInputDTO(limit=10))
+
+    assert [(entry.subject, entry.subject_name, entry.device_kind) for day in output.days for entry in day.entries] == [
+        ('kitchen', 'Кухня', DeviceKind.THERMOSTAT),
+        ('boiler-1f', 'Бойлер 1 этаж', DeviceKind.PLUG),
+        ('l2', 'l2', None),
     ]

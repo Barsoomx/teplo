@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from unittest import mock
 from unittest.mock import MagicMock
 
@@ -13,7 +14,8 @@ from apps.panel.usecases.get_journal_timeline import (
     TimelineDay,
     TimelineEntry,
 )
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.domain.loads import LoadPhase
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 
 pytestmark = pytest.mark.django_db
 
@@ -25,6 +27,79 @@ CUT = MORNING - timedelta(minutes=40)
 CUT_PAYLOAD = {'began_at': '2026-10-29T05:20:00Z', 'ended_at': '2026-10-29T05:29:00Z'}
 NIGHT_CUT_PAYLOAD = {'outage_id': 8, 'began_at': '2026-10-28T21:50:00Z', 'ended_at': '2026-10-28T22:02:00Z'}
 ACTION = 'hx-post="/journal/outages/7/cause/"'
+COMMAND_DETAIL = 'Network Error: Device Unreachable'
+BOILER = {'load': 'boiler-1f', 'name': 'Бойлер 1 этаж', 'kind': 'plug'}
+KITCHEN = {'load': 'kitchen', 'name': 'Кухня', 'kind': 'zone'}
+GUARD_ENTRIES: tuple[tuple[str, str, DeviceKind | None, dict[str, object]], ...] = (
+    ('phase_overload', 'l2', None, {'phase': 'l2', 'amps': '26.4'}),
+    (
+        'load_shed_dry_run',
+        'boiler-1f',
+        DeviceKind.PLUG,
+        {**BOILER, 'phase': 'l2', 'amps': '26.4', 'load_amps': '6.0', 'reason': 'overload'},
+    ),
+    (
+        'load_shed',
+        'kitchen',
+        DeviceKind.THERMOSTAT,
+        {**KITCHEN, 'phase': 'l2', 'amps': '25.1', 'load_amps': '8.0', 'reason': 'overload'},
+    ),
+    (
+        'alert_raised',
+        'l2',
+        None,
+        {
+            'kind': 'phase_overload',
+            'subject': 'l2',
+            'name': 'L2',
+            'device_kind': 'phase_meter',
+            'since': '2026-10-29T05:00:00Z',
+            'amps': '31.27',
+        },
+    ),
+    (
+        'load_command_failed',
+        'boiler-1f',
+        DeviceKind.PLUG,
+        {**BOILER, 'command': 'restore', 'error': COMMAND_DETAIL, 'error_code': 'device_unavailable'},
+    ),
+    ('load_shed_overridden', 'boiler-1f', DeviceKind.PLUG, {**BOILER, 'phase': 'l2'}),
+    ('phase_calm', 'l2', None, {'phase': 'l2', 'amps': '17.2'}),
+    (
+        'alert_cleared',
+        'l2',
+        None,
+        {
+            'kind': 'phase_overload',
+            'subject': 'l2',
+            'name': 'L2',
+            'device_kind': 'phase_meter',
+            'since': '2026-10-29T05:00:00Z',
+            'amps': None,
+        },
+    ),
+    (
+        'load_restored',
+        'kitchen',
+        DeviceKind.THERMOSTAT,
+        {**KITCHEN, 'phase': 'l2', 'amps': '17.2', 'load_amps': '8.0', 'reason': 'overload', 'cause': 'calm'},
+    ),
+    (
+        'load_restored_dry_run',
+        'boiler-1f',
+        DeviceKind.PLUG,
+        {**BOILER, 'phase': 'l2', 'amps': None, 'load_amps': '6.0', 'reason': 'overload', 'cause': 'released'},
+    ),
+    (
+        'start_would_wait_dry_run',
+        'kitchen',
+        DeviceKind.THERMOSTAT,
+        {**KITCHEN, 'phase': 'l2', 'amps': '21.5', 'load_amps': '8.0', 'reason': 'no_headroom'},
+    ),
+    ('load_phase_learned', 'boiler-1f', DeviceKind.PLUG, {**BOILER, 'phase': 'l2', 'amps': '6.2', 'samples': 3}),
+    ('ev_charging_started', 'l3', None, {'phase': 'l3', 'amps': '16.0', 'before': '4.0'}),
+    ('ev_charging_stopped', 'l3', None, {'phase': 'l3', 'amps': '16.0', 'before': '4.0'}),
+)
 
 
 @pytest.fixture
@@ -345,6 +420,62 @@ def m_outage_timeline_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+@pytest.fixture
+def m_guard_timeline_use_case() -> Iterator[MagicMock]:
+    names = {'l2': 'l2', 'l3': 'l3', 'boiler-1f': 'Бойлер 1 этаж', 'kitchen': 'Кухня'}
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=tuple(
+                        TimelineEntry(
+                            kind=kind,
+                            subject=subject,
+                            subject_name=names[subject],
+                            device_kind=device_kind,
+                            payload=payload,
+                            created_at=MORNING - timedelta(minutes=minutes),
+                        )
+                        for minutes, (kind, subject, device_kind, payload) in enumerate(GUARD_ENTRIES)
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
+@pytest.fixture
+def m_overloaded_outage_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=(
+                        TimelineEntry(
+                            kind='power_outage',
+                            subject='',
+                            subject_name='',
+                            device_kind=None,
+                            payload={'outage_id': 7, **CUT_PAYLOAD},
+                            created_at=MORNING,
+                            outage=OutageRecord(
+                                id=7,
+                                began_at=CUT,
+                                ended_at=CUT + timedelta(minutes=9),
+                                cause=OutageCause.UNMARKED,
+                                cause_marked_at=None,
+                                overload=PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('26.4')),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
 def test_journal_describes_entries_in_words(f_client: Client, m_timeline_use_case: MagicMock) -> None:
     response = f_client.get('/journal/')
 
@@ -462,6 +593,63 @@ def test_journal_shows_a_power_outage_with_its_cause_and_the_answers_to_change_i
         '/journal/outages/8/cause/' in content,
         m_outage_timeline_use_case.init.call_count,
     ) == (True, True, 3, True, True, True, False, 1)
+
+
+def test_journal_words_what_load_management_saw_and_did(
+    f_russian_client: Client,
+    m_guard_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        [
+            text in content
+            for text in (
+                'Перегрузка фазы L2: 26,4 А',
+                'Бойлер 1 этаж: выключил бы розетку',
+                'Кухня: выключил термостат',
+                'Перегрузка фазы L2: 25,1 А',
+                'Фаза L2 перегружена: 31,3 А',
+                'Бойлер 1 этаж: не удалось снова включить розетку',
+                'Нет связи с розеткой',
+                'Бойлер 1 этаж: розетку включили вручную, отключение снято',
+                'Перегрузка фазы L2 прошла: 17,2 А',
+                'Фаза L2 снова в норме',
+                'Кухня: вернул термостат расписанию',
+                'Фаза L2 в норме: 17,2 А',
+                'Бойлер 1 этаж: снова включил бы розетку',
+                'Управление нагрузкой переключено в настройках',
+                'Кухня: отложил бы включение',
+                'Фаза L2 дошла бы до 21,5 А',
+                'Бойлер 1 этаж: выучил фазу L2, 6,2 А',
+                'Фаза L3: похоже, заряжается электромобиль, +16,0 А',
+                'Фаза L3: электромобиль больше не заряжается',
+            )
+        ],
+        content.count('Перегрузка фазы L2: 26,4 А'),
+        (content.count(COMMAND_DETAIL), f'title="{COMMAND_DETAIL}"' in content),
+        'неизвестное событие' in content.lower(),
+        m_guard_timeline_use_case.init.call_count,
+    ) == ([True] * 19, 2, (1, True), False, 1)
+
+
+def test_journal_says_an_overload_preceded_a_power_outage_and_puts_its_answer_forward(
+    f_russian_client: Client,
+    m_overloaded_outage_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        'Перед отключением фаза L2 была перегружена: 26,4 А' in content,
+        'Причина не отмечена' in content,
+        content.count('class="answer answer-suggested"'),
+        'aria-describedby="outage-7-overload"' in content,
+        'id="outage-7-overload"' in content,
+        'aria-pressed' in content,
+        m_overloaded_outage_timeline_use_case.init.call_count,
+    ) == (True, True, 1, True, True, False, 1)
 
 
 def test_journal_redirects_anonymous_to_login(f_anonymous_client: Client) -> None:

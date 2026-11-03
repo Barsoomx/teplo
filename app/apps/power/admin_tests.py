@@ -1,16 +1,30 @@
+from datetime import UTC, datetime
+
 import pytest
 from django.contrib import admin
 from django.contrib.auth.models import User
 from django.http import HttpRequest
 from django.test import RequestFactory
 
-from apps.power.admin import OutageAdmin
-from apps.power.factories import OutageFactory
-from apps.power.models import Outage
+from apps.devices.admin import DeviceAdmin
+from apps.devices.models import Device
+from apps.power.admin import LoadAdmin, LoadSettingsAdmin, OutageAdmin
+from apps.power.factories import LoadSettingsFactory, OutageFactory, PlugLoadFactory
+from apps.power.models import Load, LoadSettings, Outage
 
 pytestmark = pytest.mark.django_db
 
 BOOT_ID = '5d1c2a7e-0b4f-4c8a-9e3d-6f2b1a0c9d8e'
+SHED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
+GUARD_FIELDS = {
+    'learned_phase',
+    'learned_amps',
+    'learning_samples',
+    'shed_at',
+    'shed_reason',
+    'shed_phase',
+    'shed_was_on',
+}
 
 
 @pytest.fixture
@@ -28,6 +42,31 @@ def f_owner_request() -> HttpRequest:
 @pytest.fixture
 def f_outage(request: pytest.FixtureRequest) -> Outage:
     return OutageFactory.create(boot_id=request.param)
+
+
+@pytest.fixture
+def f_load_admin() -> LoadAdmin:
+    return LoadAdmin(Load, admin.site)
+
+
+@pytest.fixture
+def f_load_settings_admin() -> LoadSettingsAdmin:
+    return LoadSettingsAdmin(LoadSettings, admin.site)
+
+
+@pytest.fixture
+def f_device_admin() -> DeviceAdmin:
+    return DeviceAdmin(Device, admin.site)
+
+
+@pytest.fixture
+def f_load(request: pytest.FixtureRequest) -> Load:
+    return PlugLoadFactory.create(device__slug='plug-boiler-1f', shed_at=request.param)
+
+
+@pytest.fixture
+def stored_load_settings() -> None:
+    LoadSettingsFactory.create()
 
 
 @pytest.fixture
@@ -66,3 +105,78 @@ def test_admin_refuses_to_delete_a_selection_holding_an_outage_recorded_for_a_bo
     _, _, perms_needed, _ = f_outage_admin.get_deleted_objects(Outage.objects.all(), f_owner_request)
 
     assert perms_needed == {'outage'}
+
+
+def test_load_page_shows_what_learning_and_shedding_stored_without_posting_it_back(
+    f_load_admin: LoadAdmin,
+    f_owner_request: HttpRequest,
+) -> None:
+    form = f_load_admin.get_form(f_owner_request, change=True)
+
+    assert (
+        set(f_load_admin.get_readonly_fields(f_owner_request)),
+        GUARD_FIELDS & set(form.base_fields),
+        {'phase', 'nominal_amps', 'live'} <= set(form.base_fields),
+    ) == (GUARD_FIELDS, set(), True)
+
+
+def test_load_settings_admin_adds_the_settings_once_and_never_deletes_them(
+    f_load_settings_admin: LoadSettingsAdmin,
+    f_owner_request: HttpRequest,
+) -> None:
+    assert (
+        f_load_settings_admin.has_add_permission(f_owner_request),
+        f_load_settings_admin.has_delete_permission(f_owner_request),
+    ) == (True, False)
+
+
+@pytest.mark.usefixtures('stored_load_settings')
+def test_load_settings_admin_adds_no_second_settings(
+    f_load_settings_admin: LoadSettingsAdmin,
+    f_owner_request: HttpRequest,
+) -> None:
+    assert f_load_settings_admin.has_add_permission(f_owner_request) is False
+
+
+@pytest.mark.parametrize(
+    ('f_load', 'deletable'),
+    [(None, True), (SHED_AT, False)],
+    ids=['not_shed', 'shed_live'],
+    indirect=['f_load'],
+)
+def test_admin_deletes_a_load_only_while_it_is_not_shed_live(
+    f_load_admin: LoadAdmin,
+    f_owner_request: HttpRequest,
+    f_load: Load,
+    deletable: bool,
+) -> None:
+    assert f_load_admin.has_delete_permission(f_owner_request, f_load) is deletable
+
+
+@pytest.mark.parametrize(
+    ('f_load', 'locked'),
+    [(None, set()), (SHED_AT, {'slug', 'kind', 'zone', 'device'})],
+    ids=['not_shed', 'shed_live'],
+    indirect=['f_load'],
+)
+def test_load_page_keeps_the_slug_and_what_a_load_controls_read_only_while_it_is_shed_live(
+    f_load_admin: LoadAdmin,
+    f_owner_request: HttpRequest,
+    f_load: Load,
+    locked: set[str],
+) -> None:
+    readonly = set(f_load_admin.get_readonly_fields(f_owner_request, f_load))
+    form = f_load_admin.get_form(f_owner_request, f_load, change=True)
+
+    assert (readonly - GUARD_FIELDS, locked & set(form.base_fields)) == (locked, set())
+
+
+@pytest.mark.parametrize('f_load', [SHED_AT], indirect=True)
+def test_admin_refuses_to_delete_the_plug_of_a_load_shed_live(
+    f_device_admin: DeviceAdmin,
+    f_owner_request: HttpRequest,
+    f_load: Load,
+) -> None:
+    _, _, perms_needed, _ = f_device_admin.get_deleted_objects(Device.objects.filter(load=f_load), f_owner_request)
+
+    assert perms_needed == {'load'}

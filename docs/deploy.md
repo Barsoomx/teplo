@@ -56,7 +56,7 @@ Releases ship without tests: `.gitattributes` marks `*_tests.py` and `conftest.p
 
 ## Telegram alerts
 
-teplo sends its alerts (a lost thermostat, plug or sensor, a stale phase meter, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
+teplo sends its alerts (a lost thermostat, plug or sensor, a stale phase meter, a phase overloaded for a minute, a zone left off while it should heat, teplo back after an outage; see Alerts in `docs/design.md`) to one Telegram chat, set in the `[telegram]` table of `secrets.toml`:
 
 ```toml
 [telegram]
@@ -240,6 +240,19 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 2. Set `TEPLO_DRY_RUN=false` in `/opt/etc/teplo/teplo.env` and restart.
 3. In the admin (`/admin/climate/zone/`), tick `live control` one zone at a time and confirm on the dashboard that the thermostat setpoint follows the target.
 
+### Load management
+
+Load management and the switchable water heater plugs ship in dry-run (`docs/design.md`, sections 4 and 7). Once the phase meter reports, the guard checks the phases every second, learns which phase each load is on and journals the sheds, restores and waiting starts it would make; nothing it decides reaches a plug or a thermostat, and the dashboard's shedding order shows every load with «Наблюдение». Until the clamps are installed the meter never reports and the dry-run guard stays quiet; the phase meter's device-lost alert covers it. Live floors need a reporting meter: once the meter has been silent for 60 seconds, from teplo's start or later, the house runs limp and lets one floor heat per phase (see step 4).
+
+1. Install the clamps and calibrate them (see [ESPHome nodes](#esphome-nodes), step 6), then let the house run for a few days. Each time a water heater switches or a floor's relay turns, the guard looks for the phase whose current stepped with it; three votes for one phase and none for another among the load's last five learn it. Check the learned phases in `/admin/power/load/`, where `learned phase`, `learned amps` and `learning samples` are read-only, on the dashboard, where a load reads «Фаза L2, выучена», or in `api/v1/loads/`. The journal says «Бойлер 1 этаж: выучил фазу L2, 6,2 А» when a phase is learned or its current moves. A floor that stays at its limit never switches, so it learns nothing; a load whose phase stays unknown is shed after the loads of the overloaded phase and counts against every phase when it starts.
+2. Set `phase` on a load whose learned phase you have checked, or whose phase you know from the switchboard: the phase you set always wins over the learned one. Set `nominal amps` where you know the current a load adds at the clamp, e.g. from its plug or a kettle test: the water heaters come with 6.0 A, and a load without it counts its learned current, or else the default load current of `/admin/power/loadsettings/`, 6.0 A. Both columns can be edited in the list of loads.
+3. Watch the journal through a few evenings with the EV charging and the water heaters on. «Перегрузка фазы L2: 26,4 А», «Бойлер 1 этаж: выключил бы розетку» and «Кухня: отложил бы включение» say what load management would do; «Фаза L3: похоже, заряжается электромобиль, +16,0 А» and the badge on the phase bars show what EV detection sees. The thresholds, 20 A start ceiling, 24 A shed threshold and 18 A restore threshold by default, are edited in `/admin/power/loadsettings/`.
+4. Tick `load management live` in `/admin/power/loadsettings/`, then tick `live` in `/admin/power/load/` one load at a time, the water heaters first. A command reaches a device only while `TEPLO_DRY_RUN` is false, and a zone's load also needs `live control` on its zone. The «Наблюдение» chip leaves a load's row once its commands are live; a live shed reads «Отключена» and is journaled as «Бойлер 1 этаж: выключил розетку». A live shed of a zone switches its thermostat off at once, whatever its 30-minute write budget, and the zone returns to its schedule no sooner than 30 minutes later.
+
+   Tick a floor `live` only while the phase meter reports, and only once every floor, live or not, has its phase set or learned. After 60 seconds without its readings the house runs limp: a live floor that heats beside a more important floor of its phase is switched off, journaled as «Кухня: выключил термостат» with «Нет данных от фазометра: по одному полу на фазу». Floors of unknown phase count as one more phase, so a floor whose phase is unknown may heat beside a floor of its real phase; while every phase is unknown, one floor heats in the whole house. A floor switched off this way, or by an overload that had ended before the meter went silent with the phase at or below the restore threshold, comes back while the meter is still silent once no other floor of its phase heats, journaled as «Кухня: вернул термостат расписанию» with «Нет данных от фазометра: на этой фазе не греет другой пол», and its thermostat is switched on at its next allowed write. A floor shed for a phase that was still overloaded when the meter went silent, or a floor an overload shed on a phase that read above the restore threshold then, stays off until the meter reports again and the phase calms, as the car or whatever else loads the phase may still be there. A floor shed for a phase whose clamp still reports, while another clamp is silent, comes back once that phase has stayed calm for 2 minutes with room for it. While the meter is silent, a floor starts, after a restore or at its schedule, only with room for it on a phase whose clamp still reports, and not at all on a phase that went silent overloaded: until that phase reports again, or the floor's `live` is unticked, the start waits, journaled in dry-run as «Кухня: отложил бы включение» with «Фазометр молчит, а фаза замолчала перегруженной». A clamp that dies during an overload therefore keeps the floors of its phase that were off then off until it reports again or their `live` is unticked; the stale phase meter alert reports the silent clamp. A floor an overload switched off and the guard handed back also waits for its start while the phase it was switched off for went silent above the restore threshold, as its return would. Unticking a shed floor's `live` hands it back to its schedule at its next allowed write. A water heater stays off until the meter reports again and its phase has stayed calm for 2 minutes with room for it.
+
+Unticking a load's `live`, or `load management live`, releases its live shed within a minute: a plug teplo switched off is switched back on, and a zone returns to its schedule at its next allowed write. Unticking a shed zone's `live control` keeps it shed until its next allowed write, when teplo switches its thermostat back on. Switching a shed plug back on by hand also ends its shed, journaled as «Бойлер 1 этаж: розетку включили вручную, отключение снято». While a load reads «Отключена», its page in the admin shows its slug, kind, zone and plug read-only, the page of its zone shows the zone's slug and thermostat read-only, and the load cannot be deleted; untick its `live` and wait for the release to change them.
+
 ## Enable air control
 
 Air control, optimal start and the second-floor guard ship in dry-run (`docs/design.md`, section 6): an air zone with its sensor reads «По воздуху: наблюдение» on the dashboard while floor mode keeps driving its thermostat.
@@ -251,6 +264,19 @@ Air control, optimal start and the second-floor guard ship in dry-run (`docs/des
 `/admin/climate/zonelearning/` lists what each zone has learned, read-only: the early-stop offset, the dead time, the heat-up rate of each 5 °C outdoor bucket and the learned mornings. Optimal start replaces the fixed lead once a zone has 3 learned mornings. Unticking `air control live` hands the thermostat back to floor mode at the zone's next allowed write.
 
 ## Roll back
+
+An older release does not know the migrations of a newer one, so undo them before it runs. Rolling back past load management takes two steps first:
+
+1. Untick `load management live` in `/admin/power/loadsettings/` and wait until no load on the dashboard reads «Отключена»: an older release never switches a plug back on.
+2. From the release you leave, migrate the devices back. This returns the water heater plugs to the read-only driver, which older releases know, and keeps the loads and what they learned for the next deploy:
+
+   ```sh
+   ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate devices 0001'
+   ```
+
+   A deploy that fails after its migrate step, e.g. in `collectstatic`, leaves `current` on the older release with the newer migrations applied: run the same command with `releases/<commit>` of the failed deploy in place of `current`, or deploy again.
+
+Then switch `current` back and restart:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'ls -1t /opt/share/teplo/releases'

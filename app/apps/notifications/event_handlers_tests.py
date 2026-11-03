@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from pytest_django import Settings
@@ -59,6 +60,19 @@ def f_plug_raised() -> AlertRaised:
 
 
 @pytest.fixture
+def f_phase_raised() -> AlertRaised:
+    return AlertRaised(
+        kind=AlertKind.PHASE_OVERLOAD,
+        subject='l2',
+        name='L2',
+        device_kind=DeviceKind.PHASE_METER,
+        since=SINCE,
+        amps=Decimal('31.27'),
+        occurred_at=AT,
+    )
+
+
+@pytest.fixture
 def f_cleared() -> AlertCleared:
     return AlertCleared(
         kind=AlertKind.ZONE_OFF,
@@ -105,6 +119,21 @@ def test_raised_plug_alert_keeps_the_kind_of_device(f_outbox: AlertOutbox, f_plu
             name='Бойлер 1 этаж',
             device_kind=DeviceKind.PLUG,
             since=SINCE,
+        ),
+    ]
+
+
+def test_raised_phase_overload_keeps_its_current(f_outbox: AlertOutbox, f_phase_raised: AlertRaised) -> None:
+    queue_alert_raised(f_phase_raised)
+
+    assert _contents(f_outbox) == [
+        AlertContent(
+            kind=AlertKind.PHASE_OVERLOAD,
+            transition=AlertTransition.RAISED,
+            name='L2',
+            device_kind=DeviceKind.PHASE_METER,
+            since=SINCE,
+            amps=Decimal('31.27'),
         ),
     ]
 

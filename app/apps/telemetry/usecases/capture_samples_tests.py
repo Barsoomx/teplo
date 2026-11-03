@@ -75,6 +75,7 @@ def f_use_case(
             mode=ThermostatMode.HOLD,
             setpoint=Decimal('28.0'),
             floor_temperature=Decimal('24.5'),
+            heating=True,
             read_at=NOW,
         ),
     )

@@ -1,5 +1,7 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, timedelta
+from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -14,6 +16,7 @@ from apps.devices.domain.errors import (
     DeviceProtocolError,
     DeviceUnavailableError,
     DriverNotImplementedError,
+    PlugNotSwitchableError,
     SensorReadingError,
 )
 from apps.devices.domain.kinds import DeviceKind
@@ -27,14 +30,28 @@ from apps.panel.templatetags.panel_format import (
     duration,
     failure_note,
     icon,
+    load_amps,
+    load_command_text,
+    load_name,
+    load_phase,
+    load_phase_learned_text,
+    load_shed_note,
+    load_shed_text,
     local_time,
     optimal_start_text,
+    outage_overload_note,
     outage_question,
+    phase_event_text,
     power_outage_text,
     second_floor_guard_text,
+    start_wait_note,
+    start_wait_text,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.panel.usecases.get_panel_overview import LoadOverview
+from apps.power.domain.load_state import LoadState
+from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 from apps.system.domain.clock import ClockStatusCode
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -65,6 +82,42 @@ AIR_CONTROL_PAYLOAD: dict[str, object] = {
     'early_stop_offset': '0.30',
     'lead_minutes': 140,
 }
+BOILER_SHED: dict[str, object] = {
+    'load': 'boiler-1f',
+    'name': 'Бойлер 1 этаж',
+    'kind': 'plug',
+    'phase': 'l2',
+    'amps': '26.4',
+    'load_amps': '6.0',
+    'reason': 'overload',
+}
+KITCHEN_SHED: dict[str, object] = {
+    'load': 'kitchen',
+    'name': 'Кухня',
+    'kind': 'zone',
+    'phase': 'unknown',
+    'amps': None,
+    'load_amps': '6.0',
+    'reason': 'meter_lost',
+}
+BOILER_LOAD = LoadOverview(
+    slug='boiler-1f',
+    name='Бойлер 1 этаж',
+    kind=LoadKind.PLUG,
+    zone=None,
+    device='plug-boiler-1f',
+    priority=1,
+    phase=LoadPhase.L2,
+    phase_origin=PhaseOrigin.LEARNED,
+    learned_phase=LoadPhase.L2,
+    learned_amps=Decimal('6.6'),
+    learning_samples=3,
+    nominal_amps=Decimal('6.0'),
+    amps=Decimal('6.0'),
+    amps_origin=AmpsOrigin.NOMINAL,
+    state=LoadState.DRAWING,
+    live=False,
+)
 
 
 def _entry(kind: str, payload: dict[str, object], name: str = 'Кухня') -> TimelineEntry:
@@ -75,6 +128,23 @@ def _entry(kind: str, payload: dict[str, object], name: str = 'Кухня') -> T
         device_kind=None,
         payload=payload,
         created_at=datetime(2026, 10, 29, 7, 0, tzinfo=MOSCOW),
+    )
+
+
+def _load_entry(
+    kind: str,
+    payload: dict[str, object],
+    subject: str = 'boiler-1f',
+    name: str = 'Бойлер 1 этаж',
+    device_kind: DeviceKind | None = DeviceKind.PLUG,
+) -> TimelineEntry:
+    return TimelineEntry(
+        kind=kind,
+        subject=subject,
+        subject_name=name,
+        device_kind=device_kind,
+        payload=payload,
+        created_at=datetime(2026, 10, 31, 20, 24, tzinfo=MOSCOW),
     )
 
 
@@ -134,6 +204,10 @@ def test_failure_note_names_the_cause_by_error_code(error: DomainError, expected
         (DriverNotImplementedError('unsupported'), 'teplo пока не умеет управлять этим устройством'),
         (SecretMissingError('plug-boiler-1f'), 'В файле секретов нет адреса и ключа этой розетки'),
         (DeviceConfigError('no address'), 'В файле секретов у этой розетки неверный адрес или протокол'),
+        (
+            PlugNotSwitchableError('plug-boiler-1f', 'its driver only reads'),
+            'Драйвер этой розетки не умеет её переключать',
+        ),
     ],
 )
 def test_failure_note_names_the_plug_for_a_plug(error: DomainError, expected: str) -> None:
@@ -429,3 +503,245 @@ def test_power_outage_text_reads_the_journaled_interval(
     )
 
     assert power_outage_text(entry) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('overload', 'expected'),
+    [
+        (
+            PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('31.27')),
+            'Перед отключением фаза L2 была перегружена: 31,3 А',
+        ),
+        (PrecedingOverload(phase=LoadPhase.L3, amps=None), 'Перед отключением фаза L3 была перегружена'),
+        (PrecedingOverload(phase=LoadPhase.UNKNOWN, amps=None), 'Перед отключением была перегрузка фазы'),
+        (None, ''),
+    ],
+    ids=['phase_and_current', 'without_a_current', 'unreadable_phase', 'no_overload'],
+)
+def test_outage_overload_note_says_which_phase_was_overloaded_before_the_cut(
+    overload: PrecedingOverload | None,
+    expected: str,
+) -> None:
+    assert outage_overload_note(replace(OUTAGE, overload=overload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('load', 'expected'),
+    [
+        (BOILER_LOAD, ('Фаза L2, выучена', '6,0 А, номинал')),
+        (
+            replace(BOILER_LOAD, phase_origin=PhaseOrigin.SET, amps=Decimal('6.6'), amps_origin=AmpsOrigin.LEARNED),
+            ('Фаза L2, задана', '6,6 А, выучен'),
+        ),
+        (
+            replace(
+                BOILER_LOAD,
+                phase=LoadPhase.UNKNOWN,
+                phase_origin=PhaseOrigin.UNKNOWN,
+                amps_origin=AmpsOrigin.DEFAULT,
+            ),
+            ('Фаза неизвестна', '6,0 А по умолчанию'),
+        ),
+    ],
+    ids=['learned_phase_nominal_current', 'set_phase_learned_current', 'unknown_phase_default_current'],
+)
+def test_load_facts_say_where_the_phase_and_the_current_come_from(
+    load: LoadOverview,
+    expected: tuple[str, str],
+) -> None:
+    assert (load_phase(load), load_amps(load)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        ('phase_overload', {'phase': 'l2', 'amps': '26.4'}, 'Перегрузка фазы L2: 26,4 А'),
+        ('phase_calm', {'phase': 'l2', 'amps': '17.2'}, 'Перегрузка фазы L2 прошла: 17,2 А'),
+        (
+            'ev_charging_started',
+            {'phase': 'l3', 'amps': '16.0', 'before': '4.0'},
+            'Фаза L3: похоже, заряжается электромобиль, +16,0 А',
+        ),
+        (
+            'ev_charging_stopped',
+            {'phase': 'l3', 'amps': '16.0', 'before': '4.0'},
+            'Фаза L3: электромобиль больше не заряжается',
+        ),
+        ('phase_overload', {'phase': 'l4', 'amps': '26.4'}, 'l2: неизвестное событие'),
+        ('phase_overload', {'phase': 'l2'}, 'l2: неизвестное событие'),
+    ],
+    ids=['overload', 'calm', 'ev_charging_started', 'ev_charging_stopped', 'unknown_phase', 'without_a_current'],
+)
+def test_phase_event_text_names_the_phase_and_its_current(
+    kind: str,
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    assert phase_event_text(_load_entry(kind, payload, subject='l2', name='l2', device_kind=None)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        ('load_shed', BOILER_SHED, ('Бойлер 1 этаж: выключил розетку', 'Перегрузка фазы L2: 26,4 А')),
+        (
+            'load_shed_dry_run',
+            BOILER_SHED,
+            ('Бойлер 1 этаж: выключил бы розетку', 'Перегрузка фазы L2: 26,4 А'),
+        ),
+        (
+            'load_shed_dry_run',
+            {**BOILER_SHED, 'amps': None},
+            ('Бойлер 1 этаж: выключил бы розетку', 'Перегрузка фазы L2'),
+        ),
+        (
+            'load_shed',
+            KITCHEN_SHED,
+            ('Кухня: выключил термостат', 'Нет данных от фазометра: по одному полу на фазу'),
+        ),
+        (
+            'load_restored',
+            {**BOILER_SHED, 'amps': '17.2', 'cause': 'calm'},
+            ('Бойлер 1 этаж: снова включил розетку', 'Фаза L2 в норме: 17,2 А'),
+        ),
+        (
+            'load_restored_dry_run',
+            {**KITCHEN_SHED, 'cause': 'calm'},
+            ('Кухня: вернул бы термостат расписанию', 'Фазы в норме'),
+        ),
+        (
+            'load_restored',
+            {**KITCHEN_SHED, 'cause': 'released', 'switched_on': False},
+            ('Кухня: вернул термостат расписанию', 'Управление нагрузкой переключено в настройках'),
+        ),
+        (
+            'load_restored',
+            {**KITCHEN_SHED, 'cause': 'released', 'switched_on': True},
+            ('Кухня: снова включил термостат', 'Управление нагрузкой переключено в настройках'),
+        ),
+        (
+            'load_restored',
+            {**KITCHEN_SHED, 'cause': 'limp', 'switched_on': False},
+            ('Кухня: вернул термостат расписанию', 'Нет данных от фазометра: на этой фазе не греет другой пол'),
+        ),
+        ('load_shed', {}, ('Бойлер 1 этаж: выключил розетку', '')),
+    ],
+    ids=[
+        'plug_shed',
+        'plug_shed_in_dry_run',
+        'plug_shed_without_a_current',
+        'zone_shed_on_a_lost_meter',
+        'plug_restored_on_calm',
+        'zone_restored_in_dry_run_on_calm_of_every_phase',
+        'zone_released_to_its_schedule',
+        'zone_released_with_its_thermostat_switched_back_on',
+        'zone_restored_while_the_meter_is_lost',
+        'kind_from_the_device',
+    ],
+)
+def test_load_shed_text_says_what_was_switched_and_why(
+    kind: str,
+    payload: dict[str, object],
+    expected: tuple[str, str],
+) -> None:
+    entry = _load_entry(
+        kind,
+        payload,
+        subject=str(payload.get('load', 'boiler-1f')),
+        name=str(payload.get('name', 'Бойлер 1 этаж')),
+    )
+
+    assert (load_shed_text(entry), load_shed_note(entry)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('command', 'name', 'device_kind', 'expected'),
+    [
+        ('shed', 'Бойлер 1 этаж', DeviceKind.PLUG, 'Бойлер 1 этаж: не удалось выключить розетку'),
+        ('restore', 'Бойлер 1 этаж', DeviceKind.PLUG, 'Бойлер 1 этаж: не удалось снова включить розетку'),
+        ('shed', 'Кухня', DeviceKind.THERMOSTAT, 'Кухня: не удалось выключить термостат'),
+        ('restore', 'Кухня', DeviceKind.THERMOSTAT, 'Кухня: не удалось снова включить термостат'),
+        ('shed', 'Бойлер 1 этаж', None, 'Бойлер 1 этаж: команда управления нагрузкой не прошла'),
+    ],
+    ids=['plug_off', 'plug_on', 'thermostat_off', 'thermostat_on', 'load_no_longer_known'],
+)
+def test_load_command_text_names_the_device_teplo_could_not_switch(
+    command: str,
+    name: str,
+    device_kind: DeviceKind | None,
+    expected: str,
+) -> None:
+    entry = _load_entry('load_command_failed', {'command': command}, name=name, device_kind=device_kind)
+
+    assert load_command_text(entry) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        ({'phase': 'l2', 'amps': '21.5', 'reason': 'no_headroom'}, 'Фаза L2 дошла бы до 21,5 А'),
+        ({'phase': 'l2', 'amps': None, 'reason': 'too_soon'}, 'Другая нагрузка только что включилась'),
+        ({'phase': 'l2', 'amps': None, 'reason': 'meter_stale'}, 'Нет свежих данных от фазометра'),
+        (
+            {'phase': 'unknown', 'amps': None, 'reason': 'phase_taken'},
+            'Фазометр молчит, а на этой фазе уже греет другой пол',
+        ),
+        (
+            {'phase': 'l2', 'amps': None, 'reason': 'phase_overloaded'},
+            'Фазометр молчит, а фаза замолчала перегруженной',
+        ),
+        (
+            {'phase': 'l2', 'amps': None, 'reason': 'phase_not_calm'},
+            'Фазометр молчит, а фаза замолчала выше порога возврата',
+        ),
+        ({}, ''),
+    ],
+    ids=['no_headroom', 'too_soon', 'meter_stale', 'phase_taken', 'phase_overloaded', 'phase_not_calm', 'empty'],
+)
+def test_start_wait_says_why_a_start_would_wait(payload: dict[str, object], expected: str) -> None:
+    entry = _load_entry('start_would_wait_dry_run', payload, subject='kitchen', name='Кухня')
+
+    assert (start_wait_text(entry), start_wait_note(entry)) == ('Кухня: отложил бы включение', expected)
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        ({'phase': 'l2', 'amps': '6.2', 'samples': 3}, 'Бойлер 1 этаж: выучил фазу L2, 6,2 А'),
+        ({'phase': 'unknown', 'amps': '6.2', 'samples': 3}, 'Бойлер 1 этаж: неизвестное событие'),
+    ],
+    ids=['learned', 'malformed'],
+)
+def test_load_phase_learned_text_names_the_phase_and_the_current(payload: dict[str, object], expected: str) -> None:
+    assert load_phase_learned_text(_load_entry('load_phase_learned', payload)) == expected
+
+
+@pytest.mark.parametrize(
+    ('name', 'payload', 'expected'),
+    [
+        ('Бойлер 1 этаж', {'name': 'Бойлер'}, 'Бойлер 1 этаж'),
+        ('boiler-1f', {'name': 'Бойлер'}, 'Бойлер'),
+        ('boiler-1f', {}, 'boiler-1f'),
+    ],
+    ids=['current_name', 'name_journaled_for_a_load_no_longer_known', 'slug'],
+)
+def test_load_name_falls_back_to_the_journaled_name(name: str, payload: dict[str, object], expected: str) -> None:
+    assert load_name(_load_entry('load_shed', payload, name=name)) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_load_texts_follow_the_active_language() -> None:
+    entry = _load_entry('load_shed_dry_run', BOILER_SHED, name='Water heater 1F')
+
+    assert (load_shed_text(entry), load_shed_note(entry), load_phase(BOILER_LOAD)) == (
+        'Water heater 1F: would switch the plug off',
+        'Overload on phase L2: 26.4 A',
+        'Phase L2, learned',
+    )

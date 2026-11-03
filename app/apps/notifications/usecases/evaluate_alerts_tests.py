@@ -1,13 +1,14 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.devices.domain.kinds import DeviceKind
-from apps.notifications.domain.alerts import AlertKey, AlertKind, MonitoredDevice, ZoneHeating
+from apps.notifications.domain.alerts import AlertKey, AlertKind, MonitoredDevice, PhaseAlarm, ZoneHeating
 from apps.notifications.domain.events import AlertCleared, AlertRaised
 from apps.notifications.services.alert_book import AlertBook
-from apps.notifications.stubs import DeviceSourceStub, ZoneSourceStub
+from apps.notifications.stubs import DeviceSourceStub, PhaseSourceStub, ZoneSourceStub
 from apps.notifications.usecases.evaluate_alerts import (
     EvaluateAlertsInputDTO,
     EvaluateAlertsOutputDTO,
@@ -58,6 +59,15 @@ STALE_METER = MonitoredDevice(
 )
 METER_KEY = AlertKey(kind=AlertKind.DEVICE_LOST, subject='phase-meter')
 COLD_ZONE = ZoneHeating(slug='hallway', name='Прихожая', should_heat=True, power=False)
+L2_KEY = AlertKey(kind=AlertKind.PHASE_OVERLOAD, subject='l2')
+OVERLOADED_L2 = PhaseAlarm(
+    phase='l2',
+    name='L2',
+    alarmed=True,
+    amps=Decimal('31.27'),
+    began_ago=timedelta(minutes=1),
+)
+CALM_L2 = PhaseAlarm(phase='l2', name='L2', alarmed=False, amps=None, began_ago=None)
 CLOCK_STEP = timedelta(hours=3)
 
 
@@ -70,6 +80,7 @@ def _use_case(
     return EvaluateAlertsUseCase(
         devices=(DeviceSourceStub(devices=devices),),
         zones=zones,
+        phases=PhaseSourceStub(alarms=[]),
         book=book,
         dispatcher=dispatcher,
     )
@@ -79,6 +90,7 @@ def _thermostats_and_plugs_use_case(book: AlertBook, dispatcher: EventDispatcher
     return EvaluateAlertsUseCase(
         devices=(DeviceSourceStub(devices=[LOST_THERMOSTAT]), DeviceSourceStub(devices=[LOST_PLUG])),
         zones=ZoneSourceStub(zones=[]),
+        phases=PhaseSourceStub(alarms=[]),
         book=book,
         dispatcher=dispatcher,
     )
@@ -88,6 +100,17 @@ def _thermostat_and_meter_use_case(book: AlertBook, dispatcher: EventDispatcher)
     return EvaluateAlertsUseCase(
         devices=(DeviceSourceStub(devices=[LOST_THERMOSTAT]), DeviceSourceStub(devices=[STALE_METER])),
         zones=ZoneSourceStub(zones=[]),
+        phases=PhaseSourceStub(alarms=[]),
+        book=book,
+        dispatcher=dispatcher,
+    )
+
+
+def _phase_use_case(alarms: list[PhaseAlarm], book: AlertBook, dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return EvaluateAlertsUseCase(
+        devices=(),
+        zones=ZoneSourceStub(zones=[]),
+        phases=PhaseSourceStub(alarms=alarms),
         book=book,
         dispatcher=dispatcher,
     )
@@ -195,6 +218,23 @@ def f_plug_lost_use_case(f_plug_noticed_book: AlertBook, f_dispatcher: EventDisp
 @pytest.fixture
 def f_meter_stale_use_case(f_meter_noticed_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
     return _thermostat_and_meter_use_case(f_meter_noticed_book, f_dispatcher)
+
+
+@pytest.fixture
+def f_overloaded_phase_use_case(f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _phase_use_case([OVERLOADED_L2], AlertBook(), f_dispatcher)
+
+
+@pytest.fixture
+def f_phase_alarm_book() -> AlertBook:
+    book = AlertBook()
+    _phase_use_case([OVERLOADED_L2], book, EventDispatcher()).execute(_input(timedelta(0)))
+    return book
+
+
+@pytest.fixture
+def f_calm_phase_use_case(f_phase_alarm_book: AlertBook, f_dispatcher: EventDispatcher) -> EvaluateAlertsUseCase:
+    return _phase_use_case([CALM_L2], f_phase_alarm_book, f_dispatcher)
 
 
 def test_confirmed_device_loss_raises_an_alert(
@@ -356,3 +396,47 @@ def test_zone_targets_are_asked_with_the_trust_of_the_clock(
     f_lost_use_case.execute(_input(timedelta(minutes=1), clock_trusted=False))
 
     assert f_zones.clock_trusted == [True, False]
+
+
+def test_phase_the_guard_alarms_about_raises_its_overload_alert_with_the_current(
+    f_overloaded_phase_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_overloaded_phase_use_case.execute(_input(timedelta(0)))
+
+    assert (output, f_events) == (
+        EvaluateAlertsOutputDTO(raised=(L2_KEY,), cleared=()),
+        [
+            AlertRaised(
+                kind=AlertKind.PHASE_OVERLOAD,
+                subject='l2',
+                name='L2',
+                device_kind=DeviceKind.PHASE_METER,
+                since=NOW - timedelta(minutes=1),
+                amps=Decimal('31.27'),
+                occurred_at=NOW,
+            ),
+        ],
+    )
+
+
+def test_phase_the_guard_no_longer_alarms_about_clears_its_overload_alert(
+    f_calm_phase_use_case: EvaluateAlertsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_calm_phase_use_case.execute(_input(timedelta(minutes=3)))
+
+    assert (output, f_events) == (
+        EvaluateAlertsOutputDTO(raised=(), cleared=(L2_KEY,)),
+        [
+            AlertCleared(
+                kind=AlertKind.PHASE_OVERLOAD,
+                subject='l2',
+                name='L2',
+                device_kind=DeviceKind.PHASE_METER,
+                since=NOW - timedelta(minutes=1),
+                amps=None,
+                occurred_at=NOW + timedelta(minutes=3),
+            ),
+        ],
+    )

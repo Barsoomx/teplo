@@ -69,6 +69,18 @@ msgid "%(name)s: the thermostat follows the schedule again"
 msgstr "%(name)s: термостат снова работает по расписанию"
 
 #, python-format
+msgid "Phase %(name)s is overloaded: %(amps)s A"
+msgstr "Фаза %(name)s перегружена: %(amps)s А"
+
+#, python-format
+msgid "Phase %(name)s is overloaded"
+msgstr "Фаза %(name)s перегружена"
+
+#, python-format
+msgid "Phase %(name)s is back to normal"
+msgstr "Фаза %(name)s снова в норме"
+
+#, python-format
 msgid "teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)"
 msgstr "teplo снова работает. Перерыв %(began)s–%(ended)s (%(duration)s)"
 

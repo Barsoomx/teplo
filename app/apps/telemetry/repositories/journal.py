@@ -21,6 +21,18 @@ class JournalRepository:
         return list(JournalEntry.objects.all()[:limit])
 
     @staticmethod
+    def latest_payload(kind: str, *, since: datetime, until: datetime) -> dict[str, object] | None:
+        entry = (
+            JournalEntry.objects.filter(kind=kind, created_at__gte=since, created_at__lte=until)
+            .order_by('-created_at', '-id')
+            .first()
+        )
+        if entry is None:
+            return None
+
+        return entry.payload if isinstance(entry.payload, dict) else {}
+
+    @staticmethod
     def last_activity() -> datetime | None:
         return JournalEntry.objects.aggregate(last=Max('created_at'))['last']
 

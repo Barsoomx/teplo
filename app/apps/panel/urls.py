@@ -1,6 +1,7 @@
 from django.contrib.auth.views import LoginView, LogoutView
 from django.urls import path
 
+from apps.panel.views.api.v1.loads import LoadsApiView
 from apps.panel.views.api.v1.outages import OutagesApiView
 from apps.panel.views.api.v1.phases import PhasesApiView
 from apps.panel.views.api.v1.plugs import PlugsApiView
@@ -28,6 +29,7 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('api/v1/zones/', ZonesApiView.as_view(), name='api-v1-zones'),
     path('api/v1/plugs/', PlugsApiView.as_view(), name='api-v1-plugs'),
+    path('api/v1/loads/', LoadsApiView.as_view(), name='api-v1-loads'),
     path('api/v1/sensors/', SensorsApiView.as_view(), name='api-v1-sensors'),
     path('api/v1/phases/', PhasesApiView.as_view(), name='api-v1-phases'),
     path('api/v1/outages/', OutagesApiView.as_view(), name='api-v1-outages'),

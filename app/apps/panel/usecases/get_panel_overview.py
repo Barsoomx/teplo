@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -28,8 +29,17 @@ from apps.devices.services.state_store import (
     temperature_state_store,
     thermostat_state_store,
 )
+from apps.power.domain.control import LoadControl, commands_live
+from apps.power.domain.load_state import LoadState, load_state
+from apps.power.domain.load_status import plug_draws, thermostat_draws
+from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, LoadRecord, PhaseOrigin
 from apps.power.domain.outage import OutageRecord
+from apps.power.domain.shedding import Shed
+from apps.power.repositories.load import LoadRepository
+from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.guard_book import GuardBook, guard_book
+from apps.power.services.outage_overloads import OutageOverloads
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
 
@@ -99,9 +109,30 @@ class PlugOverview:
 
 
 @dataclass(frozen=True, kw_only=True)
+class LoadOverview:
+    slug: str
+    name: str
+    kind: LoadKind
+    zone: str | None
+    device: str
+    priority: int
+    phase: LoadPhase
+    phase_origin: PhaseOrigin
+    learned_phase: LoadPhase | None
+    learned_amps: Decimal | None
+    learning_samples: int
+    nominal_amps: Decimal | None
+    amps: Decimal
+    amps_origin: AmpsOrigin
+    state: LoadState
+    live: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class GetPanelOverviewOutputDTO:
     zones: tuple[ZoneOverview, ...]
     plugs: tuple[PlugOverview, ...]
+    loads: tuple[LoadOverview, ...]
     sensors: tuple[SensorOverview, ...]
     outdoor: SensorOverview | None
     standalone_sensors: tuple[SensorOverview, ...]
@@ -118,10 +149,14 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         climate_settings: ClimateSettingsRepository,
         learning: ZoneLearningRepository,
         outages: OutageRepository,
+        overloads: OutageOverloads,
+        loads: LoadRepository,
+        load_settings: LoadSettingsRepository,
         thermostat_store: ThermostatStateStore,
         plug_store: PlugStateStore,
         temperature_store: TemperatureStateStore,
         book: ControlBook,
+        guard_book: GuardBook,
         clock: ClockTrustSource,
         dry_run: bool,
     ) -> None:
@@ -131,10 +166,14 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self._climate_settings = climate_settings
         self._learning = learning
         self._outages = outages
+        self._overloads = overloads
+        self._loads = loads
+        self._load_settings = load_settings
         self._thermostat_store = thermostat_store
         self._plug_store = plug_store
         self._temperature_store = temperature_store
         self._book = book
+        self._guard_book = guard_book
         self._clock = clock
         self._dry_run = dry_run
 
@@ -146,10 +185,14 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             climate_settings=ClimateSettingsRepository(),
             learning=ZoneLearningRepository(),
             outages=OutageRepository(),
+            overloads=OutageOverloads.init(),
+            loads=LoadRepository(),
+            load_settings=LoadSettingsRepository(),
             thermostat_store=thermostat_state_store,
             plug_store=plug_state_store,
             temperature_store=temperature_state_store,
             book=control_book,
+            guard_book=guard_book,
             clock=clock_trust_source(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
@@ -181,10 +224,11 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 for zone in zones
             ),
             plugs=tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG),
+            loads=self._load_overviews(frozenset(zone.slug for zone in zones if zone.live_control)),
             sensors=tuple(sensors.values()),
             outdoor=outdoor,
             standalone_sensors=tuple(sensor for slug, sensor in sensors.items() if slug not in placed),
-            outages=tuple(self._outages.unmarked()),
+            outages=tuple(self._overloads.noted(outage) for outage in self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
         )
@@ -241,6 +285,64 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 next_transition(zone.windows, cycle.now, lead) if cycle.clock_trusted and zone.heating_enabled else None
             ),
             air=air,
+        )
+
+    def _load_overviews(self, live_zones: frozenset[str]) -> tuple[LoadOverview, ...]:
+        control = self._load_settings.control()
+        state = self._guard_book.state()
+        sheds: Mapping[str, Shed] = {} if state is None else state.shedding.sheds
+        waiting = self._guard_book.waiting()
+        return tuple(
+            self._load(record, control, sheds.get(record.slug), waiting, live_zones)
+            for record in self._loads.all_records()
+        )
+
+    def _load(
+        self,
+        record: LoadRecord,
+        control: LoadControl,
+        shed: Shed | None,
+        waiting: frozenset[str],
+        live_zones: frozenset[str],
+    ) -> LoadOverview:
+        live = commands_live(control, record, dry_run=self._dry_run, zone_live_control=record.zone_slug in live_zones)
+        learned = record.learned
+        return LoadOverview(
+            slug=record.slug,
+            name=record.name,
+            kind=record.kind,
+            zone=record.zone_slug,
+            device=record.device_slug,
+            priority=record.priority,
+            phase=record.effective_phase,
+            phase_origin=record.phase_origin,
+            learned_phase=None if learned is None else learned.phase,
+            learned_amps=None if learned is None else learned.amps,
+            learning_samples=0 if learned is None else learned.samples,
+            nominal_amps=record.nominal_amps,
+            amps=record.effective_amps(control.default_amps),
+            amps_origin=record.amps_origin,
+            state=load_state(drawing=self._drawing(record), shed=shed, waiting=record.slug in waiting, live=live),
+            live=live,
+        )
+
+    def _drawing(self, record: LoadRecord) -> bool | None:
+        if record.kind is LoadKind.PLUG:
+            plug = self._plug_store.snapshot(record.device_slug)
+            if not plug.available or plug.state is None:
+                return None
+
+            return plug_draws(on=plug.state.on, current=plug.state.current_amps)
+
+        thermostat = self._thermostat_store.snapshot(record.device_slug)
+        if not thermostat.available or thermostat.state is None:
+            return None
+
+        return thermostat_draws(
+            power=thermostat.state.power,
+            heating=thermostat.state.heating,
+            setpoint=thermostat.state.setpoint,
+            floor_temperature=thermostat.state.floor_temperature,
         )
 
     def _plug(self, device: DeviceSettings) -> PlugOverview:

@@ -6,10 +6,18 @@ from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.notifications.domain.alerts import AlertKey, AlertTransition
 from apps.notifications.domain.events import AlertCleared, AlertEvent, AlertRaised
-from apps.notifications.domain.policy import AlertChange, Condition, device_condition, evaluate_alerts, zone_condition
-from apps.notifications.domain.ports import DeviceSource, ZoneSource
+from apps.notifications.domain.policy import (
+    AlertChange,
+    Condition,
+    device_condition,
+    evaluate_alerts,
+    phase_condition,
+    zone_condition,
+)
+from apps.notifications.domain.ports import DeviceSource, PhaseSource, ZoneSource
 from apps.notifications.services.alert_book import AlertBook, alert_book
 from apps.notifications.services.phase_meter_source import PhaseMeterSource
+from apps.notifications.services.phase_overload_source import PhaseOverloadSource
 from apps.notifications.services.plug_source import PlugSource
 from apps.notifications.services.temperature_sensor_source import TemperatureSensorSource
 from apps.notifications.services.thermostat_source import ThermostatSource
@@ -34,12 +42,14 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
         self,
         devices: Sequence[DeviceSource],
         zones: ZoneSource,
+        phases: PhaseSource,
         book: AlertBook,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
         super().__init__(dispatcher=dispatcher)
         self._devices = devices
         self._zones = zones
+        self._phases = phases
         self._book = book
 
     @classmethod
@@ -52,6 +62,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
                 PhaseMeterSource.init(),
             ),
             zones=ZoneHeatingSource.init(),
+            phases=PhaseOverloadSource.init(),
             book=alert_book,
         )
 
@@ -74,6 +85,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
     def _conditions(self, now: datetime, clock_trusted: bool) -> list[Condition]:
         conditions = [device_condition(device) for source in self._devices for device in source.devices()]
         conditions.extend(zone_condition(zone) for zone in self._zones.zones(now, clock_trusted=clock_trusted))
+        conditions.extend(phase_condition(alarm) for alarm in self._phases.phases())
         return conditions
 
 
@@ -85,6 +97,7 @@ def _event(change: AlertChange, now: datetime) -> AlertEvent:
         name=change.condition.name,
         device_kind=change.condition.device_kind,
         since=change.since,
+        amps=change.condition.amps,
         occurred_at=now,
     )
 

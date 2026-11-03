@@ -1,7 +1,9 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
+from django.template.defaultfilters import floatformat
 from django.utils import timezone
 from django.utils.formats import date_format
 from django.utils.translation import gettext, gettext_lazy
@@ -31,6 +33,9 @@ ANY_DEVICE_FOUND = gettext_lazy('%(name)s: back online')
 ZONE_OFF = gettext_lazy('%(name)s: the thermostat has been off since %(since)s although the schedule wants heat')
 UNDATED_ZONE_OFF = gettext_lazy('%(name)s: the thermostat is off although the schedule wants heat')
 ZONE_FOLLOWS_SCHEDULE = gettext_lazy('%(name)s: the thermostat follows the schedule again')
+PHASE_OVERLOADED = gettext_lazy('Phase %(name)s is overloaded: %(amps)s A')
+UNMEASURED_PHASE_OVERLOADED = gettext_lazy('Phase %(name)s is overloaded')
+PHASE_BACK_TO_NORMAL = gettext_lazy('Phase %(name)s is back to normal')
 TEPLO_RESUMED = gettext_lazy('teplo is running again. Outage %(began)s–%(ended)s (%(duration)s)')
 MARK_CAUSE = gettext_lazy('Mark the cause in the panel: %(url)s')
 MARK_CAUSE_WITHOUT_LINK = gettext_lazy('Mark the cause in the panel.')
@@ -44,6 +49,7 @@ class AlertContent:
     name: str
     device_kind: DeviceKind
     since: datetime | None
+    amps: Decimal | None = None
 
     def text(self, at: datetime) -> str:
         return alert_text(
@@ -53,6 +59,7 @@ class AlertContent:
             device_kind=self.device_kind,
             since=self.since,
             at=at,
+            amps=self.amps,
         )
 
 
@@ -72,7 +79,11 @@ def alert_text(
     device_kind: DeviceKind,
     since: datetime | None,
     at: datetime,
+    amps: Decimal | None = None,
 ) -> str:
+    if kind is AlertKind.PHASE_OVERLOAD:
+        return _phase_text(transition, name, amps)
+
     template = _template(kind, transition, device_kind, dated=since is not None)
     return template % {'name': name, 'since': '' if since is None else _moment(since, at)}
 
@@ -86,8 +97,9 @@ def alert_text_from_payload(transition: AlertTransition, payload: Mapping[str, o
             device_kind=DeviceKind(str(payload['device_kind'])),
             since=_since(payload['since']),
             at=at,
+            amps=_amps(payload.get('amps')),
         )
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, InvalidOperation):
         return None
 
 
@@ -140,6 +152,16 @@ def _template(kind: AlertKind, transition: AlertTransition, device_kind: DeviceK
     return str(UNDATED_DEVICE_LOST.get(device_kind, ANY_UNDATED_DEVICE_LOST))
 
 
+def _phase_text(transition: AlertTransition, name: str, amps: Decimal | None) -> str:
+    if transition is AlertTransition.CLEARED:
+        return str(PHASE_BACK_TO_NORMAL) % {'name': name}
+
+    if amps is None:
+        return str(UNMEASURED_PHASE_OVERLOADED) % {'name': name}
+
+    return str(PHASE_OVERLOADED) % {'name': name, 'amps': floatformat(amps, -1)}
+
+
 def _mark_cause(panel_url: str) -> str:
     if not panel_url:
         return str(MARK_CAUSE_WITHOUT_LINK)
@@ -152,6 +174,13 @@ def _since(value: object) -> datetime | None:
         return None
 
     return datetime.fromisoformat(str(value))
+
+
+def _amps(value: object) -> Decimal | None:
+    if value is None:
+        return None
+
+    return Decimal(str(value))
 
 
 def _moment(moment: datetime, reference: datetime) -> str:

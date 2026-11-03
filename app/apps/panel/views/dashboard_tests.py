@@ -14,7 +14,8 @@ from apps.climate.domain.schedule import ScheduleTransition
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SensorOverview, ZoneRegime
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO
-from apps.power.domain.outage import OutageCause, OutageRecord
+from apps.power.domain.loads import LoadPhase
+from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 pytestmark = pytest.mark.django_db
@@ -147,6 +148,21 @@ def outage_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOvervi
 def m_outage_overview_use_case(outage_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = outage_overview
+        yield use_case
+
+
+@pytest.fixture
+def overloaded_outage_overview(outage_overview: GetPanelOverviewOutputDTO) -> GetPanelOverviewOutputDTO:
+    overload = PrecedingOverload(phase=LoadPhase.L2, amps=Decimal('26.4'))
+    return replace(outage_overview, outages=(replace(outage_overview.outages[0], overload=overload),))
+
+
+@pytest.fixture
+def m_overloaded_outage_overview_use_case(
+    overloaded_outage_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = overloaded_outage_overview
         yield use_case
 
 
@@ -300,6 +316,65 @@ def test_dashboard_asks_what_an_unmarked_outage_was(
         m_outage_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == (True, True, [1, 1, 1], (True, True, True), True, 1, 1)
+
+
+def test_dashboard_puts_the_overload_answer_forward_when_an_overload_preceded_the_cut(
+    f_russian_client: Client,
+    m_overloaded_outage_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    overload_answer = content.index('value="overload"')
+    assert (
+        'Перед отключением фаза L2 была перегружена: 26,4 А' in content,
+        'id="outage-7-overload"' in content,
+        content.count('class="answer answer-suggested"'),
+        'aria-describedby="outage-7-overload"'
+        in content[overload_answer : content.index('</button>', overload_answer)],
+        overload_answer < content.index('value="grid"') < content.index('value="unknown"'),
+        'aria-pressed' in content,
+        m_overloaded_outage_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, True, 1, True, True, False, 1, 1)
+
+
+def test_dashboard_without_an_overload_before_the_cut_suggests_no_answer(
+    f_russian_client: Client,
+    m_outage_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Перед отключением' in content,
+        'answer-suggested' in content,
+        m_outage_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (False, False, 1, 1)
+
+
+def test_dashboard_lists_the_loads_in_shedding_order_with_their_phase_current_and_state(
+    f_russian_client: Client,
+    m_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    shedding = content[content.index('class="shedding"') :]
+    assert (
+        'Очередь отключения' in content,
+        shedding.count('class="shed-load"'),
+        shedding.index('Бойлер 1 этаж') < shedding.index('Кухня'),
+        ('Фаза L2, выучена' in shedding, '6,0 А, номинал' in shedding, 'Была бы отключена' in shedding),
+        ('Фаза неизвестна' in shedding, '6,0 А по умолчанию' in shedding, 'Потребляет' in shedding),
+        shedding.count('Наблюдение'),
+        m_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, 2, True, (True, True, True), (True, True, True), 1, 1, 1)
 
 
 def test_dashboard_without_unmarked_outages_asks_nothing(

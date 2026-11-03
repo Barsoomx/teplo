@@ -31,9 +31,9 @@ def test_phases_api_returns_the_current_of_every_phase(f_client: Client, m_phase
     assert (response.status_code, response.json(), m_phases_use_case.init.call_count) == (
         200,
         [
-            {'phase': 'l1', 'amps': '12.40', 'stale': False, 'age_seconds': 1},
-            {'phase': 'l2', 'amps': '3.05', 'stale': False, 'age_seconds': 1},
-            {'phase': 'l3', 'amps': '27.81', 'stale': False, 'age_seconds': 2},
+            {'phase': 'l1', 'amps': '12.40', 'stale': False, 'age_seconds': 1, 'ev_amps': None},
+            {'phase': 'l2', 'amps': '3.05', 'stale': False, 'age_seconds': 1, 'ev_amps': None},
+            {'phase': 'l3', 'amps': '27.81', 'stale': False, 'age_seconds': 2, 'ev_amps': '16.1'},
         ],
         1,
     )

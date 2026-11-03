@@ -1,4 +1,5 @@
 import pytest
+from django.db import IntegrityError
 
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.errors import DeviceNotFoundError
@@ -89,3 +90,19 @@ def test_get_returns_device_by_slug(f_devices: list[Device]) -> None:
 def test_get_raises_for_unknown_slug() -> None:
     with pytest.raises(DeviceNotFoundError):
         DeviceRepository.get('thermostat-attic')
+
+
+def test_database_refuses_a_monitor_only_device_with_a_switching_driver() -> None:
+    with pytest.raises(IntegrityError):
+        DeviceFactory.create(kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_SWITCHABLE_PLUG, monitor_only=True)
+
+
+@pytest.mark.parametrize(
+    ('driver', 'monitor_only'),
+    [(DeviceDriver.TUYA_PLUG, True), (DeviceDriver.TUYA_SWITCHABLE_PLUG, False)],
+    ids=['monitor_only_and_read_only', 'switchable'],
+)
+def test_database_stores_a_plug_whose_driver_suits_it(driver: DeviceDriver, monitor_only: bool) -> None:
+    DeviceFactory.create(slug='plug-boiler-1f', kind=DeviceKind.PLUG, driver=driver, monitor_only=monitor_only)
+
+    assert DeviceRepository.plug_slugs() == ['plug-boiler-1f']

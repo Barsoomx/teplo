@@ -87,16 +87,18 @@ def follow_zone(
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
     reading = _morning_reading(zone, memory, decision, outcome, conditions, cycle)
+    if outcome is ZoneCycleOutcome.SHED:
+        return ZoneFollowUp(
+            memory=_kept_memory(memory, decision, reading, cycle),
+            air_dry_run=None,
+            optimal_start=None,
+            morning=None,
+            stop=None,
+        )
+
     morning = _observe_morning(memory.morning, reading)
     follow_up = ZoneFollowUp(
-        memory=ZoneMemory(
-            path=decision.path,
-            mode=decision.mode if cycle.clock_trusted else None,
-            would_be_target=memory.would_be_target,
-            preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
-            morning=morning.morning,
-            preheated_for=None if reading is None else note_preheat(reading),
-        ),
+        memory=replace(_kept_memory(memory, decision, reading, cycle), morning=morning.morning),
         air_dry_run=None,
         optimal_start=None,
         morning=morning.finished,
@@ -120,6 +122,21 @@ def hold_air_dry_run(follow_up: ZoneFollowUp, memory: ZoneMemory) -> ZoneFollowU
             would_be_target=memory.would_be_target,
         ),
         air_dry_run=None,
+    )
+
+
+def _kept_memory(
+    memory: ZoneMemory,
+    decision: ZoneDecision,
+    reading: MorningReading | None,
+    cycle: CycleConditions,
+) -> ZoneMemory:
+    return ZoneMemory(
+        path=decision.path,
+        mode=decision.mode if cycle.clock_trusted else None,
+        would_be_target=memory.would_be_target,
+        preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
+        preheated_for=None if reading is None else note_preheat(reading),
     )
 
 

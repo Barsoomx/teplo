@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from django.utils import translation
@@ -352,10 +353,55 @@ def test_journaled_alert_without_a_time_reads_without_one() -> None:
         {**PAYLOAD, 'device_kind': 'toaster'},
         {**PAYLOAD, 'since': 'yesterday'},
         {**PAYLOAD, 'since': '2026-10-31T17:24:30'},
+        {**PAYLOAD, 'kind': 'phase_overload', 'amps': 'many'},
     ],
 )
 def test_unreadable_journal_payload_gives_no_text(payload: dict[str, object]) -> None:
     assert alert_text_from_payload(AlertTransition.RAISED, payload, AT) is None
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('transition', 'amps', 'expected'),
+    [
+        (AlertTransition.RAISED, Decimal('31.27'), 'Фаза L2 перегружена: 31,3 А'),
+        (AlertTransition.RAISED, Decimal('31.00'), 'Фаза L2 перегружена: 31 А'),
+        (AlertTransition.RAISED, None, 'Фаза L2 перегружена'),
+        (AlertTransition.CLEARED, None, 'Фаза L2 снова в норме'),
+    ],
+    ids=['raised', 'raised_on_a_whole_ampere', 'raised_without_a_current', 'cleared'],
+)
+def test_phase_overload_reads_in_russian(transition: AlertTransition, amps: Decimal | None, expected: str) -> None:
+    assert alert_text(AlertKind.PHASE_OVERLOAD, transition, 'L2', DeviceKind.PHASE_METER, SINCE, AT, amps) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_phase_overload_reads_in_english() -> None:
+    text = alert_text(
+        AlertKind.PHASE_OVERLOAD,
+        AlertTransition.RAISED,
+        'L2',
+        DeviceKind.PHASE_METER,
+        SINCE,
+        AT,
+        Decimal('31.27'),
+    )
+
+    assert text == 'Phase L2 is overloaded: 31.3 A'
+
+
+@pytest.mark.usefixtures('russian')
+def test_journaled_phase_overload_reads_with_its_current() -> None:
+    payload = {
+        **PAYLOAD,
+        'kind': 'phase_overload',
+        'subject': 'l2',
+        'name': 'L2',
+        'device_kind': 'phase_meter',
+        'amps': '31.27',
+    }
+
+    assert alert_text_from_payload(AlertTransition.RAISED, payload, AT) == 'Фаза L2 перегружена: 31,3 А'
 
 
 @pytest.mark.usefixtures('russian')

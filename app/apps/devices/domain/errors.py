@@ -23,6 +23,11 @@ class DeviceNotFoundError(DomainError):
         super().__init__(f'device not found: {slug}', error_code='device_not_found')
 
 
+class PlugNotSwitchableError(DomainError):
+    def __init__(self, slug: str, reason: str) -> None:
+        super().__init__(f'plug {slug} cannot be switched: {reason}', error_code='plug_not_switchable')
+
+
 class DeviceConfigError(DomainError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail, error_code='device_config_invalid')

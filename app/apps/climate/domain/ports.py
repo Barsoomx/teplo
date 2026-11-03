@@ -1,7 +1,9 @@
+from collections.abc import Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
 from apps.climate.domain.zone import ZoneSettings
 
@@ -22,3 +24,11 @@ class ZoneLearningStore(Protocol):
     def save_heat_up(self, slug: str, heat_up: HeatUpModel) -> None: ...
 
     def save_early_stop_offset(self, slug: str, offset: Decimal) -> None: ...
+
+
+class LoadGate(Protocol):
+    def held_zones(self) -> frozenset[str]: ...
+
+    def gated_zones(self) -> frozenset[str]: ...
+
+    def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]: ...

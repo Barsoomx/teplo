@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import timedelta
+from decimal import Decimal
 from enum import StrEnum
 
 from apps.devices.domain.kinds import DeviceKind
@@ -8,6 +9,7 @@ from apps.devices.domain.kinds import DeviceKind
 class AlertKind(StrEnum):
     DEVICE_LOST = 'device_lost'
     ZONE_OFF = 'zone_off'
+    PHASE_OVERLOAD = 'phase_overload'
 
 
 class AlertTransition(StrEnum):
@@ -36,3 +38,12 @@ class ZoneHeating:
     name: str
     should_heat: bool
     power: bool | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PhaseAlarm:
+    phase: str
+    name: str
+    alarmed: bool
+    amps: Decimal | None
+    began_ago: timedelta | None

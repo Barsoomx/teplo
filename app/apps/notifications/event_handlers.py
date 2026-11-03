@@ -30,6 +30,7 @@ def _queue_alert(event: AlertEvent, transition: AlertTransition) -> None:
             name=event.name,
             device_kind=event.device_kind,
             since=event.since,
+            amps=event.amps,
         ),
         alert=AlertKey(kind=event.kind, subject=event.subject),
         transition=transition,

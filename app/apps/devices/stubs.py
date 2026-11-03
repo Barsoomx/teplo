@@ -1,8 +1,8 @@
 from decimal import Decimal
 
 from apps.core.domain.errors import DomainError
-from apps.devices.domain.capabilities import FloorThermostat, MeteredPlug
-from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError
+from apps.devices.domain.capabilities import FloorThermostat, MeteredPlug, SwitchablePlug
+from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError, PlugNotSwitchableError
 from apps.devices.domain.readings import PlugState, ThermostatMode, ThermostatState
 
 
@@ -67,6 +67,22 @@ class MeteredPlugStub:
         return self._state
 
 
+class SwitchablePlugStub(MeteredPlugStub):
+    def __init__(self, state: PlugState | None, error: DomainError | None = None) -> None:
+        super().__init__(state=state, error=error)
+        self._switches: list[bool] = []
+
+    @property
+    def switches(self) -> list[bool]:
+        return self._switches
+
+    def set_on(self, on: bool) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._switches.append(on)
+
+
 class PlugProviderStub:
     def __init__(self, plugs: dict[str, MeteredPlug]) -> None:
         self._plugs = plugs
@@ -74,6 +90,28 @@ class PlugProviderStub:
     def plug(self, slug: str) -> MeteredPlug:
         if slug not in self._plugs:
             raise DriverNotImplementedError(slug)
+
+        return self._plugs[slug]
+
+
+class SwitchablePlugProviderStub:
+    def __init__(self, plugs: dict[str, SwitchablePlug], errors: dict[str, Exception] | None = None) -> None:
+        self._plugs = plugs
+        self._errors = errors
+        self._asked: list[str] = []
+
+    @property
+    def asked(self) -> list[str]:
+        return self._asked
+
+    def switchable_plug(self, slug: str) -> SwitchablePlug:
+        self._asked.append(slug)
+        error = None if self._errors is None else self._errors.get(slug)
+        if error is not None:
+            raise error
+
+        if slug not in self._plugs:
+            raise PlugNotSwitchableError(slug, 'no switching driver')
 
         return self._plugs[slug]
 

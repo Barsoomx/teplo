@@ -8,12 +8,16 @@ from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
+from apps.power.domain.loads import LoadKind, LoadRecord
 from apps.power.domain.outage import OutageRecord
+from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.outage import OutageRepository
+from apps.power.services.outage_overloads import OutageOverloads
 from apps.telemetry.models import JournalEntry
 from apps.telemetry.repositories.journal import JournalRepository
 
 POWER_OUTAGE = 'power_outage'
+LOAD_DEVICE_KINDS = {LoadKind.PLUG: DeviceKind.PLUG, LoadKind.ZONE: DeviceKind.THERMOSTAT}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -49,13 +53,17 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
         journal: JournalRepository,
         zones: ZoneRepository,
         devices: DeviceRepository,
+        loads: LoadRepository,
         outages: OutageRepository,
+        overloads: OutageOverloads,
     ) -> None:
         super().__init__()
         self._journal = journal
         self._zones = zones
         self._devices = devices
+        self._loads = loads
         self._outages = outages
+        self._overloads = overloads
 
     @classmethod
     def init(cls) -> 'GetJournalTimelineUseCase':
@@ -63,24 +71,27 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
             journal=JournalRepository(),
             zones=ZoneRepository(),
             devices=DeviceRepository(),
+            loads=LoadRepository(),
             outages=OutageRepository(),
+            overloads=OutageOverloads.init(),
         )
 
     def _execute(self, input_dto: GetJournalTimelineInputDTO) -> GetJournalTimelineOutputDTO:
         devices = {device.slug: device for device in self._devices.all_settings()}
-        names = self._subject_names(devices)
+        loads = {load.slug: load for load in self._loads.all_records()}
+        names = self._subject_names(devices, loads)
         journal = self._journal.latest(limit=input_dto.limit)
         outage_ids = [_outage_id(entry) for entry in journal]
-        outages = self._outages.by_ids([outage_id for outage_id in outage_ids if outage_id is not None])
+        recorded = self._outages.by_ids([outage_id for outage_id in outage_ids if outage_id is not None])
+        outages = {outage_id: self._overloads.noted(outage) for outage_id, outage in recorded.items()}
         days: dict[date, list[TimelineEntry]] = {}
         for entry, outage_id in zip(journal, outage_ids, strict=True):
-            device = devices.get(entry.subject)
             days.setdefault(timezone.localdate(entry.created_at), []).append(
                 TimelineEntry(
                     kind=entry.kind,
                     subject=entry.subject,
                     subject_name=names.get(entry.subject, entry.subject),
-                    device_kind=device.kind if device else None,
+                    device_kind=_device_kind(devices.get(entry.subject), loads.get(entry.subject)),
                     payload=entry.payload,
                     created_at=entry.created_at,
                     outage=None if outage_id is None else outages.get(outage_id),
@@ -90,12 +101,21 @@ class GetJournalTimelineUseCase(BaseUseCase[GetJournalTimelineInputDTO, GetJourn
             days=tuple(TimelineDay(day=day, entries=tuple(entries)) for day, entries in days.items()),
         )
 
-    def _subject_names(self, devices: dict[str, DeviceSettings]) -> dict[str, str]:
+    def _subject_names(self, devices: dict[str, DeviceSettings], loads: dict[str, LoadRecord]) -> dict[str, str]:
         names = {slug: device.name for slug, device in devices.items()}
         for zone in self._zones.all_settings():
             names[zone.slug] = zone.name
             names[zone.thermostat_slug] = zone.name
+        for slug, load in loads.items():
+            names.setdefault(slug, load.name)
         return names
+
+
+def _device_kind(device: DeviceSettings | None, load: LoadRecord | None) -> DeviceKind | None:
+    if device is not None:
+        return device.kind
+
+    return None if load is None else LOAD_DEVICE_KINDS[load.kind]
 
 
 def _outage_id(entry: JournalEntry) -> int | None:

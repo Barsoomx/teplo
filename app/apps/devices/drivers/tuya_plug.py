@@ -8,7 +8,7 @@ from django.utils import timezone
 from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import PlugState
-from apps.devices.drivers.tuya_client import TuyaPayload, TuyaStatusClient, tuya_client
+from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, TuyaStatusClient, tuya_client
 
 SWITCH_DP = 1
 CURRENT_DP = 18
@@ -55,6 +55,27 @@ class TuyaPlugDriver:
             )
         except (KeyError, ValueError) as error:
             raise DeviceProtocolError(f'unexpected plug payload: {dps}') from error
+
+
+class TuyaSwitchablePlugDriver(TuyaPlugDriver):
+    _client: TuyaClient
+
+    def __init__(self, client: TuyaClient, clock: Callable[[], datetime]) -> None:
+        super().__init__(client=client, clock=clock)
+
+    @classmethod
+    def init(cls, secret: DeviceSecret) -> 'TuyaSwitchablePlugDriver':
+        return cls(client=tuya_client(secret), clock=timezone.now)
+
+    def set_on(self, on: bool) -> None:
+        try:
+            with self._lock:
+                payload = self._client.set_value(SWITCH_DP, on)
+        except OSError as error:
+            raise DeviceUnavailableError(str(error)) from error
+
+        if payload and 'Error' in payload:
+            raise DeviceUnavailableError(str(payload['Error']))
 
 
 def _switch(value: object) -> bool:

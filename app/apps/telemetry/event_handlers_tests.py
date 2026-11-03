@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -13,18 +14,49 @@ from apps.climate.domain.events import (
     ZoneCommandIssued,
 )
 from apps.climate.domain.modes import AirState, ScheduleMode
+from apps.core.domain.events import DomainEvent
 from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.domain.readings import ThermostatMode
 from apps.notifications.domain.alerts import AlertKind
 from apps.notifications.domain.events import AlertCleared, AlertRaised
+from apps.power.domain.events import (
+    EvChargingStarted,
+    EvChargingStopped,
+    LoadCommand,
+    LoadCommandFailed,
+    LoadPhaseLearned,
+    LoadRestored,
+    LoadRestoredDryRun,
+    LoadShed,
+    LoadShedDryRun,
+    LoadShedOverridden,
+    PhaseCalmed,
+    PhaseOverloaded,
+    RestoreCause,
+    StartWouldWaitDryRun,
+)
+from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
+from apps.power.domain.start_gate import StartRefusal
 from apps.telemetry.event_handlers import (
     journal_air_control_dry_run,
     journal_alert_cleared,
     journal_alert_raised,
     journal_device_availability,
+    journal_ev_charging_started,
+    journal_ev_charging_stopped,
+    journal_load_command_failure,
+    journal_load_phase_learned,
+    journal_load_restored,
+    journal_load_restored_dry_run,
+    journal_load_shed,
+    journal_load_shed_dry_run,
+    journal_load_shed_overridden,
     journal_optimal_start_dry_run,
+    journal_phase_calm,
+    journal_phase_overload,
     journal_second_floor_guard_dry_run,
+    journal_start_would_wait_dry_run,
     journal_zone_boost,
     journal_zone_command,
     journal_zone_command_failure,
@@ -34,6 +66,15 @@ from apps.telemetry.models import JournalEntry
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+BOILER_SHED = {
+    'load': 'boiler-1f',
+    'name': 'Бойлер 1 этаж',
+    'kind': 'plug',
+    'phase': 'l2',
+    'amps': '26.4',
+    'load_amps': '6.0',
+    'reason': 'overload',
+}
 
 
 def _entry() -> tuple[str, str, object, datetime]:
@@ -208,6 +249,35 @@ def test_raised_alert_is_journaled() -> None:
             'name': 'Кухня',
             'device_kind': 'thermostat',
             'since': '2026-10-29T05:48:00Z',
+            'amps': None,
+        },
+        NOW,
+    )
+
+
+def test_phase_overload_alert_is_journaled_with_its_current() -> None:
+    journal_alert_raised(
+        AlertRaised(
+            kind=AlertKind.PHASE_OVERLOAD,
+            subject='l2',
+            name='L2',
+            device_kind=DeviceKind.PHASE_METER,
+            since=NOW - timedelta(minutes=1),
+            amps=Decimal('31.27'),
+            occurred_at=NOW,
+        ),
+    )
+
+    assert _entry() == (
+        'alert_raised',
+        'l2',
+        {
+            'kind': 'phase_overload',
+            'subject': 'l2',
+            'name': 'L2',
+            'device_kind': 'phase_meter',
+            'since': '2026-10-29T05:59:00Z',
+            'amps': '31.27',
         },
         NOW,
     )
@@ -234,6 +304,216 @@ def test_cleared_alert_is_journaled() -> None:
             'name': 'Кухня',
             'device_kind': 'thermostat',
             'since': '2026-10-29T05:20:00Z',
+            'amps': None,
         },
         NOW,
     )
+
+
+@pytest.mark.parametrize(
+    ('handler', 'event', 'expected'),
+    [
+        (
+            journal_phase_overload,
+            PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal('26.4'), occurred_at=NOW),
+            ('phase_overload', 'l2', {'phase': 'l2', 'amps': '26.4'}, NOW),
+        ),
+        (
+            journal_phase_calm,
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('17.2'), occurred_at=NOW),
+            ('phase_calm', 'l2', {'phase': 'l2', 'amps': '17.2'}, NOW),
+        ),
+        (
+            journal_load_shed,
+            LoadShed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('26.4'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=NOW,
+            ),
+            ('load_shed', 'boiler-1f', BOILER_SHED, NOW),
+        ),
+        (
+            journal_load_shed_dry_run,
+            LoadShedDryRun(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('26.4'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=NOW,
+            ),
+            ('load_shed_dry_run', 'boiler-1f', BOILER_SHED, NOW),
+        ),
+        (
+            journal_load_restored,
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('10.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                switched_on=False,
+                occurred_at=NOW,
+            ),
+            (
+                'load_restored',
+                'kitchen',
+                {
+                    'load': 'kitchen',
+                    'name': 'Кухня',
+                    'kind': 'zone',
+                    'phase': 'l2',
+                    'amps': '10.0',
+                    'load_amps': '8.0',
+                    'reason': 'overload',
+                    'cause': 'calm',
+                    'switched_on': False,
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_load_restored_dry_run,
+            LoadRestoredDryRun(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.UNKNOWN,
+                amps=None,
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.METER_LOST,
+                cause=RestoreCause.RELEASED,
+                switched_on=False,
+                occurred_at=NOW,
+            ),
+            (
+                'load_restored_dry_run',
+                'kitchen',
+                {
+                    'load': 'kitchen',
+                    'name': 'Кухня',
+                    'kind': 'zone',
+                    'phase': 'unknown',
+                    'amps': None,
+                    'load_amps': '8.0',
+                    'reason': 'meter_lost',
+                    'cause': 'released',
+                    'switched_on': False,
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_load_shed_overridden,
+            LoadShedOverridden(load='boiler-1f', name='Бойлер 1 этаж', phase=LoadPhase.L2, occurred_at=NOW),
+            ('load_shed_overridden', 'boiler-1f', {'load': 'boiler-1f', 'name': 'Бойлер 1 этаж', 'phase': 'l2'}, NOW),
+        ),
+        (
+            journal_load_command_failure,
+            LoadCommandFailed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                command=LoadCommand.SHED,
+                error='timed out',
+                error_code='device_unavailable',
+                occurred_at=NOW,
+            ),
+            (
+                'load_command_failed',
+                'boiler-1f',
+                {
+                    'load': 'boiler-1f',
+                    'name': 'Бойлер 1 этаж',
+                    'command': 'shed',
+                    'error': 'timed out',
+                    'error_code': 'device_unavailable',
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_start_would_wait_dry_run,
+            StartWouldWaitDryRun(
+                load='kitchen',
+                name='Кухня',
+                phase=LoadPhase.L2,
+                amps=Decimal('21.5'),
+                load_amps=Decimal('8.0'),
+                reason=StartRefusal.NO_HEADROOM,
+                occurred_at=NOW,
+            ),
+            (
+                'start_would_wait_dry_run',
+                'kitchen',
+                {
+                    'load': 'kitchen',
+                    'name': 'Кухня',
+                    'phase': 'l2',
+                    'amps': '21.5',
+                    'load_amps': '8.0',
+                    'reason': 'no_headroom',
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_load_phase_learned,
+            LoadPhaseLearned(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                phase=LoadPhase.L2,
+                amps=Decimal('6.2'),
+                samples=3,
+                occurred_at=NOW,
+            ),
+            (
+                'load_phase_learned',
+                'boiler-1f',
+                {'load': 'boiler-1f', 'name': 'Бойлер 1 этаж', 'phase': 'l2', 'amps': '6.2', 'samples': 3},
+                NOW,
+            ),
+        ),
+        (
+            journal_ev_charging_started,
+            EvChargingStarted(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=NOW),
+            ('ev_charging_started', 'l3', {'phase': 'l3', 'amps': '16.0', 'before': '4.0'}, NOW),
+        ),
+        (
+            journal_ev_charging_stopped,
+            EvChargingStopped(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=NOW),
+            ('ev_charging_stopped', 'l3', {'phase': 'l3', 'amps': '16.0', 'before': '4.0'}, NOW),
+        ),
+    ],
+    ids=[
+        'phase_overload',
+        'phase_calm',
+        'load_shed',
+        'load_shed_dry_run',
+        'load_restored',
+        'load_restored_dry_run',
+        'load_shed_overridden',
+        'load_command_failed',
+        'start_would_wait_dry_run',
+        'load_phase_learned',
+        'ev_charging_started',
+        'ev_charging_stopped',
+    ],
+)
+def test_guard_decision_is_journaled_at_once_with_its_raw_values(
+    handler: Callable[..., None],
+    event: DomainEvent,
+    expected: tuple[str, str, object, datetime],
+) -> None:
+    handler(event)
+
+    assert _entry() == expected

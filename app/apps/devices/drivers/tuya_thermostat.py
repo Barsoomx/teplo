@@ -12,9 +12,11 @@ from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, tuya_clien
 
 POWER_DP = 1
 MODE_DP = 2
+RELAY_DP = 3
 SETPOINT_DP = 16
 FLOOR_TEMPERATURE_DP = 24
 TENTHS = Decimal(10)
+RELAY_HEATING = {'heating': True, 'warming': False}
 
 
 class TuyaThermostatDriver:
@@ -59,6 +61,7 @@ class TuyaThermostatDriver:
                 mode=ThermostatMode(str(dps[str(MODE_DP)])),
                 setpoint=Decimal(str(dps[str(SETPOINT_DP)])) / TENTHS,
                 floor_temperature=Decimal(str(dps[str(FLOOR_TEMPERATURE_DP)])) / TENTHS,
+                heating=_heating(dps.get(str(RELAY_DP))),
                 read_at=self._clock(),
             )
         except (KeyError, ValueError, InvalidOperation) as error:
@@ -73,3 +76,10 @@ class TuyaThermostatDriver:
 
         if payload and 'Error' in payload:
             raise DeviceUnavailableError(str(payload['Error']))
+
+
+def _heating(relay: object) -> bool | None:
+    if not isinstance(relay, str):
+        return None
+
+    return RELAY_HEATING.get(relay)
