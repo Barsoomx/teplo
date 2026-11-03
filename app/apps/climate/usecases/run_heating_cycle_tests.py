@@ -1933,29 +1933,50 @@ def locked_learning() -> ZoneLearningStoreStub:
 
 
 @pytest.fixture
+def f_finishing_morning_memory() -> ZoneMemory:
+    return ZoneMemory(
+        path=ControlPath.FLOOR,
+        mode=ScheduleMode.PREHEAT,
+        morning=Morning(
+            comfort_at=COMFORT_AT,
+            target=Decimal('22.0'),
+            outdoor=Decimal('-3.4'),
+            samples=tuple(AirSample(at=at, air=Decimal(air)) for at, air in MORNING_AIR[1:]),
+        ),
+        preheated_for=COMFORT_AT,
+    )
+
+
+@pytest.fixture
 def f_unsaved_morning_cycle(
     house_thermostats: dict[str, FloorThermostat],
     locked_learning: ZoneLearningStoreStub,
+    f_finishing_morning_memory: ZoneMemory,
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
     f_book: ControlBook,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
-    f_book.remember_zone(
-        'kitchen',
-        ZoneMemory(
-            path=ControlPath.FLOOR,
-            mode=ScheduleMode.PREHEAT,
-            morning=Morning(
-                comfort_at=COMFORT_AT,
-                target=Decimal('22.0'),
-                outdoor=Decimal('-3.4'),
-                samples=tuple(AirSample(at=at, air=Decimal(air)) for at, air in MORNING_AIR[1:]),
-            ),
-            preheated_for=COMFORT_AT,
-        ),
-    )
+    f_book.remember_zone('kitchen', f_finishing_morning_memory)
     return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, learning=locked_learning)
+
+
+@pytest.fixture
+def f_kitchen_deleted_while_the_cycle_runs(
+    house_thermostats: dict[str, FloorThermostat],
+    house_zones: list[ZoneSettings],
+    f_finishing_morning_memory: ZoneMemory,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    def delete_kitchen() -> None:
+        Zone.objects.filter(slug='kitchen').delete()
+
+    f_book.remember_zone('kitchen', f_finishing_morning_memory)
+    zones = ConcurrentStampZoneStoreStub(zones=house_zones, meanwhile=delete_kitchen)
+    return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, zones=zones)
 
 
 @pytest.fixture
@@ -2112,6 +2133,42 @@ def test_stop_that_fails_to_save_is_lost_while_the_cycle_goes_on(
             would_be_target=ThermostatTarget(power=True, setpoint=Decimal('18.0')),
         ),
         [('zone_early_stop_offset_save_failed', 'warning', 'kitchen', LOCKED)],
+    )
+
+
+def test_zone_deleted_while_the_cycle_runs_reports_failed_while_the_cycle_goes_on(
+    f_kitchen_deleted_while_the_cycle_runs: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    f_book: ControlBook,
+    f_finishing_morning_memory: ZoneMemory,
+) -> None:
+    with capture_logs() as logs:
+        output = f_kitchen_deleted_while_the_cycle_runs.execute(_at(COMFORT_AT))
+
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        f_living_room_thermostat.commands,
+        f_events,
+        f_book.zone('kitchen'),
+        [(log['event'], log['log_level'], log['zone'], log['error']) for log in logs],
+    ) == (
+        {
+            'bathroom-2f': ZoneCycleOutcome.APPLIED,
+            'kitchen': ZoneCycleOutcome.FAILED,
+            'living-room': ZoneCycleOutcome.APPLIED,
+        },
+        [('setpoint', Decimal('28.0'))],
+        [('setpoint', Decimal('28.0'))],
+        [
+            _issued('bathroom-2f', '30.0', COMFORT_AT),
+            _issued('kitchen', '28.0', COMFORT_AT),
+            _issued('living-room', '28.0', COMFORT_AT),
+        ],
+        f_finishing_morning_memory,
+        [('zone_cycle_failed', 'warning', 'kitchen', 'zone not found: kitchen')],
     )
 
 

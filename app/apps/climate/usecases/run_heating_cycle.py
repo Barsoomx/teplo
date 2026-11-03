@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.drive import StartPermits, ZoneDrive, ZoneStart, plan_drive
+from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.events import SecondFloorGuardDryRun, ZoneCommandFailed, ZoneCommandIssued
 from apps.climate.domain.learning import (
     Morning,
@@ -212,7 +213,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     ) -> ZoneCycleOutcome:
         try:
             return self._control_zone(zone, conditions, cycle, permits)
-        except OperationalError as error:
+        except (OperationalError, ZoneNotFoundError) as error:
             logger.warning(
                 'zone_cycle_failed',
                 zone=zone.slug,
