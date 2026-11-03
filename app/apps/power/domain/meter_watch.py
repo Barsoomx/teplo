@@ -39,10 +39,6 @@ def meter_condition(watch: MeterWatch, at: float, thresholds: PhaseThresholds) -
     return MeterCondition.LOST if held(watch.stale_since, at, thresholds.meter_lost_after) else MeterCondition.STALE
 
 
-def phases_overlap(first: LoadPhase, second: LoadPhase) -> bool:
-    return LoadPhase.UNKNOWN in (first, second) or first is second
-
-
 def drawing_floors(loads: Sequence[LoadStatus]) -> list[LoadStatus]:
     return sorted(
         (load for load in loads if load.kind is LoadKind.ZONE and load.available and load.drawing and not load.shed),
@@ -51,13 +47,13 @@ def drawing_floors(loads: Sequence[LoadStatus]) -> list[LoadStatus]:
 
 
 def limp_sheds(loads: Sequence[LoadStatus], sheddable: Collection[str]) -> tuple[LoadStatus, ...]:
-    kept: list[LoadStatus] = []
+    taken: set[LoadPhase] = set()
     shed: list[LoadStatus] = []
     for load in reversed(drawing_floors(loads)):
-        if load.slug in sheddable and any(phases_overlap(load.phase, other.phase) for other in kept):
+        if load.slug in sheddable and load.phase in taken:
             shed.append(load)
         else:
-            kept.append(load)
+            taken.add(load.phase)
     return tuple(reversed(shed))
 
 
@@ -72,15 +68,10 @@ def choose_limp_restore(
     if not elapsed(last_restore_at, at, thresholds.restore_interval):
         return None
 
-    floors = drawing_floors(loads)
+    taken = {floor.phase for floor in drawing_floors(loads)}
     statuses = {load.slug: load for load in loads if load.kind is LoadKind.ZONE and load.available}
     ready = sorted(
-        (
-            shed
-            for shed in sheds
-            if shed.load in statuses
-            and not any(phases_overlap(statuses[shed.load].phase, floor.phase) for floor in floors)
-        ),
+        (shed for shed in sheds if shed.load in statuses and statuses[shed.load].phase not in taken),
         key=lambda shed: (not shed.restore_failed, statuses[shed.load].priority),
         reverse=True,
     )

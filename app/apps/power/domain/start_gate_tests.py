@@ -134,10 +134,7 @@ def test_lost_meter_starts_no_plug() -> None:
         ([replace(HALLWAY, phase=LoadPhase.L2)], GRANTED),
         ([replace(HALLWAY, shed=True)], GRANTED),
         ([replace(BOILER, drawing=True)], GRANTED),
-        (
-            [replace(HALLWAY, phase=LoadPhase.UNKNOWN)],
-            StartDecision(load='kitchen', refusal=StartRefusal.PHASE_TAKEN, overrun=None),
-        ),
+        ([replace(HALLWAY, phase=LoadPhase.UNKNOWN)], GRANTED),
     ],
     ids=[
         'no_floor_draws',
@@ -159,15 +156,21 @@ def test_lost_meter_starts_a_floor_only_when_no_other_floor_draws_on_its_phase(
     ('others', 'expected'),
     [
         ([], GRANTED),
+        ([replace(HALLWAY, phase=LoadPhase.L3)], GRANTED),
         (
-            [replace(HALLWAY, phase=LoadPhase.L3)],
+            [replace(HALLWAY, phase=LoadPhase.UNKNOWN)],
             StartDecision(load='kitchen', refusal=StartRefusal.PHASE_TAKEN, overrun=None),
         ),
-        ([replace(BOILER, drawing=True)], GRANTED),
+        ([replace(BOILER, phase=LoadPhase.UNKNOWN, drawing=True)], GRANTED),
     ],
-    ids=['no_floor_draws', 'a_floor_draws_on_any_phase', 'a_plug_draws'],
+    ids=[
+        'no_floor_draws',
+        'a_floor_of_known_phase_draws',
+        'another_floor_of_unknown_phase_draws',
+        'a_plug_of_unknown_phase_draws',
+    ],
 )
-def test_lost_meter_starts_a_floor_of_unknown_phase_only_when_no_other_floor_draws(
+def test_lost_meter_counts_floors_of_unknown_phase_as_one_more_phase(
     others: list[LoadStatus],
     expected: StartDecision,
 ) -> None:

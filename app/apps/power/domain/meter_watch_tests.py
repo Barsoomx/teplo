@@ -13,7 +13,6 @@ from apps.power.domain.meter_watch import (
     choose_limp_restore,
     limp_sheds,
     meter_condition,
-    phases_overlap,
     watch_meter,
 )
 from apps.power.domain.shedding import Shed
@@ -99,25 +98,6 @@ def test_meter_stale_for_the_meter_lost_hold_is_lost(watch: MeterWatch, expected
     assert meter_condition(watch, 159.0, THRESHOLDS) is expected
 
 
-@pytest.mark.parametrize(
-    ('first', 'second', 'expected'),
-    [
-        (LoadPhase.L1, LoadPhase.L1, True),
-        (LoadPhase.L1, LoadPhase.L2, False),
-        (LoadPhase.UNKNOWN, LoadPhase.L3, True),
-        (LoadPhase.L2, LoadPhase.UNKNOWN, True),
-        (LoadPhase.UNKNOWN, LoadPhase.UNKNOWN, True),
-    ],
-    ids=['same_phase', 'other_phases', 'unknown_beside_a_phase', 'phase_beside_unknown', 'both_unknown'],
-)
-def test_phase_of_a_load_overlaps_its_own_and_unknown_overlaps_every_phase(
-    first: LoadPhase,
-    second: LoadPhase,
-    expected: bool,
-) -> None:
-    assert phases_overlap(first, second) is expected
-
-
 def test_limp_house_keeps_the_most_important_drawing_floor_of_each_phase() -> None:
     loads = [LIVING_ROOM, BOILER, KITCHEN, HALLWAY]
 
@@ -127,12 +107,12 @@ def test_limp_house_keeps_the_most_important_drawing_floor_of_each_phase() -> No
 @pytest.mark.parametrize(
     ('loads', 'expected'),
     [
-        ([LIVING_ROOM, BOILER, BATHROOM_2F, KITCHEN, HALLWAY, BATHROOM_1F], (BATHROOM_1F, HALLWAY, BATHROOM_2F)),
-        ([BATHROOM_2F, KITCHEN, HALLWAY], (HALLWAY, KITCHEN)),
+        ([LIVING_ROOM, BOILER, BATHROOM_2F, KITCHEN, HALLWAY, BATHROOM_1F], (BATHROOM_1F, HALLWAY)),
+        ([BATHROOM_2F, KITCHEN, HALLWAY], ()),
     ],
-    ids=['beside_more_important_floors_of_known_phase', 'more_important_than_floors_of_known_phase'],
+    ids=['beside_a_more_important_floor_of_unknown_phase', 'beside_floors_of_known_phases'],
 )
-def test_limp_house_counts_a_floor_of_unknown_phase_on_every_phase(
+def test_limp_house_counts_floors_of_unknown_phase_as_one_more_phase(
     loads: list[LoadStatus],
     expected: tuple[LoadStatus, ...],
 ) -> None:
@@ -140,9 +120,9 @@ def test_limp_house_counts_a_floor_of_unknown_phase_on_every_phase(
 
 
 def test_limp_house_leaves_a_floor_it_may_not_shed_drawing_and_sheds_the_less_important_floors_beside_it() -> None:
-    loads = [LIVING_ROOM, BATHROOM_2F, KITCHEN]
+    loads = [LIVING_ROOM, replace(BATHROOM_2F, phase=LoadPhase.L1), HALLWAY]
 
-    assert limp_sheds(loads, EVERY_FLOOR - {'bathroom-2f'}) == (KITCHEN,)
+    assert limp_sheds(loads, EVERY_FLOOR - {'bathroom-2f'}) == (HALLWAY,)
 
 
 def test_limp_house_counts_only_floors_that_draw_and_are_not_shed() -> None:
@@ -172,9 +152,9 @@ def _limp_restore(sheds: list[Shed], loads: list[LoadStatus], last_restore_at: f
     [
         ([KITCHEN_SHED], [KITCHEN_OFF, LIVING_ROOM], KITCHEN_SHED),
         ([KITCHEN_SHED], [KITCHEN_OFF, replace(LIVING_ROOM, phase=LoadPhase.L2)], None),
-        ([KITCHEN_SHED], [KITCHEN_OFF, BATHROOM_2F], None),
-        ([BATHROOM_1F_SHED], [BATHROOM_1F_OFF, LIVING_ROOM], None),
-        ([BATHROOM_1F_SHED], [BATHROOM_1F_OFF, replace(LIVING_ROOM, drawing=False)], BATHROOM_1F_SHED),
+        ([KITCHEN_SHED], [KITCHEN_OFF, BATHROOM_2F], KITCHEN_SHED),
+        ([BATHROOM_1F_SHED], [BATHROOM_1F_OFF, LIVING_ROOM], BATHROOM_1F_SHED),
+        ([BATHROOM_1F_SHED], [BATHROOM_1F_OFF, BATHROOM_2F], None),
         ([HALLWAY_SHED, KITCHEN_SHED], [HALLWAY_OFF, KITCHEN_OFF], KITCHEN_SHED),
         ([BOILER_SHED], [BOILER_OFF], None),
         ([KITCHEN_SHED], [replace(KITCHEN_OFF, available=False)], None),
@@ -183,14 +163,14 @@ def _limp_restore(sheds: list[Shed], loads: list[LoadStatus], last_restore_at: f
         'no_floor_draws_on_its_phase',
         'a_floor_draws_on_its_phase',
         'a_floor_of_unknown_phase_draws',
-        'floor_of_unknown_phase_beside_a_floor_drawing_on_any_phase',
-        'floor_of_unknown_phase_while_no_floor_draws',
+        'floor_of_unknown_phase_beside_a_floor_of_known_phase',
+        'floor_of_unknown_phase_beside_another_floor_of_unknown_phase',
         'most_important_floor_first',
         'plug',
         'floor_whose_thermostat_is_unavailable',
     ],
 )
-def test_lost_meter_brings_a_shed_floor_back_once_no_floor_that_may_share_its_phase_draws(
+def test_lost_meter_brings_a_shed_floor_back_once_no_other_floor_draws_on_its_phase(
     sheds: list[Shed],
     loads: list[LoadStatus],
     expected: Shed | None,

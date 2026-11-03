@@ -577,7 +577,7 @@ def f_mixed_floors_house(request: pytest.FixtureRequest) -> House:
 
 @pytest.fixture
 def f_floors_of_known_and_unknown_phase_house() -> House:
-    return _house(_live(KITCHEN, BATHROOM), LIVE_CONTROL, LIVE_ZONES)
+    return _house(_live(replace(LIVING_ROOM, phase=LoadPhase.UNKNOWN), KITCHEN, BATHROOM), LIVE_CONTROL, LIVE_ZONES)
 
 
 @pytest.fixture
@@ -1366,7 +1366,7 @@ def test_lost_meter_sheds_a_live_floor_only_beside_a_more_important_drawing_floo
     assert (_shed_at(outputs, 1), f_mixed_floors_house.zones.switched_off) == (shed, switched_off)
 
 
-def test_lost_meter_counts_a_floor_of_unknown_phase_on_the_phase_of_every_other_floor(
+def test_lost_meter_counts_floors_of_unknown_phase_as_one_more_phase(
     f_floors_of_known_and_unknown_phase_house: House,
 ) -> None:
     outputs = _seconds(f_floors_of_known_and_unknown_phase_house.guard, 62, None)
