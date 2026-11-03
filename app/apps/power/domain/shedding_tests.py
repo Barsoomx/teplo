@@ -118,6 +118,8 @@ SHED_KITCHEN_RECORD = replace(
     nominal_amps=Decimal('8.0'),
     shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None, device='thermostat-kitchen'),
 )
+BOILER_RECORD = replace(SHED_BOILER_RECORD, shed=None)
+BOILER_POINTED_AT_ANOTHER_PLUG = replace(BOILER_RECORD, device_slug='plug-boiler-2f')
 
 
 def _kitchen_shed_ago(shed: timedelta, stamped: timedelta | None) -> LoadRecord:
@@ -276,7 +278,18 @@ def test_shed_whose_write_failed_is_confirmed_by_the_first_reading_since_the_fai
     reading: LoadReading | None,
     expected: bool | None,
 ) -> None:
-    assert shed_confirmed(UNCONFIRMED_BOILER_SHED, reading) is expected
+    assert shed_confirmed(UNCONFIRMED_BOILER_SHED, BOILER_RECORD, reading) is expected
+
+
+@pytest.mark.parametrize(
+    'reading',
+    [None, plug_reading(on=True, current=Decimal('6.1'), read_at=AT + 25)],
+    ids=['before_any_reading', 'while_the_other_plug_reads_on'],
+)
+def test_shed_whose_write_failed_is_taken_as_shed_once_its_load_points_at_another_plug(
+    reading: LoadReading | None,
+) -> None:
+    assert shed_confirmed(UNCONFIRMED_BOILER_SHED, BOILER_POINTED_AT_ANOTHER_PLUG, reading) is True
 
 
 @pytest.mark.parametrize(

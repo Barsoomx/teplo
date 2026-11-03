@@ -105,7 +105,10 @@ def stored_shed(shed: Shed, *, handed_back: bool = False) -> LiveShed:
     )
 
 
-def shed_confirmed(unconfirmed: UnconfirmedShed, reading: LoadReading | None) -> bool | None:
+def shed_confirmed(unconfirmed: UnconfirmedShed, record: LoadRecord, reading: LoadReading | None) -> bool | None:
+    if moved(unconfirmed.shed, record):
+        return True
+
     if reading is None or reading.read_at <= unconfirmed.shed.at:
         return None
 

@@ -216,6 +216,7 @@ def _house(
     dry_run: bool = False,
     boiler_on: bool = True,
     boiler_error: DomainError | None = None,
+    boiler_switch_errors: tuple[DomainError, ...] = (),
     lookup_errors: dict[str, Exception] | None = None,
     write_errors: tuple[Exception, ...] = (),
     zone_stamped: bool = True,
@@ -237,7 +238,7 @@ def _house(
             thermostats.record_state(record.device_slug, _heating())
     loads = LoadStoreStub(records=records, live_zones=live_zones, write_errors=write_errors)
     load_settings = LoadSettingsStoreStub(control=control)
-    boiler = SwitchablePlugStub(state=None, error=boiler_error)
+    boiler = SwitchablePlugStub(state=None, error=boiler_error, switch_errors=boiler_switch_errors)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
     writes = ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=NOW))
     zones = ZoneSwitchStub(
@@ -667,6 +668,21 @@ def f_unreachable_plug_house() -> House:
 def f_overload_after_a_failed_plug_shed(f_unreachable_plug_house: House) -> House:
     _seconds(f_unreachable_plug_house.guard, 5, '26.0')
     return f_unreachable_plug_house
+
+
+@pytest.fixture
+def f_plug_shed_unconfirmed_when_its_load_moved() -> House:
+    house = _house(
+        _live(BOILER),
+        LIVE_CONTROL,
+        frozenset(),
+        boiler_switch_errors=(DeviceUnavailableError('timed out'),),
+    )
+    _seconds(house.guard, 4, '26.0')
+    _seconds(house.guard, 1, '15.0')
+    _pointed_at(house, 'boiler-1f', 'plug-boiler-2f')
+    house.plugs.record_state('plug-boiler-2f', _plug(on=True, second=5))
+    return house
 
 
 @pytest.fixture
@@ -1516,6 +1532,49 @@ def test_plug_shed_whose_write_failed_is_dropped_once_the_plug_still_reads_on(
         f_overload_after_a_failed_plug_shed.events[3:],
         _unconfirmed_sheds(f_overload_after_a_failed_plug_shed),
     ) == ([NOTHING], [], [], {})
+
+
+def test_plug_shed_whose_write_failed_is_released_to_its_plug_once_its_load_points_at_another_plug(
+    f_plug_shed_unconfirmed_when_its_load_moved: House,
+) -> None:
+    _seconds(f_plug_shed_unconfirmed_when_its_load_moved.guard, 56, '15.0')
+
+    assert (
+        f_plug_shed_unconfirmed_when_its_load_moved.boiler.switches,
+        f_plug_shed_unconfirmed_when_its_load_moved.plug_provider.asked,
+        f_plug_shed_unconfirmed_when_its_load_moved.loads.writes,
+        f_plug_shed_unconfirmed_when_its_load_moved.events[2:],
+        _unconfirmed_sheds(f_plug_shed_unconfirmed_when_its_load_moved),
+    ) == (
+        [True],
+        ['plug-boiler-1f', 'plug-boiler-1f'],
+        [('clear_shed', 'boiler-1f', None)],
+        [
+            LoadShed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('26.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(61),
+            ),
+            LoadRestored(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('15.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.RELEASED,
+                switched_on=True,
+                occurred_at=_moment(61),
+            ),
+        ],
+        {},
+    )
 
 
 def test_live_house_without_a_meter_keeps_one_floor_a_phase_a_minute_after_the_start(

@@ -147,7 +147,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     def _confirmed(self, state: GuardState, shedding: ShedState, now: datetime) -> ShedState:
         for slug, unconfirmed in tuple(shedding.unconfirmed.items()):
             record = state.loads.record(slug)
-            confirmed = shed_confirmed(unconfirmed, _reading(state, slug))
+            confirmed = None if record is None else shed_confirmed(unconfirmed, record, _reading(state, slug))
             if record is not None and confirmed is None:
                 continue
 
@@ -159,7 +159,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 continue
 
             shed = unconfirmed.shed
-            logger.info('load_shed_confirmed', load=slug)
+            logger.info('load_shed_confirmed', load=slug, moved=moved(shed, record))
             self._event_store.add_event(_shed_event(LoadShed, record, shed, amps=unconfirmed.amps, now=now))
             shedding = _stored(replace(shedding, sheds={**shedding.sheds, slug: shed}), slug, stored_shed(shed))
         return shedding

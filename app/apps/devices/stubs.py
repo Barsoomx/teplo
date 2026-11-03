@@ -68,8 +68,15 @@ class MeteredPlugStub:
 
 
 class SwitchablePlugStub(MeteredPlugStub):
-    def __init__(self, state: PlugState | None, error: DomainError | None = None) -> None:
+    def __init__(
+        self,
+        state: PlugState | None,
+        error: DomainError | None = None,
+        switch_errors: tuple[DomainError, ...] = (),
+    ) -> None:
         super().__init__(state=state, error=error)
+        self._switch_errors = switch_errors
+        self._failed_switches = 0
         self._switches: list[bool] = []
 
     @property
@@ -79,6 +86,10 @@ class SwitchablePlugStub(MeteredPlugStub):
     def set_on(self, on: bool) -> None:
         if self._error is not None:
             raise self._error
+
+        if self._failed_switches < len(self._switch_errors):
+            self._failed_switches += 1
+            raise self._switch_errors[self._failed_switches - 1]
 
         self._switches.append(on)
 
