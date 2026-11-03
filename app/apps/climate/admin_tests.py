@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -6,16 +7,27 @@ from django.contrib import admin
 from django.contrib.auth.models import User
 from django.http import HttpRequest
 from django.test import RequestFactory
+from django.utils import translation
 
-from apps.climate.admin import ZoneAdmin, ZoneLearningAdmin
+from apps.climate.admin import ClimateSettingsAdmin, ZoneAdmin, ZoneLearningAdmin
 from apps.climate.factories import ClimateSettingsFactory, ZoneFactory, ZoneLearningFactory
-from apps.climate.models import Zone, ZoneLearning
+from apps.climate.models import ClimateSettings, Zone, ZoneLearning
 from apps.power.factories import ZoneLoadFactory
 
 pytestmark = pytest.mark.django_db
 
 CYCLE_FIELDS = {'boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at'}
 SHED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
+CLIMATE_POSTED = {
+    'air_start_offset': '0.30',
+    'initial_early_stop_offset': '0.30',
+    'air_min_band': '0.20',
+    'preheat_lead_cap_minutes': '240',
+    'learned_mornings_needed': '3',
+    'second_floor_guard_threshold': '19.0',
+    'second_floor_guard_hysteresis': '0.30',
+}
+BELOW_MIN_BAND = 'Must not be below the air min band, or heating stops above the target'
 
 
 @pytest.fixture
@@ -33,6 +45,17 @@ def f_zone_admin() -> ZoneAdmin:
 @pytest.fixture
 def f_zone_learning_admin() -> ZoneLearningAdmin:
     return ZoneLearningAdmin(ZoneLearning, admin.site)
+
+
+@pytest.fixture
+def f_climate_settings_admin() -> ClimateSettingsAdmin:
+    return ClimateSettingsAdmin(ClimateSettings, admin.site)
+
+
+@pytest.fixture
+def russian() -> Iterator[None]:
+    with translation.override('ru'):
+        yield
 
 
 @pytest.fixture
@@ -134,3 +157,37 @@ def test_zone_learning_admin_shows_the_early_stop_offset_in_effect_beside_the_le
         f_zone_learning_admin.list_display[1:3],
         f_zone_learning_admin.early_stop_offset_in_effect(f_learned_kitchen),
     ) == (('early_stop_offset', 'early_stop_offset_in_effect'), in_effect)
+
+
+@pytest.mark.parametrize(
+    ('posted', 'errors'),
+    [
+        ({}, {}),
+        ({'air_start_offset': '0.20'}, {}),
+        ({'air_start_offset': '0.15'}, {'air_start_offset': [BELOW_MIN_BAND]}),
+        ({'air_min_band': '0.40'}, {'air_start_offset': [BELOW_MIN_BAND]}),
+    ],
+    ids=['defaults', 'start_offset_at_the_band', 'start_offset_narrowed', 'band_widened'],
+)
+def test_climate_settings_page_refuses_a_start_offset_below_the_min_band(
+    f_climate_settings_admin: ClimateSettingsAdmin,
+    f_request: HttpRequest,
+    posted: dict[str, str],
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_climate_settings_admin.get_form(f_request)({**CLIMATE_POSTED, **posted})
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.usefixtures('russian')
+def test_climate_settings_page_explains_a_start_offset_below_the_min_band_in_the_page_language(
+    f_climate_settings_admin: ClimateSettingsAdmin,
+    f_request: HttpRequest,
+) -> None:
+    form = f_climate_settings_admin.get_form(f_request)({**CLIMATE_POSTED, 'air_start_offset': '0.10'})
+
+    assert (form.is_valid(), form.errors) == (
+        False,
+        {'air_start_offset': ['Не может быть меньше air min band, иначе обогрев остановится выше цели']},
+    )

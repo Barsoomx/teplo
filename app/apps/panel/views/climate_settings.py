@@ -22,6 +22,7 @@ class ClimateSettingsView(LoginRequiredMixin, View):
                     UpdateClimateSettingsInputDTO(
                         air_start_offset=data['air_start_offset'],
                         initial_early_stop_offset=data['initial_early_stop_offset'],
+                        air_min_band=data['air_min_band'],
                         learned_mornings_needed=data['learned_mornings_needed'],
                         preheat_lead_cap_minutes=data['preheat_lead_cap_minutes'],
                         second_floor_guard_threshold=data['second_floor_guard_threshold'],

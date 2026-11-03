@@ -54,6 +54,7 @@ def test_settings_page_shows_climate_load_management_and_the_shedding_order(
     content = response.content.decode()
     assert (
         'name="air_start_offset" value="0.30"' in content,
+        'name="air_min_band" value="0.20"' in content,
         'name="second_floor_guard_threshold" value="19.0"' in content,
         'name="shed_amps" value="24.0"' in content,
         'name="loads-TOTAL_FORMS" value="2"' in content,
@@ -61,7 +62,7 @@ def test_settings_page_shows_climate_load_management_and_the_shedding_order(
         '<option value="l2" selected>L2</option>' in content,
         'Очередь отключения' in content,
         m_settings_use_case.init.call_count,
-    ) == (True, True, True, True, True, True, True, 1)
+    ) == (True, True, True, True, True, True, True, True, 1)
 
 
 def test_settings_page_shows_every_gate_read_only_with_a_link_to_the_admin(

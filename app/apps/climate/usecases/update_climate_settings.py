@@ -17,6 +17,7 @@ from apps.telemetry.services.settings_journal import SettingsJournal
 class UpdateClimateSettingsInputDTO:
     air_start_offset: Decimal
     initial_early_stop_offset: Decimal
+    air_min_band: Decimal
     learned_mornings_needed: int
     preheat_lead_cap_minutes: int
     second_floor_guard_threshold: Decimal
@@ -44,6 +45,7 @@ class UpdateClimateSettingsUseCase(BaseUseCase[UpdateClimateSettingsInputDTO, Up
         config = ClimateConfig(
             air_start_offset=input_dto.air_start_offset,
             initial_early_stop_offset=input_dto.initial_early_stop_offset,
+            air_min_band=input_dto.air_min_band,
             learned_mornings_needed=input_dto.learned_mornings_needed,
             preheat_lead_cap_minutes=input_dto.preheat_lead_cap_minutes,
             second_floor_guard_threshold=input_dto.second_floor_guard_threshold,

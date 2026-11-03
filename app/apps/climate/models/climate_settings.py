@@ -4,6 +4,8 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.climate.domain.climate_config import (
+    MIN_BAND_MAX,
+    MIN_BAND_MIN,
     MORNINGS_NEEDED_MIN,
     OFFSET_MAX,
     OFFSET_MIN,
@@ -16,7 +18,7 @@ from apps.devices.domain.kinds import DeviceKind
 TEMPERATURE_SENSORS = {'kind': DeviceKind.TEMPERATURE_SENSOR.value}
 OFFSET_VALIDATORS = [MinValueValidator(OFFSET_MIN), MaxValueValidator(OFFSET_MAX)]
 EARLY_STOP_OFFSET_VALIDATORS = [MinValueValidator(EARLY_STOP_OFFSET_MIN), MaxValueValidator(EARLY_STOP_OFFSET_MAX)]
-MIN_BAND_VALIDATORS = [MinValueValidator(Decimal('0.10')), MaxValueValidator(Decimal('1.00'))]
+MIN_BAND_VALIDATORS = [MinValueValidator(MIN_BAND_MIN), MaxValueValidator(MIN_BAND_MAX)]
 
 
 class ClimateSettings(models.Model):

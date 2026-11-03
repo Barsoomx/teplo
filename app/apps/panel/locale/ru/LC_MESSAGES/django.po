@@ -748,6 +748,9 @@ msgstr "Греть, когда ниже цели на"
 msgid "Stop short of the target by, until learned"
 msgstr "Останавливать раньше цели на, пока не выучено"
 
+msgid "Minimum band between start and stop"
+msgstr "Минимальный зазор между включением и остановкой"
+
 msgid "Optimal start"
 msgstr "Оптимальный старт"
 
@@ -834,6 +837,9 @@ msgstr "Не может быть ниже комфорта"
 
 msgid "Must be below the floor limit"
 msgstr "Должно быть ниже предела"
+
+msgid "Must not be below the minimum band, or heating stops above the target"
+msgstr "Не может быть меньше минимального зазора, иначе обогрев остановится выше цели"
 
 msgid "Must not be above the start ceiling"
 msgstr "Не может быть выше порога включения"
@@ -950,6 +956,9 @@ msgstr "греть ниже цели на"
 
 msgid "first early stop"
 msgstr "первая ранняя остановка"
+
+msgid "minimum band between start and stop"
+msgstr "минимальный зазор между включением и остановкой"
 
 msgid "learned mornings needed"
 msgstr "нужно выученных утр"

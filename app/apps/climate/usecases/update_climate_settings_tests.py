@@ -19,6 +19,7 @@ NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 DEFAULTS = ClimateConfig(
     air_start_offset=Decimal('0.30'),
     initial_early_stop_offset=Decimal('0.30'),
+    air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
     second_floor_guard_threshold=Decimal('19.0'),
@@ -27,6 +28,7 @@ DEFAULTS = ClimateConfig(
 EDIT = UpdateClimateSettingsInputDTO(
     air_start_offset=Decimal('0.30'),
     initial_early_stop_offset=Decimal('0.30'),
+    air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
     second_floor_guard_threshold=Decimal('19.0'),
@@ -92,6 +94,30 @@ def test_changed_climate_settings_are_saved_and_journaled(
     )
 
 
+def test_changed_min_band_is_saved_and_journaled_like_the_other_settings(
+    f_use_case: UpdateClimateSettingsUseCase,
+    f_climate_settings: ClimateConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> None:
+    output = f_use_case.execute(replace(EDIT, air_min_band=Decimal('0.25')))
+
+    changes = (
+        SettingChange(
+            target='climate_settings',
+            subject='',
+            name='',
+            field='air_min_band',
+            old='0.20',
+            new='0.25',
+        ),
+    )
+    assert (output, f_climate_settings.saved, f_recorder.records) == (
+        UpdateClimateSettingsOutputDTO(changes=changes),
+        [(replace(DEFAULTS, air_min_band=Decimal('0.25')), ('air_min_band',))],
+        [(changes, NOW)],
+    )
+
+
 def test_climate_settings_as_stored_write_and_journal_nothing(
     f_use_case: UpdateClimateSettingsUseCase,
     f_climate_settings: ClimateConfigStoreStub,
@@ -118,6 +144,27 @@ def test_climate_settings_out_of_range_are_refused(
             SettingProblem(field='initial_early_stop_offset', code='out_of_range'),
             SettingProblem(field='preheat_lead_cap_minutes', code='out_of_range'),
         ),
+        [],
+    )
+
+
+@pytest.mark.parametrize(
+    'edit',
+    [replace(EDIT, air_start_offset=Decimal('0.15')), replace(EDIT, air_min_band=Decimal('0.40'))],
+    ids=['start_offset_narrowed', 'band_widened'],
+)
+def test_start_offset_below_the_min_band_is_refused_at_the_start_offset(
+    f_use_case: UpdateClimateSettingsUseCase,
+    f_climate_settings: ClimateConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+    edit: UpdateClimateSettingsInputDTO,
+) -> None:
+    with pytest.raises(SettingsRejectedError) as raised:
+        f_use_case.execute(edit)
+
+    assert (raised.value.problems, f_climate_settings.saved, f_recorder.records) == (
+        (SettingProblem(field='air_start_offset', code='below_min_band'),),
+        [],
         [],
     )
 

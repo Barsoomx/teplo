@@ -238,6 +238,7 @@ SETTINGS_FIELDS: dict[tuple[str, str], tuple[Promise, Callable[[object], str]]] 
     ('zone', 'preheat_lead_minutes'): (gettext_lazy('warm-up lead'), _minutes),
     ('climate_settings', 'air_start_offset'): (gettext_lazy('heat below the target by'), _fine_degrees),
     ('climate_settings', 'initial_early_stop_offset'): (gettext_lazy('first early stop'), _fine_degrees),
+    ('climate_settings', 'air_min_band'): (gettext_lazy('minimum band between start and stop'), _fine_degrees),
     ('climate_settings', 'learned_mornings_needed'): (gettext_lazy('learned mornings needed'), _number),
     ('climate_settings', 'preheat_lead_cap_minutes'): (gettext_lazy('longest warm-up'), _minutes),
     ('climate_settings', 'second_floor_guard_threshold'): (gettext_lazy('second-floor guard below'), _degrees),

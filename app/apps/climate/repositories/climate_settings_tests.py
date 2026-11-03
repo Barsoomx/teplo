@@ -22,6 +22,7 @@ pytestmark = pytest.mark.django_db
 DEFAULT_CONFIG = ClimateConfig(
     air_start_offset=Decimal('0.30'),
     initial_early_stop_offset=Decimal('0.30'),
+    air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
     second_floor_guard_threshold=Decimal('19.0'),
@@ -84,6 +85,7 @@ def f_guarded_settings() -> ClimateSettings:
         second_floor_guard_zone=ZoneFactory.create(slug='bathroom-2f'),
         second_floor_guard_live=True,
         learned_mornings_needed=5,
+        air_min_band=Decimal('0.25'),
     )
 
 
@@ -153,7 +155,7 @@ def test_config_record_without_climate_settings_takes_the_defaults() -> None:
 def test_config_record_reads_the_stored_settings_and_the_guard_gate(f_guarded_settings: ClimateSettings) -> None:
     assert ClimateSettingsRepository.config_record() == ClimateConfigRecord(
         id=f_guarded_settings.pk,
-        config=replace(DEFAULT_CONFIG, learned_mornings_needed=5),
+        config=replace(DEFAULT_CONFIG, learned_mornings_needed=5, air_min_band=Decimal('0.25')),
         second_floor_guard_live=True,
     )
 
@@ -171,6 +173,20 @@ def test_saved_config_writes_the_named_fields_and_keeps_the_guard(f_guarded_sett
         stored.second_floor_guard_live,
         stored.second_floor_guard_zone_id,
     ) == (Decimal('0.40'), 240, 5, True, f_guarded_settings.second_floor_guard_zone_id)
+
+
+def test_saved_config_writes_the_min_band(f_guarded_settings: ClimateSettings) -> None:
+    ClimateSettingsRepository.save_config(
+        replace(DEFAULT_CONFIG, air_min_band=Decimal('0.40'), air_start_offset=Decimal('0.50')),
+        ('air_min_band', 'air_start_offset'),
+    )
+
+    stored = ClimateSettings.objects.get(pk=f_guarded_settings.pk)
+    assert (stored.air_min_band, stored.air_start_offset, stored.second_floor_guard_live) == (
+        Decimal('0.40'),
+        Decimal('0.50'),
+        True,
+    )
 
 
 def test_saved_config_without_stored_settings_creates_them_with_the_guard_off() -> None:

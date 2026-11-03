@@ -895,6 +895,14 @@ def test_weekday_names_follow_the_language() -> None:
             _settings_entry(
                 '',
                 '',
+                {'object': 'climate_settings', 'name': '', 'field': 'air_min_band', 'old': '0.20', 'new': '0.30'},
+            ),
+            'Климат: минимальный зазор между включением и остановкой 0,20° → 0,30°',
+        ),
+        (
+            _settings_entry(
+                '',
+                '',
                 {'object': 'load_settings', 'name': '', 'field': 'shed_hold_seconds', 'old': 3, 'new': 5},
             ),
             'Управление нагрузкой: отключать через 3 с → 5 с',
@@ -932,6 +940,7 @@ def test_weekday_names_follow_the_language() -> None:
         'schedule_day',
         'day_given_comfort',
         'climate',
+        'climate_band',
         'load_management',
         'nominal_current_cleared',
         'priority',

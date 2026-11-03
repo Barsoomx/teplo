@@ -273,6 +273,7 @@ def settings_page() -> GetSettingsPageOutputDTO:
             config=ClimateConfig(
                 air_start_offset=Decimal('0.30'),
                 initial_early_stop_offset=Decimal('0.30'),
+                air_min_band=Decimal('0.20'),
                 learned_mornings_needed=3,
                 preheat_lead_cap_minutes=240,
                 second_floor_guard_threshold=Decimal('19.0'),

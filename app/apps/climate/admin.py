@@ -1,13 +1,18 @@
 from decimal import Decimal
+from typing import Any
 
+from django import forms
 from django.contrib import admin
 from django.http import HttpRequest
+from django.utils.translation import gettext_lazy
 
+from apps.climate.domain.climate_config import start_offset_keeps_band
 from apps.climate.models import ClimateSettings, ComfortPeriod, Zone, ZoneLearning
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.power.models import Load
 
 SHED_ZONE_FIELDS = ('slug', 'thermostat')
+START_OFFSET_BELOW_MIN_BAND = gettext_lazy('Must not be below the air min band, or heating stops above the target')
 
 
 class ComfortPeriodInline(admin.TabularInline):
@@ -39,8 +44,19 @@ class ZoneAdmin(admin.ModelAdmin):
         return (*fields, *SHED_ZONE_FIELDS)
 
 
+class ClimateSettingsAdminForm(forms.ModelForm):
+    def clean(self) -> dict[str, Any]:
+        super().clean()
+        start_offset = self.cleaned_data.get('air_start_offset')
+        min_band = self.cleaned_data.get('air_min_band')
+        if start_offset is not None and min_band is not None and not start_offset_keeps_band(start_offset, min_band):
+            self.add_error('air_start_offset', START_OFFSET_BELOW_MIN_BAND)
+        return self.cleaned_data
+
+
 @admin.register(ClimateSettings)
 class ClimateSettingsAdmin(admin.ModelAdmin):
+    form = ClimateSettingsAdminForm
     list_display = (
         '__str__',
         'outdoor_sensor',

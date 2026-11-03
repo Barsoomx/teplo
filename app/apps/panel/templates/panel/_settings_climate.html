@@ -10,6 +10,7 @@
       <div class="field-grid">
         {% translate 'Heat below the target by' as label %}{% include 'panel/_field.html' with field=climate_form.air_start_offset %}
         {% translate 'Stop short of the target by, until learned' as label %}{% include 'panel/_field.html' with field=climate_form.initial_early_stop_offset %}
+        {% translate 'Minimum band between start and stop' as label %}{% include 'panel/_field.html' with field=climate_form.air_min_band %}
       </div>
     </fieldset>
     <fieldset class="field-group">

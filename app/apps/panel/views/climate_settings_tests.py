@@ -22,6 +22,7 @@ NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 POSTED = {
     'air_start_offset': '0.25',
     'initial_early_stop_offset': '0.30',
+    'air_min_band': '0.20',
     'learned_mornings_needed': '5',
     'preheat_lead_cap_minutes': '210',
     'second_floor_guard_threshold': '18.5',
@@ -63,6 +64,15 @@ def m_rejecting_update_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+@pytest.fixture
+def m_band_rejecting_update_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.climate_settings.UpdateClimateSettingsUseCase') as use_case:
+        use_case.init.return_value.execute.side_effect = SettingsRejectedError(
+            (SettingProblem(field='air_start_offset', code='below_min_band'),),
+        )
+        yield use_case
+
+
 def test_saved_climate_settings_go_to_the_use_case_without_the_guard_gate(
     f_russian_client: Client,
     m_settings_use_case: MagicMock,
@@ -84,6 +94,7 @@ def test_saved_climate_settings_go_to_the_use_case_without_the_guard_gate(
         UpdateClimateSettingsInputDTO(
             air_start_offset=Decimal('0.25'),
             initial_early_stop_offset=Decimal('0.30'),
+            air_min_band=Decimal('0.20'),
             learned_mornings_needed=5,
             preheat_lead_cap_minutes=210,
             second_floor_guard_threshold=Decimal('18.5'),
@@ -127,6 +138,40 @@ def test_climate_setting_out_of_range_is_refused_before_the_use_case(
         m_update_use_case.init.call_count,
         m_settings_use_case.init.call_count,
     ) == (200, True, 0, 1)
+
+
+def test_start_offset_below_the_min_band_is_refused_at_its_field_before_the_use_case(
+    f_russian_client: Client,
+    m_settings_use_case: MagicMock,
+    m_update_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.post('/settings/climate/', {**POSTED, 'air_start_offset': '0.15'})
+
+    content = response.content.decode()
+    assert (
+        response.status_code,
+        'Не может быть меньше минимального зазора, иначе обогрев остановится выше цели' in content,
+        'name="air_start_offset" value="0.15"' in content,
+        m_update_use_case.init.call_count,
+        m_settings_use_case.init.call_count,
+    ) == (200, True, True, 0, 1)
+
+
+def test_start_offset_the_use_case_finds_below_the_min_band_is_explained_at_its_field(
+    f_russian_client: Client,
+    m_settings_use_case: MagicMock,
+    m_band_rejecting_update_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.post('/settings/climate/', POSTED)
+
+    content = response.content.decode()
+    assert (
+        response.status_code,
+        'Не может быть меньше минимального зазора, иначе обогрев остановится выше цели' in content,
+        'name="air_min_band" value="0.20"' in content,
+        m_band_rejecting_update_use_case.init.call_count,
+        m_settings_use_case.init.call_count,
+    ) == (200, True, True, 1, 1)
 
 
 def test_saving_climate_settings_requires_login(f_anonymous_client: Client, m_update_use_case: MagicMock) -> None:

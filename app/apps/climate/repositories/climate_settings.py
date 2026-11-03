@@ -54,6 +54,7 @@ class ClimateSettingsRepository:
             config=ClimateConfig(
                 air_start_offset=climate_settings.air_start_offset,
                 initial_early_stop_offset=climate_settings.initial_early_stop_offset,
+                air_min_band=climate_settings.air_min_band,
                 learned_mornings_needed=climate_settings.learned_mornings_needed,
                 preheat_lead_cap_minutes=climate_settings.preheat_lead_cap_minutes,
                 second_floor_guard_threshold=climate_settings.second_floor_guard_threshold,
