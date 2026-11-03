@@ -1,4 +1,4 @@
-from apps.house.domain.rooms import FloorRecord, RoomRecord
+from apps.house.domain.rooms import FloorRecord, RoomRecord, room_aliases
 from apps.house.models import Floor, Room
 
 
@@ -30,4 +30,5 @@ def _to_record(room: Room, floor: Floor) -> RoomRecord:
         floor_slug=floor.slug,
         floor_level=floor.level,
         position=room.position,
+        aliases=room_aliases(room.aliases),
     )

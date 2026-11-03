@@ -10,5 +10,5 @@ class FloorAdmin(admin.ModelAdmin):
 
 @admin.register(Room)
 class RoomAdmin(admin.ModelAdmin):
-    list_display = ('slug', 'name', 'floor', 'position')
+    list_display = ('slug', 'name', 'floor', 'position', 'aliases')
     list_filter = ('floor',)

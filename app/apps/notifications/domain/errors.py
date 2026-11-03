@@ -17,3 +17,8 @@ class TelegramNotConfiguredError(DomainError):
             'the secrets file has no [telegram] table with a token and a chat_id',
             error_code='telegram_not_configured',
         )
+
+
+class CommandPollError(DomainError):
+    def __init__(self, detail: str) -> None:
+        super().__init__(detail, error_code='owner_commands_unreachable')

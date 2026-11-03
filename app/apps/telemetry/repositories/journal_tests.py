@@ -98,6 +98,29 @@ def overloads_around_a_cut() -> None:
 
 
 @pytest.fixture
+def owner_commands() -> None:
+    JournalEntryFactory.create(
+        kind='owner_command',
+        subject='',
+        payload={'update_id': 40, 'bot': '123456'},
+        created_at=NOW,
+    )
+    JournalEntryFactory.create(
+        kind='owner_command',
+        subject='',
+        payload={'update_id': 41, 'bot': '654321'},
+        created_at=NOW,
+    )
+    JournalEntryFactory.create(
+        kind='owner_command',
+        subject='',
+        payload={'update_id': 42, 'bot': '123456'},
+        created_at=LAGGING_BOOT,
+    )
+    JournalEntryFactory.create(kind='zone_boosted', subject='kitchen', payload={'bot': '123456'}, created_at=NOW)
+
+
+@pytest.fixture
 def overload_without_an_object() -> None:
     JournalEntryFactory.create(kind='phase_overload', subject='l2', payload=['l2'], created_at=NOW)
 
@@ -139,6 +162,23 @@ def test_latest_payload_gives_the_newest_entry_of_a_kind_within_a_window(
 @pytest.mark.usefixtures('overload_without_an_object')
 def test_latest_payload_of_an_entry_without_an_object_is_empty() -> None:
     assert JournalRepository.latest_payload('phase_overload', since=NOW - timedelta(minutes=2), until=NOW) == {}
+
+
+@pytest.mark.usefixtures('owner_commands')
+@pytest.mark.parametrize(
+    ('match', 'expected'),
+    [
+        ({'bot': '123456'}, {'update_id': 42, 'bot': '123456'}),
+        ({'bot': '654321'}, {'update_id': 41, 'bot': '654321'}),
+        ({'bot': '777777'}, None),
+    ],
+    ids=['newest_by_row_id_on_a_lagging_clock', 'another_bot', 'no_entry_matches'],
+)
+def test_newest_payload_gives_the_newest_entry_of_a_kind_whose_payload_matches(
+    match: dict[str, str],
+    expected: dict[str, object] | None,
+) -> None:
+    assert JournalRepository.newest_payload('owner_command', match) == expected
 
 
 def test_last_activity_is_newest_entry_time(f_entries: list[JournalEntry]) -> None:

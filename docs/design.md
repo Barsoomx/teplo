@@ -12,11 +12,11 @@ Code conventions live in [`CLAUDE.md`](../CLAUDE.md).
 5. **24/7 monitoring.** Live state, history and an event journal.
 6. **Reuse.** Another house is a configuration, not a fork.
 
-Non-goals for v1: remote access from outside the LAN (use a VPN), cloud integrations, cooling, controlling the EV.
+Non-goals for v1: remote access from outside the LAN (use a VPN), beyond the Telegram commands of section 9, cloud integrations, cooling, controlling the EV.
 
 ## 2. Invariants
 
-- **Offline at runtime.** Devices are driven over the LAN. The internet serves only Telegram alerts and NTP, both best-effort.
+- **Offline at runtime.** Devices are driven over the LAN. The internet serves only Telegram alerts and commands, and NTP, all best-effort; the panel on the LAN stays the complete control path when the internet is down.
 - **Router-hosted.** One process on a Keenetic/Netcraze router with Entware: aarch64, Python 3.13, about 600 MB free RAM, USB flash storage.
 - **Secrets outside the repository.** Device addresses and keys, tokens and passwords live in the secrets file on the router; the repository references devices by slug.
 - **Configuration is data.** Schedules, tariffs, limits and priorities live in the database, seeded by site data migrations and edited in the panel.
@@ -162,6 +162,7 @@ One process on the router runs an asyncio runtime:
 - control loops read the state stores, decide, and send commands through drivers: the heating cycle every minute (section 6) and the load guard every second (section 7);
 - a recorder samples every available device each minute and writes the history to SQLite in batches every 5 minutes. The metrics are `floor_temperature`, `floor_setpoint` and `thermostat_power` for a thermostat, `plug_on`, `plug_power`, `plug_current` and `plug_voltage` for a plug, `air_temperature` and `air_humidity` for a temperature sensor, and `phase_current_mean` and `phase_current_max` for each phase of the phase meter;
 - an alert job checks the state stores every minute and queues alerts, a report job checks every minute for an outage before the start until it is reported, and a third job sends the queue to Telegram (section 9);
+- the owner's command listener, when the secrets file switches it on (section 9), runs in a thread of its own, like paho's, from just after the MQTT client starts until the process ends: it long-polls the Telegram bot and runs each command's use cases in that thread with fresh database connections, so a poll never holds a worker of the jobs' thread pool;
 - uvicorn serves the Django ASGI app (panel and API) from the same loop;
 - use cases are synchronous: each periodic job runs its use case in a worker thread (`asyncio.to_thread`) with fresh database connections, and Django runs the panel's views in its own thread, so blocking device and ORM calls stay off the loop;
 - jobs run concurrently: in-memory state (state stores, sample buffer, alert book, alert outbox, the heating cycle's control book, the load guard's guard book, the zones' write gate) is guarded by locks, the Tuya drivers serialize calls to each device, every live thermostat write takes its zone's write gate and sends its commands under the zone's lock (section 4), and the MQTT thread writes the sensor stores while jobs and the panel read them.
@@ -189,7 +190,7 @@ Bounded contexts are Django apps laid out in the altyn-backend style described i
 - **devices**: registry, capabilities, drivers, state store.
 - **tariffs**: tariff intervals.
 - **telemetry**: history samples, event journal, retention (planned).
-- **notifications**: Telegram alerts.
+- **notifications**: Telegram alerts and the owner's commands from the same chat.
 - **system**: trusted clock, dry-run, health.
 - **panel**: web pages and API.
 
@@ -511,6 +512,24 @@ The `notifications` context sends alerts to one Telegram chat. A pure policy dec
 - Delivery is best effort and never holds up control: a second job sends queued messages every minute, oldest first, through the Bot API `sendMessage` over HTTPS with the standard library, with a 10-second timeout and the optional HTTP proxy from the secrets file. A failed send stays queued and is retried. A raised alert waits as long as it lasts, so an outage of Telegram, the internet or the proxy delays it but never silences it; once the alert clears, it and its recovery wait one more hour and are dropped together, so a recovery never arrives without its alert. A recovery whose alert already went out and the teplo resumed notice wait an hour. The queue lives in memory, so a message still waiting when teplo stops is lost. That holds for the notice of a power cut too: the next start finds the outage on record and does not send it again, and the dashboard keeps asking for the cause until it is marked (section 10). A message Telegram refuses (4xx other than 429) is dropped and logged, and a refused alert takes its recovery with it, queued or still to come, so the chat never gets «Кухня: термостат снова на связи» without the alert before it. Without a `[telegram]` table alerts are only journaled, and the log says so once.
 - `manage.py send_test_alert` sends a test message at once and prints `ok`, or fails with the error code and the reason, so a wrong token or chat, missing CA certificates or a blocked network shows up when the table is set rather than at the next outage. `docs/deploy.md` lists the codes.
 
+### Commands
+
+With `commands = true` in the `[telegram]` table the chat that receives the alerts also commands teplo. teplo reads the switch at start; without it nothing polls Telegram, and the log says `owner_commands_disabled` once.
+
+- **Receiving.** The command listener long-polls the bot's `getUpdates` for messages, 10 seconds at a time with a 20-second HTTP timeout, through the alerts' proxy. A failed poll, with Telegram, the internet or the proxy out of reach or a second poller of the bot (below), is retried 30 seconds later; the log says `owner_commands_poll_failed` with the reason once per streak of failures and `owner_commands_poll_recovered` when a poll works again.
+- **Which messages count.** Only text from the configured chat. Edited messages and messages sent more than 10 minutes before teplo reads them are dropped, so an outage does not replay old commands; a clock running behind, as after a reboot before NTP, takes a message from what reads as its future.
+- **Journaled before it runs.** Each command is journaled as `owner_command` with its update id, the bot's id, which is the public numeric part of its token, the command it was read as and the first 200 characters of its text, before it runs. Telegram confirms an update only at the next poll, so at start teplo resumes after the last update its bot journaled: a restart between running a command and that poll never runs it twice. A command the journal cannot take is answered «База данных занята: повторите через минуту.» and not run, and while the journal cannot be read at start teplo does not poll.
+- **One answer.** Each command gets one reply at once through `sendMessage`, outside the alert queue, which sends once a minute; a reply Telegram does not take is logged as `owner_reply_failed` and not sent again. Replies are written in `TEPLO_ALERT_LANGUAGE`.
+- **Commands.** Commands run the panel's use cases with the source `telegram` and never write to a device: like the panel's −/+ and boost, what they change reaches a floor through its gates at its next allowed write (section 6).
+  - «гости» switches guests on for the coming night, «гости 2» and «гости 3» for two and three nights, and «гости всё» (or «стоп», «нет», «уехали», «выкл») ends them early (see Room intent, section 6). A house without a guest room says so.
+  - «холодно в <комната>» sets the room's target 1 °C warmer for 2 hours, and at least to its comfort target; «жарко в <комната>» 1 °C cooler; «<комната> 22» sets 22 °C, «22,5» with a comma or a point, within 10–30 °C; «<комната> авто» clears the override and names the target of the schedule. They act on an adjustable room. In a room whose floors read no air, as a bathroom, «холодно» boosts its floors, and «жарко» and a target are answered that only «буст» works there; a room teplo has nothing to heat in, as the bedroom and the office, says so.
+  - «буст <комната>» boosts every floor of the room for 2 hours, as the boost of the panel does.
+  - «статус» lists the guests, each room with a floor or an air sensor with its air, its target and why it holds it, each floor's reading and setpoint, and the phases.
+  - Anything else gets the list of commands.
+- **Rooms by name.** A room is named by the word stems of `Room.aliases`, which the site data sets and the admin edits, «гостин кухн прихож зал» for the open space, or else by its whole name; a floor's number or ordinal, «санузел 2» or «на втором этаже», picks between rooms of the same stems, as the two bathrooms. A name that fits several rooms is asked back, «Какая комната: Санузел 1 этаж или Санузел 2 этаж?», and one that fits none gets the list of rooms.
+- **Replies.** A reply names the target and its end and each floor's setpoint with the earliest moment its write budget allows the write, or says that load management holds the floor off: «холодно в гостиной» reads «Гостиная, кухня и прихожая: 23,0° до 18:40.» with «Гостиная: пол 30° в ближайшую минуту», «Кухня: пол 30° не раньше 16:52» and «Прихожая: пол отключён управлением нагрузкой».
+- **One poller per bot.** Telegram answers a second poller of the same bot with 409 Conflict, both of them, so one teplo at most runs with `commands = true` per bot.
+
 ## 10. Panel
 
 Server-rendered Django templates with HTMX; the floors with their rooms, the house facts above them and the loads block refresh every 10 seconds (thermostats and plugs are polled every 30 seconds, the air sensors report every 30 seconds) and the phase bars every 3 seconds from a partial of their own; all assets are served locally.
@@ -544,7 +563,7 @@ The journal words the dry-run entries of section 6, in ink: «Кухня: в р�
 
 The journal words the entries of load management (section 7) the same way, naming the load, or the phase as L1 to L3: «Перегрузка фазы L2: 26,4 А» and «Перегрузка фазы L2 прошла: 17,2 А»; a shed, «Бойлер 1 этаж: выключил розетку» or «Кухня: выключил термостат», with its reason below, «Перегрузка фазы L2: 26,4 А» or «Нет данных от фазометра: по одному полу на фазу»; a restore, «Бойлер 1 этаж: снова включил розетку» or «Кухня: вернул термостат расписанию», with «Фаза L2 в норме: 17,2 А», the current of the view that decided the restore, «Фазы в норме» when the shed had no measured phase, «Нет данных от фазометра: на этой фазе не греет другой пол» for a floor back while the phase it was shed for is silent, or «Управление нагрузкой переключено в настройках» for a release, where a zone whose `live_control` is off reads «Кухня: снова включил термостат», as teplo switched its thermostat on rather than handing it to the heating cycle; the dry-run twins in the conditional, «Бойлер 1 этаж: выключил бы розетку»; «Бойлер 1 этаж: розетку включили вручную, отключение снято»; a failed command, «Бойлер 1 этаж: не удалось выключить розетку» or «Кухня: не удалось снова включить термостат», explained by its error code like a zone command, such as «Драйвер этой розетки не умеет её переключать» for `plug_not_switchable`; «Кухня: отложил бы включение» with the reason the start would wait, such as «Фаза L2 дошла бы до 21,5 А», «Фазометр молчит, а фаза L2 по последнему показанию дошла бы до 24,5 А» or «Другая нагрузка только что включилась»; «Бойлер 1 этаж: выучил фазу L2, 6,2 А»; and «Фаза L3: похоже, заряжается электромобиль, +16,0 А» and «Фаза L3: электромобиль больше не заряжается». The phase overload alert reads as its message does, «Фаза L2 перегружена: 31,3 А».
 
-The journal words the owner's intents too, naming a room by the name its entry carries: «Гости до 14:00 завтра» (`guests_set`, with the nights and where the command came from), «Режим гостей выключен» (`guests_cleared`, journaled only when guests were staying), «Гостиная, кухня и прихожая: вручную 22,5° до 18:40» (`room_overridden`, with the room as its subject) and «Гостиная, кухня и прихожая: снова по расписанию» (`room_override_cleared`, journaled only when an override was stored); an intent that came from Telegram adds «Из Telegram» below.
+The journal words the owner's intents too, naming a room by the name its entry carries: «Гости до 14:00 завтра» (`guests_set`, with the nights and where the command came from), «Режим гостей выключен» (`guests_cleared`, journaled only when guests were staying), «Гостиная, кухня и прихожая: вручную 22,5° до 18:40» (`room_overridden`, with the room as its subject) and «Гостиная, кухня и прихожая: снова по расписанию» (`room_override_cleared`, journaled only when an override was stored); an intent that came from Telegram adds «Из Telegram» below. Each command the chat sent is journaled before it runs and reads as the owner wrote it, «Telegram: «холодно в гостиной»» (`owner_command`, section 9).
 
 Diagnostic text never reaches the page. A failure or an untrusted clock is explained by a translated message chosen by its code; a message that would only repeat its headline is left out, and an unknown code or a journal entry written before codes existed gets a generic one. The raw text stays in the element's tooltip, and for a device failure also in the journal payload and the log. The journal and these messages name the kind of device, as the alerts do: a thermostat, a plug or a sensor, while the phase meter's own name says what it is, e.g. «Фазометр: нет связи».
 
@@ -580,6 +599,7 @@ protocol = '3.5'
 token = '...'
 chat_id = '...'
 proxy = 'http://...'
+commands = true
 
 [panel]
 password = '...'
@@ -591,7 +611,7 @@ username = 'teplo'
 password = '...'
 ```
 
-`port` defaults to 1883. Without the `[mqtt]` table, or with an empty `host`, `username` or `password`, or a port outside 1–65535, teplo runs without MQTT. The password never reaches the log.
+`commands` is off unless it is `true`: then the chat also commands teplo (section 9). `port` defaults to 1883. Without the `[mqtt]` table, or with an empty `host`, `username` or `password`, or a port outside 1–65535, teplo runs without MQTT. The password never reaches the log.
 
 ## 12. Deployment
 
@@ -618,7 +638,7 @@ password = '...'
 3. Air sensors, air regulation, learned optimal start and the second-floor guard, now the bedroom's backup heat (the sensors are already read and alert when lost). Ships in dry-run: the zones learn their mornings and the journal shows what air control, optimal start and backup heat would do, until the owner switches them on in the admin, air control zone by zone and backup heat on the bedroom's room climate (section 6).
 4. Smart plugs: the water heater plugs switch through their own driver and are the first loads of the shedding order, in dry-run with stage 2 until they are switched on; washing machine monitoring.
 5. Schedule and settings pages: the comfort windows and the daily settings are edited in the panel and journaled, while the gates stay in the admin (section 10).
-6. House model in three blocks. Block A: floors and rooms, comfort per room, backup heat in place of the second-floor guard, guests, 2-hour room overrides and Telegram commands. Block B: an estimate of the unclamped phase, the fireplace, learning hygiene, the wall thermostats' 2-hour manual hold and the office convector. Block C: presence radars and the bedroom AC. Each block ships with its gates off and has them switched on within days. The floors and rooms come first: the site data places every zone and device in a room, and the dashboard and `api/v1/rooms/` show the house by floor and room. Then each room holds its comfort windows and air targets, the schedule and settings pages work by room, and the second-floor guard becomes the bedroom's backup heat, while every zone decides as before. Then guests and 2-hour room overrides set a room's target, which the heating cycle, the panel and the zone-off alert read alike, and which reaches the floors only through their gates; without guests or an override every zone decides as before.
+6. House model in three blocks. Block A: floors and rooms, comfort per room, backup heat in place of the second-floor guard, guests, 2-hour room overrides and Telegram commands. Block B: an estimate of the unclamped phase, the fireplace, learning hygiene, the wall thermostats' 2-hour manual hold and the office convector. Block C: presence radars and the bedroom AC. Each block ships with its gates off and has them switched on within days. The floors and rooms come first: the site data places every zone and device in a room, and the dashboard and `api/v1/rooms/` show the house by floor and room. Then each room holds its comfort windows and air targets, the schedule and settings pages work by room, and the second-floor guard becomes the bedroom's backup heat, while every zone decides as before. Then guests and 2-hour room overrides set a room's target, which the heating cycle, the panel and the zone-off alert read alike, and which reaches the floors only through their gates; without guests or an override every zone decides as before. Last, the owner's Telegram chat takes guests, room targets, boost and a status through the panel's use cases (section 9).
 
 Later: heat pump driver, EV charger driver, away and frost modes, home or away read from the phones on the LAN, and summer cooling with the bedroom AC.
 

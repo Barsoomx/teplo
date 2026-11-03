@@ -41,6 +41,11 @@ TOKENLESS_TELEGRAM_TOML = """
 [telegram]
 chat_id = '42'
 """
+COMMANDS_TELEGRAM_TOML = """
+[telegram]
+token = '123456:telegram-token'
+chat_id = '42'
+"""
 DEFAULT_PORT_MQTT_TOML = """
 [mqtt]
 host = 'router.invalid'
@@ -72,6 +77,13 @@ def f_direct_telegram_secrets(tmp_path: Path) -> SecretsFile:
 def f_tokenless_telegram_secrets(tmp_path: Path) -> SecretsFile:
     path = tmp_path / 'secrets.toml'
     path.write_text(TOKENLESS_TELEGRAM_TOML, encoding='utf-8')
+    return SecretsFile.init(path)
+
+
+@pytest.fixture
+def f_commands_secrets(tmp_path: Path, request: pytest.FixtureRequest) -> SecretsFile:
+    path = tmp_path / 'secrets.toml'
+    path.write_text(f'{COMMANDS_TELEGRAM_TOML}{request.param}', encoding='utf-8')
     return SecretsFile.init(path)
 
 
@@ -127,6 +139,26 @@ def test_telegram_table_without_token_configures_nothing(f_tokenless_telegram_se
 
 def test_missing_telegram_table_configures_nothing(f_empty_secrets: SecretsFile) -> None:
     assert f_empty_secrets.telegram is None
+
+
+@pytest.mark.parametrize(
+    ('f_commands_secrets', 'commands'),
+    [
+        ('commands = true', True),
+        ('commands = false', False),
+        ('', False),
+        ("commands = 'true'", False),
+    ],
+    ids=['switched_on', 'switched_off', 'missing', 'text'],
+    indirect=['f_commands_secrets'],
+)
+def test_telegram_commands_are_taken_only_when_switched_on(f_commands_secrets: SecretsFile, commands: bool) -> None:
+    assert f_commands_secrets.telegram == TelegramSecret(
+        token='123456:telegram-token',
+        chat_id='42',
+        proxy=None,
+        commands=commands,
+    )
 
 
 def test_mqtt_secret_is_read_with_its_port(f_secrets: SecretsFile) -> None:
@@ -188,6 +220,6 @@ def test_missing_mqtt_table_configures_nothing(f_empty_secrets: SecretsFile) -> 
 def test_addresses_keys_tokens_and_passwords_stay_out_of_repr(f_secrets: SecretsFile) -> None:
     assert (repr(f_secrets.device('thermostat-kitchen')), repr(f_secrets.telegram), repr(f_secrets.mqtt)) == (
         "DeviceSecret(protocol='3.3')",
-        "TelegramSecret(chat_id='-1001234')",
+        "TelegramSecret(chat_id='-1001234', commands=False)",
         'MqttSecret(port=1884)',
     )

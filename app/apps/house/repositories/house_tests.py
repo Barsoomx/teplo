@@ -23,6 +23,13 @@ def floors() -> None:
 
 
 @pytest.fixture
+def named_rooms() -> None:
+    floor = FloorFactory.create(level=1)
+    RoomFactory.create(slug='open-space', floor=floor, position=1, aliases=' Гостин  КУХН ёлк ')
+    RoomFactory.create(slug='pantry', floor=floor, position=2)
+
+
+@pytest.fixture
 def house() -> None:
     upstairs = FloorFactory.create(slug='floor-2', name='2 этаж', level=2)
     ground = FloorFactory.create(slug='floor-1', name='1 этаж', level=1)
@@ -72,4 +79,12 @@ def test_rooms_are_listed_in_floor_order_with_their_floor() -> None:
         ('bathroom-1f', 'floor-1', 1, 2),
         ('bedroom', 'floor-2', 2, 1),
         ('office', 'floor-2', 2, 2),
+    ]
+
+
+@pytest.mark.usefixtures('named_rooms')
+def test_rooms_read_their_aliases_as_lowercase_stems() -> None:
+    assert [(room.slug, room.aliases) for room in HouseRepository.rooms()] == [
+        ('open-space', ('гостин', 'кухн', 'елк')),
+        ('pantry', ()),
     ]

@@ -50,6 +50,7 @@ from apps.panel.templatetags.panel_format import (
     optimal_start_text,
     outage_overload_note,
     outage_question,
+    owner_command_text,
     period_text,
     phase_event_text,
     power_outage_text,
@@ -1196,6 +1197,27 @@ def test_room_override_text_names_the_room_by_its_journaled_name(
 )
 def test_command_note_names_a_command_that_came_from_telegram(source: str | None, expected: str) -> None:
     assert command_note(_entry('guests_set', {'source': source})) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (
+            {'update_id': 42, 'bot': '123456', 'text': 'холодно в гостиной', 'command': 'warmer', 'room': 'open-space'},
+            'Telegram: «холодно в гостиной»',
+        ),
+        ({'update_id': 42, 'bot': '123456', 'command': 'help'}, 'Кухня: неизвестное событие'),
+    ],
+    ids=['command', 'without_text'],
+)
+def test_owner_command_text_quotes_what_the_owner_wrote(payload: dict[str, object], expected: str) -> None:
+    assert owner_command_text(_entry('owner_command', payload)) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_owner_command_text_follows_the_active_language() -> None:
+    assert owner_command_text(_entry('owner_command', {'text': 'статус'})) == 'Telegram: “статус”'
 
 
 @pytest.mark.usefixtures('english')

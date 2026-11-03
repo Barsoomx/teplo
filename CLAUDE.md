@@ -5,7 +5,7 @@ Before changing control logic, device drivers, persistence or failure handling, 
 
 ## Invariants
 
-- **Offline runtime.** Devices are reached over the LAN; the internet only carries Telegram alerts and NTP.
+- **Offline runtime.** Devices are reached over the LAN; the internet only carries Telegram alerts and commands, and NTP; the panel stays the full offline control path.
 - **Router target.** Production is one Python 3.13 process on an Entware router (aarch64, ~600 MB free RAM, USB flash). Dependencies are pure Python or provided by Entware (`python3-cryptography`). Writes to flash are batched.
 - **Public repository.** Secrets (device addresses, device ids, local keys, tokens, passwords) live only in the router's secrets file; code and migrations reference devices by slug.
 - **Configuration is data.** Schedules, tariffs, thresholds and priorities come from the database, seeded by `sites/<name>` data migrations and edited in the panel.

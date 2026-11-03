@@ -105,3 +105,182 @@ msgstr "%(hours)s ч"
 #, python-format
 msgid "%(hours)s h %(minutes)s min"
 msgstr "%(hours)s ч %(minutes)s мин"
+
+msgid ""
+"Commands:\n"
+"гости — guest rooms at comfort until 14:00 (гости 2 — for two nights, гости всё — off)\n"
+"холодно в <room>, жарко в <room> — 1° warmer or cooler for 2 hours\n"
+"<room> 22 — hold 22° for 2 hours; <room> авто — back to the schedule\n"
+"буст <room> — warm floor for 2 hours\n"
+"статус — rooms, targets and phases"
+msgstr ""
+"Команды:\n"
+"гости — гостевые комнаты в комфорте до 14:00 (гости 2 — на две ночи, гости всё — выключить)\n"
+"холодно в <комната>, жарко в <комната> — на 1° теплее или холоднее на 2 часа\n"
+"<комната> 22 — держать 22° 2 часа; <комната> авто — вернуть расписание\n"
+"буст <комната> — тёплый пол на 2 часа\n"
+"статус — комнаты, цели и фазы"
+
+#, python-format
+msgid "I do not know this room. Rooms: %(rooms)s"
+msgstr "Не знаю такую комнату. Комнаты: %(rooms)s"
+
+#, python-format
+msgid "Which room: %(rooms)s?"
+msgstr "Какая комната: %(rooms)s?"
+
+#, python-format
+msgid "Guests until %(until)s: %(rooms)s at comfort."
+msgstr "Гости до %(until)s: %(rooms)s в комфорте."
+
+msgid "Guests mode is off."
+msgstr "Режим гостей выключен."
+
+msgid "No room is a guest room: tick one on the settings page."
+msgstr "Гостевых комнат нет: отметьте их в настройках."
+
+msgid "Guests: from 1 to 3 nights."
+msgstr "Гости: от 1 до 3 ночей."
+
+#, python-format
+msgid "%(room)s: %(target)s° until %(until)s."
+msgstr "%(room)s: %(target)s° до %(until)s."
+
+#, python-format
+msgid "%(room)s: back to the schedule, %(target)s° until %(until)s."
+msgstr "%(room)s: снова по расписанию, %(target)s° до %(until)s."
+
+#, python-format
+msgid "%(room)s: back to the schedule, %(target)s°."
+msgstr "%(room)s: снова по расписанию, %(target)s°."
+
+#, python-format
+msgid "%(room)s: no manual target to cancel."
+msgstr "%(room)s: ручной цели нет."
+
+#, python-format
+msgid "%(room)s: boost until %(until)s."
+msgstr "%(room)s: буст до %(until)s."
+
+#, python-format
+msgid "%(room)s has no air sensor: boost until %(until)s."
+msgstr "%(room)s: датчика воздуха нет — буст до %(until)s."
+
+#, python-format
+msgid "%(room)s: no warm floor here."
+msgstr "%(room)s: здесь нет тёплого пола."
+
+#, python-format
+msgid "%(room)s has no air sensor: only буст works there."
+msgstr "%(room)s: датчика воздуха нет, работает только буст."
+
+#, python-format
+msgid "%(room)s: teplo has nothing to heat here yet."
+msgstr "%(room)s: teplo пока нечем здесь греть."
+
+#, python-format
+msgid "A target from %(low)s° to %(high)s°."
+msgstr "Цель — от %(low)s° до %(high)s°."
+
+msgid "The database is busy: try again in a minute."
+msgstr "База данных занята: повторите через минуту."
+
+msgid "No rooms yet."
+msgstr "Комнат пока нет."
+
+#, python-format
+msgid "%(zone)s: by air"
+msgstr "%(zone)s: по воздуху"
+
+#, python-format
+msgid "%(zone)s: floor already at %(setpoint)s°"
+msgstr "%(zone)s: пол уже на %(setpoint)s°"
+
+#, python-format
+msgid "%(zone)s: floor %(setpoint)s° no sooner than %(time)s"
+msgstr "%(zone)s: пол %(setpoint)s° не раньше %(time)s"
+
+#, python-format
+msgid "%(zone)s: floor %(setpoint)s° within the next minute"
+msgstr "%(zone)s: пол %(setpoint)s° в ближайшую минуту"
+
+#, python-format
+msgid "%(zone)s: watching only, no command goes out"
+msgstr "%(zone)s: наблюдение, команда не уйдёт"
+
+#, python-format
+msgid "%(zone)s: the floor is off by load management"
+msgstr "%(zone)s: пол отключён управлением нагрузкой"
+
+#, python-format
+msgid "%(zone)s: no connection to the thermostat"
+msgstr "%(zone)s: нет связи с термостатом"
+
+#, python-format
+msgid "%(zone)s: heating is off"
+msgstr "%(zone)s: отопление выключено"
+
+#, python-format
+msgid "%(room)s: %(air)s°, target %(target)s°, %(reason)s"
+msgstr "%(room)s: %(air)s°, цель %(target)s°, %(reason)s"
+
+#, python-format
+msgid "%(room)s: target %(target)s°, %(reason)s"
+msgstr "%(room)s: цель %(target)s°, %(reason)s"
+
+#, python-format
+msgid "comfort until %(time)s"
+msgstr "комфорт до %(time)s"
+
+#, python-format
+msgid "night until %(time)s"
+msgstr "ночь до %(time)s"
+
+#, python-format
+msgid "manual until %(time)s"
+msgstr "вручную до %(time)s"
+
+#, python-format
+msgid "guests until %(time)s"
+msgstr "гости до %(time)s"
+
+msgid "comfort"
+msgstr "комфорт"
+
+msgid "night"
+msgstr "ночь"
+
+msgid "manual"
+msgstr "вручную"
+
+msgid "guests"
+msgstr "гости"
+
+msgid "the clock is not synced"
+msgstr "часы не сверены"
+
+#, python-format
+msgid "%(zone)s: air %(air)s°, floor %(floor)s° (set to %(setpoint)s°)"
+msgstr "%(zone)s: воздух %(air)s°, пол %(floor)s° (на термостате %(setpoint)s°)"
+
+#, python-format
+msgid "%(zone)s: floor %(floor)s° (set to %(setpoint)s°)"
+msgstr "%(zone)s: пол %(floor)s° (на термостате %(setpoint)s°)"
+
+#, python-format
+msgid "%(zone)s: floor %(floor)s°, the thermostat is off"
+msgstr "%(zone)s: пол %(floor)s°, термостат выключен"
+
+#, python-format
+msgid "Phases: %(phases)s"
+msgstr "Фазы: %(phases)s"
+
+#, python-format
+msgid "%(phase)s %(amps)s A"
+msgstr "%(phase)s %(amps)s А"
+
+msgid "tomorrow"
+msgstr "завтра"
+
+msgid "or"
+msgstr "или"

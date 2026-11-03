@@ -13,7 +13,7 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
 
 2. Edit `/opt/etc/teplo/teplo.env`: set `TEPLO_SITE`, `TEPLO_PANEL_HOST`, `TEPLO_ALLOWED_HOSTS` and `TEPLO_PANEL_URL` (see [Telegram alerts](#telegram-alerts)). Keep `TEPLO_DRY_RUN=true` for the first run. The installer fills in a random `DJANGO_SECRET_KEY` when the file has none; teplo refuses to start without it.
 3. Create `/opt/etc/teplo/secrets.toml` from `deploy/router/secrets.toml.example`, one `[devices.<slug>]` table per Tuya device of the site, and `chmod 600` it. The `barsoom` site has five thermostats and the water heater plugs `plug-boiler-1f` and `plug-boiler-2f`. Tuya plugs need `protocol = '3.5'`: a table without it gets 3.3, the thermostats' protocol, and the plug shows as unavailable. A protocol other than `'3.1'`–`'3.5'`, e.g. `'3,5'`, or an empty `address` shows on the panel as a wrong address or protocol for that device only. A Tuya device without a table stays unavailable and raises a device-lost alert 10 minutes after the start. Local keys come from the Smart Life QR login described in `docs/design.md`. The ESPHome devices, the air and outdoor sensors and the phase meter, take no `[devices.<slug>]` table, as they have no address or key: teplo hears them through the broker, so they need only the `[mqtt]` table described in [MQTT broker](#mqtt-broker).
-4. For alerts, add the `[telegram]` table described in [Telegram alerts](#telegram-alerts).
+4. For alerts, and the owner's commands from the chat, add the `[telegram]` table described in [Telegram alerts](#telegram-alerts).
 5. For the ESPHome sensors, set up the broker and add the `[mqtt]` table as described in [MQTT broker](#mqtt-broker).
 
 ## Deploy a release
@@ -98,6 +98,26 @@ TEPLO_PANEL_URL=http://192.0.2.1:8088/
 ```
 
 Left empty, the line reads «Отметь причину в панели.» without a link. A notice after a restart of teplo alone has no such line. teplo reads `teplo.env` at start, so restart it after setting the link.
+
+### Telegram commands
+
+The same chat can command teplo: «гости», «гости 2», «гости всё», «холодно в гостиной», «жарко на кухне», «гостиная 22», «гостиная авто», «буст санузел 2» and «статус»; anything else gets the list of commands (see Commands in `docs/design.md`, section 9). The commands run the panel's use cases and never write to a device, and without the internet the panel still does all they do. They stay off until the `[telegram]` table switches them on:
+
+```toml
+[telegram]
+token = 'bot-token'
+chat_id = 'chat-id'
+commands = true
+```
+
+Restart teplo after adding the line. `teplo.log` then says `owner_commands_started`, and without the line `owner_commands_disabled`.
+
+- Only messages in `chat_id` count, and each gets one reply at once. Any member of a group chat can command teplo; a private chat with the bot keeps the commands to its owner. In a group the bot sees plain messages only with its privacy mode off (BotFather, `/setprivacy`, Disable) or as an admin of the group.
+- Edited messages and messages older than 10 minutes are ignored, so commands sent while teplo or the internet was down are not replayed later. A restart never runs a command twice: each is journaled with its update id before it runs, and teplo resumes after the last one.
+- Only one teplo may poll a bot. Telegram answers a second poller of the same token with 409 Conflict, both of them, so never start a second teplo with `commands = true` and the router's token, e.g. on a workstation; `send_test_alert` only sends and is safe.
+- While Telegram, the internet or the proxy cannot be reached, `teplo.log` says `owner_commands_poll_failed` with the reason once, and `owner_commands_poll_recovered` when a poll works again; teplo tries every 30 seconds. A 409 Conflict in the reason means another poller uses the bot.
+- The journal shows each command as the owner wrote it, «Telegram: «холодно в гостиной»», beside what it changed, e.g. «Гостиная, кухня и прихожая: вручную 23,0° до 18:40» with «Из Telegram».
+- The bot finds a room by the word stems of its `aliases` in `/admin/house/room/`, which the site data fills, e.g. «гостин кухн прихож зал» for the open space; add a stem there to name a room another way.
 
 ## MQTT broker
 
@@ -282,6 +302,12 @@ Air control, optimal start and the bedroom's backup heat ship in dry-run (`docs/
 ## Roll back
 
 An older release does not know the migrations of a newer one, so undo them before it runs, from the release you leave and the newest first.
+
+Rolling back past the Telegram commands takes one step. `migrate house 0001` undoes the site's `0011_room_aliases` first, then drops the rooms' aliases; an older release ignores `commands = true`:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate house 0001'
+```
 
 Rolling back past guests and room overrides takes one step. `migrate climate 0010` undoes the site's `0010_guest_rooms` first, then drops the guest rooms, the overrides and the guests' end and hour:
 

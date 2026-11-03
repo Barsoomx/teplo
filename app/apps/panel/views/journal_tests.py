@@ -546,6 +546,11 @@ INTENT_ENTRIES: tuple[tuple[str, str, dict[str, object]], ...] = (
         {**OPEN_SPACE, 'target': '22.5', 'until': '2026-10-29T15:40:00Z', 'source': 'panel'},
     ),
     ('room_override_cleared', 'open-space', {**OPEN_SPACE, 'source': 'panel'}),
+    (
+        'owner_command',
+        'open-space',
+        {'update_id': 42, 'bot': '123456', 'text': 'холодно в гостиной', 'command': 'warmer', 'room': 'open-space'},
+    ),
 )
 
 
@@ -805,7 +810,7 @@ def test_journal_words_the_settings_changed_in_the_panel(
 
 
 @freeze_time('2026-10-29T15:00:00Z')
-def test_journal_words_guests_and_manual_targets_by_the_names_they_were_journaled_with(
+def test_journal_words_guests_manual_targets_and_owner_commands_by_what_was_journaled(
     f_russian_client: Client,
     m_intents_timeline_use_case: MagicMock,
 ) -> None:
@@ -820,10 +825,11 @@ def test_journal_words_guests_and_manual_targets_by_the_names_they_were_journale
                 'Режим гостей выключен',
                 'Гостиная, кухня и прихожая: вручную 22,5° до 18:40',
                 'Гостиная, кухня и прихожая: снова по расписанию',
+                'Telegram: «холодно в гостиной»',
             )
         ],
         content.count('Из Telegram'),
         'Гостиная:' in content,
         'неизвестное событие' in content.lower(),
         m_intents_timeline_use_case.init.call_count,
-    ) == ([True] * 4, 1, False, False, 1)
+    ) == ([True] * 5, 1, False, False, 1)

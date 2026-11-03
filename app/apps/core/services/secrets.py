@@ -21,6 +21,7 @@ class TelegramSecret:
     token: str = field(repr=False)
     chat_id: str
     proxy: str | None = field(repr=False)
+    commands: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -88,7 +89,12 @@ def _telegram(entry: dict[str, object]) -> TelegramSecret | None:
     if not token or not chat_id:
         return None
 
-    return TelegramSecret(token=token, chat_id=chat_id, proxy=str(entry.get('proxy') or '').strip() or None)
+    return TelegramSecret(
+        token=token,
+        chat_id=chat_id,
+        proxy=str(entry.get('proxy') or '').strip() or None,
+        commands=entry.get('commands') is True,
+    )
 
 
 def _mqtt(entry: dict[str, object]) -> MqttSecret | None:

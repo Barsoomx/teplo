@@ -1113,6 +1113,10 @@ msgid "From Telegram"
 msgstr "Из Telegram"
 
 #, python-format
+msgid "Telegram: “%(text)s”"
+msgstr "Telegram: «%(text)s»"
+
+#, python-format
 msgid "%(name)s: manual %(target)s° until %(time)s"
 msgstr "%(name)s: вручную %(target)s° до %(time)s"
 

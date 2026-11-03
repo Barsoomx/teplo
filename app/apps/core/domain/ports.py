@@ -12,3 +12,7 @@ class SettingsRecorder(Protocol):
 
 class Transaction(Protocol):
     def __call__(self) -> AbstractContextManager[None]: ...
+
+
+class Executable[TInput, TOutput](Protocol):
+    def execute(self, input_dto: TInput) -> TOutput: ...

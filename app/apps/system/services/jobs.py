@@ -9,6 +9,7 @@ from apps.devices.services.mqtt_listener import mqtt_listener
 from apps.devices.usecases.check_sensors import CheckSensorsInputDTO, CheckSensorsUseCase
 from apps.devices.usecases.poll_plugs import PollPlugsInputDTO, PollPlugsUseCase
 from apps.devices.usecases.poll_thermostats import PollThermostatsInputDTO, PollThermostatsUseCase
+from apps.notifications.services.command_listener import command_listener
 from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, DeliverAlertsUseCase
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
 from apps.notifications.usecases.note_startup import NoteStartupInputDTO, NoteStartupUseCase
@@ -31,6 +32,7 @@ def startup_jobs() -> tuple[PeriodicJob, ...]:
         PeriodicJob(name='journal_startup', interval=ONCE, action=journal_startup),
         PeriodicJob(name='recover_write_holds', interval=ONCE, action=recover_write_holds),
         PeriodicJob(name='start_mqtt_listener', interval=ONCE, action=mqtt_listener.start),
+        PeriodicJob(name='start_command_listener', interval=ONCE, action=command_listener.start),
     )
 
 
@@ -38,6 +40,7 @@ def shutdown_jobs() -> tuple[PeriodicJob, ...]:
     return (
         PeriodicJob(name='flush_samples', interval=ONCE, action=flush_samples),
         PeriodicJob(name='stop_mqtt_listener', interval=ONCE, action=mqtt_listener.stop),
+        PeriodicJob(name='stop_command_listener', interval=ONCE, action=command_listener.stop),
     )
 
 

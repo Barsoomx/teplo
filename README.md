@@ -37,7 +37,7 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Offline by design.** Thermostats and plugs are reached with the Tuya local protocol, the sensors through an MQTT broker on the router. The panel and every asset it loads are served from the router.
 - **Keeps heating when teplo stops.** Each thermostat regulates on its own at the last setpoint, and a cron watchdog restarts the process.
 - **A panel made for the phone.** Server-rendered Django with htmx, dark and light themes, English and Russian, a timeline journal and a JSON API under `api/v1`.
-- **Alerts in Telegram.** One chat hears about a thermostat, water heater plug or sensor that stops answering, a phase meter gone stale, a phase overloaded for a minute, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. The journal keeps them too.
+- **Alerts and commands in Telegram.** One chat hears about a thermostat, water heater plug or sensor that stops answering, a phase meter gone stale, a phase overloaded for a minute, a zone left off while it should heat and teplo coming back after an outage, and again when an alert clears. Once switched on, the same chat takes the owner's commands and answers each at once: «гости» for guests, «холодно в гостиной» or «жарко на кухне» for a degree up or down for two hours, «гостиная 22» and «гостиная авто», «буст санузел 2» and «статус» for the rooms, targets, floors and phases. The commands go through the same use cases as the panel, which stays the full control path without the internet. The journal keeps alerts and commands too.
 - **Power cuts on record.** After a power cut the panel asks whether our breaker tripped or the village lost power, so outages of the grid never count as overloads.
 - **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo switches the plugs only to shed them, and load management still runs in dry-run.
 - **Sensors in view.** ESPHome nodes report the air temperature and humidity of the rooms, the outdoor temperature and the current on each phase. The dashboard groups the rooms by floor and shows a room's air beside its floor reading, or on a tile of its own in a room without a heated floor, the outdoor temperature above the floors and the phase currents as bars refreshed every 3 seconds; the history keeps them, and `api/v1/sensors` and `api/v1/phases` give them as JSON. Air control from the room and outdoor sensors ships in dry-run and is switched on zone by zone in the admin; load management on the phase currents ships in dry-run too and is switched on load by load.
@@ -83,7 +83,7 @@ flowchart LR
     phone -->|"panel and API, port 8088"| teplo
     teplo -->|"batched writes every 5 min"| db
     ntp -.->|"clock trust"| teplo
-    teplo -.->|"alerts over HTTPS, optional proxy"| telegram
+    teplo -.->|"alerts and commands over HTTPS, optional proxy"| telegram
 ```
 
 Every minute the heating cycle decides each zone's target and sends only what differs from the thermostat's last reading:
@@ -143,7 +143,7 @@ app/
     power/          power cuts and their causes, load management
     devices/        device registry, capability ports, Tuya and ESPHome drivers, state stores
     telemetry/      samples and the event journal
-    notifications/  Telegram alerts: policy, outbox, Bot API client
+    notifications/  Telegram alerts and commands: policy, outbox, Bot API client, command parser
     system/         trusted clock
     panel/          dashboard, schedule, settings, journal, API v1
   sites/
@@ -202,6 +202,7 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 - [ ] **Phase meter:** load management on the measured phase currents: a shedding priority, staggered starts, a limp mode for a lost meter, passive phase learning and EV detection. Shipped in dry-run: the journal shows what it would shed, restore or hold back and the dashboard shows the shedding order and the EV badge, until it is switched on in the admin, load by load.
 - [ ] **Air sensors:** air-temperature regulation, a learned optimal start and backup heat for the bedroom from the floor of the bathroom next to it. Shipped in dry-run: the journal shows what they would do, and each room tile names the path that drives it and its air target, until they are switched on in the admin, air control zone by zone.
 - [ ] **Smart plugs:** water heaters as sheddable loads, shipped in dry-run with load management; washing machine monitoring.
+- [x] **House model, block A:** floors and rooms, comfort windows, targets and backup heat per room, guests, 2-hour room overrides and commands from the Telegram chat.
 - [x] **Schedule and settings pages:** comfort windows per weekday with the warm-up they lead to, copied by day or by room; room air targets, zone setpoints, climate and load thresholds and the shedding order. Every change is journaled; the gates stay in the admin.
 
 Each stage first runs in dry-run, journaling the decisions it would make, before it is allowed to switch devices.

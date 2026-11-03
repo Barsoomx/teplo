@@ -107,6 +107,7 @@ GUESTS_OFF = gettext_lazy('Guests mode is off')
 ROOM_OVERRIDDEN = gettext_lazy('%(name)s: manual %(target)s° until %(time)s')
 ROOM_OVERRIDE_CLEARED = gettext_lazy('%(name)s: back to the schedule')
 FROM_TELEGRAM = gettext_lazy('From Telegram')
+OWNER_COMMAND = gettext_lazy('Telegram: “%(text)s”')
 PHASE_LABELS = {phase.value: phase.value.upper() for phase in MEASURED_PHASES}
 LOAD_PHASES = {
     PhaseOrigin.SET: gettext_lazy('Phase %(phase)s, set'),
@@ -405,6 +406,15 @@ def room_override_text(entry: TimelineEntry) -> str:
 @register.filter
 def command_note(entry: TimelineEntry) -> str:
     return str(FROM_TELEGRAM) if entry.payload.get('source') == CommandSource.TELEGRAM else ''
+
+
+@register.filter
+def owner_command_text(entry: TimelineEntry) -> str:
+    text = entry.payload.get('text')
+    if not isinstance(text, str) or not text:
+        return _unknown_event(entry)
+
+    return str(OWNER_COMMAND) % {'text': text}
 
 
 @register.filter

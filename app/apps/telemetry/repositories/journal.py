@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from datetime import datetime, timedelta
 
 from django.db.models import Max
@@ -27,6 +27,15 @@ class JournalRepository:
             .order_by('-created_at', '-id')
             .first()
         )
+        if entry is None:
+            return None
+
+        return entry.payload if isinstance(entry.payload, dict) else {}
+
+    @staticmethod
+    def newest_payload(kind: str, match: Mapping[str, str]) -> dict[str, object] | None:
+        lookups = {f'payload__{key}': value for key, value in match.items()}
+        entry = JournalEntry.objects.filter(kind=kind, **lookups).order_by('-id').first()
         if entry is None:
             return None
 

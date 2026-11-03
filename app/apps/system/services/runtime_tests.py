@@ -9,9 +9,9 @@ from apps.core.stubs import IdleSleepStub, ServerStub, YieldingThreadStub
 from apps.system.services.jobs import ONCE
 from apps.system.services.runtime import TeploRuntime
 
-STARTUP = ('journal_startup', 'recover_write_holds', 'start_mqtt_listener')
+STARTUP = ('journal_startup', 'recover_write_holds', 'start_mqtt_listener', 'start_command_listener')
 JOBS = ('guard_phases', 'run_heating_cycle')
-SHUTDOWN = ('flush_samples', 'stop_mqtt_listener')
+SHUTDOWN = ('flush_samples', 'stop_mqtt_listener', 'stop_command_listener')
 
 
 def _jobs(timeline: list[str], names: tuple[str, ...], interval: timedelta) -> tuple[PeriodicJob, ...]:
