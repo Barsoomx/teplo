@@ -1,6 +1,11 @@
-{% load i18n %}<section class="room" aria-labelledby="room-{{ room.slug }}">
+{% load i18n panel_format %}<section class="room" aria-labelledby="room-{{ room.slug }}">
   <header class="room-head">
     <h3 class="room-name" id="room-{{ room.slug }}">{{ room.name }}</h3>
+    {% with comfort=room.comfort %}{% if comfort.backup_zone %}{% if comfort.backup_active %}
+    <p class="room-chips"><span class="chip backup">{% icon 'flame' %}{% blocktranslate with zone=comfort.backup_zone_name %}Backup heat: {{ zone }}{% endblocktranslate %}</span>{% if overview.dry_run or not comfort.backup_live %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}</p>
+    {% else %}
+    <p class="room-note">{% blocktranslate with below=comfort.backup_below|floatformat:1 zone=comfort.backup_zone_name %}Backup heat below {{ below }}°: {{ zone }}{% endblocktranslate %}</p>
+    {% endif %}{% endif %}{% endwith %}
   </header>
   {% if room.zones %}
   <div class="tiles">

@@ -13,3 +13,15 @@ msgstr "Не может быть меньше air min band, иначе обог�
 
 msgid "The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats"
 msgstr "idle floor setpoint должен быть ниже floor limit setpoint, иначе в режиме воздуха простой будет теплее нагрева"
+
+msgid "The night target must not be above the comfort target"
+msgstr "Ночная цель не может быть выше комфортной"
+
+msgid "Backup heat must turn on at least 0.5° below the night target, or it fights the night target"
+msgstr "Резервный обогрев должен включаться хотя бы на 0,5° ниже ночной цели, иначе он спорит с ней"
+
+msgid "This sensor is the air sensor of a zone"
+msgstr "Это датчик воздуха зоны"
+
+msgid "This sensor is placed in another room"
+msgstr "Этот датчик стоит в другой комнате"

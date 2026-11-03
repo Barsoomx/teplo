@@ -12,7 +12,12 @@ from django.test import Client
 from apps.climate.domain.modes import ControlPath, ScheduleMode
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.devices.domain.kinds import DeviceKind
-from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SensorOverview, ZoneRegime
+from apps.panel.usecases.get_panel_overview import (
+    GetPanelOverviewOutputDTO,
+    RoomComfortOverview,
+    SensorOverview,
+    ZoneRegime,
+)
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO
 from apps.power.domain.loads import LoadPhase
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
@@ -157,6 +162,30 @@ def m_outage_overview_use_case(outage_overview: GetPanelOverviewOutputDTO) -> It
 def m_house_overview_use_case(house_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = house_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_backup_overview_use_case(
+    request: pytest.FixtureRequest,
+    house_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    active, live = request.param
+    comfort = RoomComfortOverview(
+        comfort_target=Decimal('20.5'),
+        setback_target=Decimal('19.5'),
+        air_sensor='air-second-floor',
+        backup_zone='bathroom-2f',
+        backup_zone_name='Санузел 2 этаж',
+        backup_below=Decimal('19.0'),
+        backup_live=live,
+        backup_active=active,
+    )
+    ground, upstairs = house_overview.floors
+    bedroom, office = upstairs.rooms
+    floors = (ground, replace(upstairs, rooms=(replace(bedroom, comfort=comfort), office)))
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(house_overview, floors=floors, dry_run=False)
         yield use_case
 
 
@@ -457,6 +486,34 @@ def test_dashboard_shows_the_air_of_a_room_without_a_zone_in_large_type(
         m_house_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == (1, True, True, True, (False, False, False), (False, 1), 1, 1)
+
+
+@pytest.mark.parametrize(
+    ('m_backup_overview_use_case', 'chip', 'watching', 'caption'),
+    [((True, False), True, True, False), ((True, True), True, False, False), ((False, False), False, False, True)],
+    ids=['on_while_watching', 'on_and_live', 'off'],
+    indirect=['m_backup_overview_use_case'],
+)
+def test_dashboard_names_the_backup_heat_of_a_room_while_it_is_on_and_its_threshold_while_it_is_off(
+    f_russian_client: Client,
+    m_backup_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    chip: bool,
+    watching: bool,
+    caption: bool,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    bedroom_at = content.index('id="room-bedroom"')
+    bedroom = content[bedroom_at : content.index('</header>', bedroom_at)]
+    assert (
+        'Резерв: Санузел 2 этаж' in bedroom,
+        'Наблюдение' in bedroom,
+        'Резерв ниже 19,0°: Санузел 2 этаж' in bedroom,
+        m_backup_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (chip, watching, caption, 1, 1)
 
 
 def test_dashboard_leaves_out_a_room_with_nothing_to_show(

@@ -34,7 +34,7 @@ class ZoneSettingsForm(forms.Form):
     @classmethod
     def for_zone(cls, zone: ZoneConfigRecord, data: QueryDict | None = None) -> 'ZoneSettingsForm':
         form = cls(data, initial=asdict(zone.config), auto_id=f'zone-{zone.slug}-%s')
-        if zone.kind is not ZoneKind.AIR:
+        if zone.kind is not ZoneKind.AIR or zone.room is not None:
             for field in AIR_FIELDS:
                 del form.fields[field]
         return form

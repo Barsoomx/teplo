@@ -26,8 +26,11 @@ POSTED = {
     'air_min_band': '0.20',
     'learned_mornings_needed': '5',
     'preheat_lead_cap_minutes': '210',
+}
+DEAD_GUARD = {
     'second_floor_guard_threshold': '18.5',
     'second_floor_guard_hysteresis': '0.50',
+    'second_floor_guard_live': 'on',
 }
 BELOW_MIN_BAND = 'Не может быть меньше минимального зазора, иначе обогрев остановится выше цели'
 
@@ -82,21 +85,22 @@ def m_update_use_case_the_database_refuses(request: pytest.FixtureRequest) -> It
         yield use_case
 
 
-def test_saved_climate_settings_go_to_the_use_case_without_the_guard_gate(
+def test_saved_climate_settings_go_to_the_use_case_without_the_old_second_floor_guard(
     f_russian_client: Client,
     m_settings_use_case: MagicMock,
     m_update_use_case: MagicMock,
 ) -> None:
-    response = f_russian_client.post('/settings/climate/', {**POSTED, 'second_floor_guard_live': 'on'})
+    response = f_russian_client.post('/settings/climate/', {**POSTED, **DEAD_GUARD})
 
     executed = m_update_use_case.init.return_value.execute.call_args.args[0]
     content = response.content.decode()
     assert (
         response.status_code,
         replace(executed, now=NOW),
-        hasattr(executed, 'second_floor_guard_live'),
+        [field for field in DEAD_GUARD if hasattr(executed, field)],
         'Сохранено. Цикл отопления учтёт это в течение минуты.' in content,
         'id="climate-settings"' in content,
+        ('second_floor_guard' in content, 'Защита второго этажа' in content, 'class="gates"' in content),
         m_settings_use_case.init.call_count,
     ) == (
         200,
@@ -106,13 +110,12 @@ def test_saved_climate_settings_go_to_the_use_case_without_the_guard_gate(
             air_min_band=Decimal('0.20'),
             learned_mornings_needed=5,
             preheat_lead_cap_minutes=210,
-            second_floor_guard_threshold=Decimal('18.5'),
-            second_floor_guard_hysteresis=Decimal('0.50'),
             now=NOW,
         ),
-        False,
+        [],
         True,
         True,
+        (False, False, False),
         1,
     )
 

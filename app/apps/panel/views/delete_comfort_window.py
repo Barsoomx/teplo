@@ -29,11 +29,11 @@ class DeleteComfortWindowView(LoginRequiredMixin, View):
             logger.warning('schedule_not_saved', action='delete', window=window_id, error=str(error))
             failure = ScheduleFailure(action='delete', messages=(str(NOT_SAVED),), window=window_id)
         else:
-            deleted_from = output.zone
+            deleted_from = output.room
 
         schedule = GetSchedulePageUseCase.init().execute(GetSchedulePageInputDTO())
-        zone = schedule.zone_of_window(window_id) if deleted_from is None else schedule.zone(deleted_from)
-        if zone is None:
+        room = schedule.room_of_window(window_id) if deleted_from is None else schedule.room(deleted_from)
+        if room is None:
             raise Http404(window_id)
 
-        return render(request, 'panel/_schedule_zone.html', {'zone': zone, 'schedule': schedule, 'failure': failure})
+        return render(request, 'panel/_schedule_room.html', {'room': room, 'schedule': schedule, 'failure': failure})

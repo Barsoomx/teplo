@@ -8,10 +8,10 @@ import pytest
 from django.db import IntegrityError, OperationalError
 from django.test import Client
 
-from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.usecases.copy_comfort_week import CopyComfortWeekInputDTO, CopyComfortWeekOutputDTO
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingProblem
+from apps.house.domain.errors import RoomNotFoundError
 from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO
 
 pytestmark = pytest.mark.django_db
@@ -24,7 +24,7 @@ NOT_SAVED = 'Не сохранено: база данных не приняла 
 @pytest.fixture
 def m_copy_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.copy_comfort_week.CopyComfortWeekUseCase') as use_case:
-        use_case.init.return_value.execute.return_value = CopyComfortWeekOutputDTO(zones=('living-room',), changes=())
+        use_case.init.return_value.execute.return_value = CopyComfortWeekOutputDTO(rooms=('living-room',), changes=())
         yield use_case
 
 
@@ -38,9 +38,9 @@ def m_overlap_copy_use_case() -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def m_missing_zone_copy_use_case() -> Iterator[MagicMock]:
+def m_missing_room_copy_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.copy_comfort_week.CopyComfortWeekUseCase') as use_case:
-        use_case.init.return_value.execute.side_effect = ZoneNotFoundError('attic')
+        use_case.init.return_value.execute.side_effect = RoomNotFoundError('attic')
         yield use_case
 
 
@@ -58,12 +58,12 @@ def m_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[Mag
         yield use_case
 
 
-def test_week_copied_to_the_picked_zones_goes_to_the_use_case_and_every_zone_is_drawn_again(
+def test_week_copied_to_the_picked_rooms_goes_to_the_use_case_and_every_room_is_drawn_again(
     f_client: Client,
     m_copy_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
 ) -> None:
-    response = f_client.post(URL, {'zones': ['living-room']})
+    response = f_client.post(URL, {'rooms': ['living-room']})
 
     executed = m_copy_use_case.init.return_value.execute.call_args.args[0]
     content = response.content.decode()
@@ -72,10 +72,10 @@ def test_week_copied_to_the_picked_zones_goes_to_the_use_case_and_every_zone_is_
         replace(executed, now=NOW),
         ['id="schedule-kitchen"' in content, 'id="schedule-living-room"' in content],
         m_schedule_use_case.init.call_count,
-    ) == (200, CopyComfortWeekInputDTO(zone='kitchen', to_zones=('living-room',), now=NOW), [True, True], 1)
+    ) == (200, CopyComfortWeekInputDTO(room='kitchen', to_rooms=('living-room',), now=NOW), [True, True], 1)
 
 
-def test_copy_without_a_picked_zone_is_explained_in_the_source_zone(
+def test_copy_without_a_picked_room_is_explained_in_the_source_room(
     f_russian_client: Client,
     m_copy_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
@@ -85,46 +85,46 @@ def test_copy_without_a_picked_zone_is_explained_in_the_source_zone(
     content = response.content.decode()
     assert (
         response.status_code,
-        content.count('Выберите хотя бы одну зону'),
+        content.count('Выберите хотя бы одну комнату'),
         '<details class="week-tool" open>' in content,
         m_copy_use_case.init.call_count,
         m_schedule_use_case.init.call_count,
     ) == (200, 1, True, 0, 1)
 
 
-def test_week_whose_windows_overlap_is_explained_with_the_zones_kept_picked(
+def test_week_whose_windows_overlap_is_explained_with_the_rooms_kept_picked(
     f_russian_client: Client,
     m_overlap_copy_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
 ) -> None:
-    response = f_russian_client.post(URL, {'zones': ['living-room']})
+    response = f_russian_client.post(URL, {'rooms': ['living-room']})
 
     content = response.content.decode()
     assert (
         response.status_code,
         'Окна комфорта одного дня не должны пересекаться' in content,
-        'name="zones" value="living-room" checked' in content,
+        'name="rooms" value="living-room" checked' in content,
         m_overlap_copy_use_case.init.call_count,
         m_schedule_use_case.init.call_count,
     ) == (200, True, True, 1, 1)
 
 
-def test_copy_to_an_unknown_zone_returns_404(
+def test_copy_to_an_unknown_room_returns_404(
     f_client: Client,
-    m_missing_zone_copy_use_case: MagicMock,
+    m_missing_room_copy_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
 ) -> None:
-    response = f_client.post(URL, {'zones': ['attic']})
+    response = f_client.post(URL, {'rooms': ['attic']})
 
     assert (
         response.status_code,
-        m_missing_zone_copy_use_case.init.call_count,
+        m_missing_room_copy_use_case.init.call_count,
         m_schedule_use_case.init.call_count,
     ) == (404, 1, 0)
 
 
 def test_copying_a_week_requires_login(f_anonymous_client: Client, m_copy_use_case: MagicMock) -> None:
-    response = f_anonymous_client.post(URL, {'zones': ['living-room']})
+    response = f_anonymous_client.post(URL, {'rooms': ['living-room']})
 
     assert (response.status_code, response['Location'], m_copy_use_case.init.call_count) == (
         302,
@@ -139,19 +139,19 @@ def test_copying_a_week_requires_login(f_anonymous_client: Client, m_copy_use_ca
     ids=['database_locked', 'check_failed'],
     indirect=True,
 )
-def test_week_copy_the_database_does_not_take_is_answered_in_the_source_zone_with_the_zones_kept_picked(
+def test_week_copy_the_database_does_not_take_is_answered_in_the_source_room_with_the_rooms_kept_picked(
     f_russian_client: Client,
     m_copy_use_case_the_database_refuses: MagicMock,
     m_schedule_use_case: MagicMock,
 ) -> None:
-    response = f_russian_client.post(URL, {'zones': ['living-room']})
+    response = f_russian_client.post(URL, {'rooms': ['living-room']})
 
     content = response.content.decode()
     assert (
         response.status_code,
         content.count(NOT_SAVED),
         '<details class="week-tool" open>' in content,
-        'name="zones" value="living-room" checked' in content,
+        'name="rooms" value="living-room" checked' in content,
         m_copy_use_case_the_database_refuses.init.call_count,
         m_schedule_use_case.init.call_count,
     ) == (200, 1, True, True, 1, 1)

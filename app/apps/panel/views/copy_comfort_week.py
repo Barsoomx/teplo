@@ -6,9 +6,9 @@ from django.shortcuts import render
 from django.utils import timezone
 from django.views import View
 
-from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.usecases.copy_comfort_week import CopyComfortWeekInputDTO, CopyComfortWeekUseCase
 from apps.core.domain.errors import SettingsRejectedError
+from apps.house.domain.errors import RoomNotFoundError
 from apps.panel.forms.copy_comfort_week import CopyComfortWeekForm
 from apps.panel.forms.problems import add_not_saved, add_problems
 from apps.panel.forms.schedule_failure import ScheduleFailure, form_messages
@@ -23,14 +23,14 @@ class CopyComfortWeekView(LoginRequiredMixin, View):
         if form.is_valid():
             try:
                 CopyComfortWeekUseCase.init().execute(
-                    CopyComfortWeekInputDTO(zone=slug, to_zones=tuple(form.cleaned_data['zones']), now=timezone.now()),
+                    CopyComfortWeekInputDTO(room=slug, to_rooms=tuple(form.cleaned_data['rooms']), now=timezone.now()),
                 )
-            except ZoneNotFoundError as error:
+            except RoomNotFoundError as error:
                 raise Http404(error.detail) from error
             except SettingsRejectedError as error:
                 add_problems(form, error.problems)
             except (OperationalError, IntegrityError) as error:
-                logger.warning('schedule_not_saved', action='copy_week', zone=slug, error=str(error))
+                logger.warning('schedule_not_saved', action='copy_week', room=slug, error=str(error))
                 add_not_saved(form)
 
         schedule = GetSchedulePageUseCase.init().execute(GetSchedulePageInputDTO())
@@ -39,7 +39,7 @@ class CopyComfortWeekView(LoginRequiredMixin, View):
             failure = ScheduleFailure(
                 action='copy_week',
                 messages=form_messages(form),
-                zone=slug,
-                chosen=tuple(request.POST.getlist('zones')),
+                room=slug,
+                chosen=tuple(request.POST.getlist('rooms')),
             )
-        return render(request, 'panel/_schedule_zones.html', {'schedule': schedule, 'failure': failure})
+        return render(request, 'panel/_schedule_rooms.html', {'schedule': schedule, 'failure': failure})

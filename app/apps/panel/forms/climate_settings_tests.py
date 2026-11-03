@@ -15,8 +15,6 @@ POSTED = {
     'air_min_band': '0.15',
     'learned_mornings_needed': '5',
     'preheat_lead_cap_minutes': '210',
-    'second_floor_guard_threshold': '18.5',
-    'second_floor_guard_hysteresis': '0.5',
 }
 STORED = ClimateConfigRecord(
     id=None,
@@ -26,10 +24,7 @@ STORED = ClimateConfigRecord(
         air_min_band=Decimal('0.20'),
         learned_mornings_needed=3,
         preheat_lead_cap_minutes=240,
-        second_floor_guard_threshold=Decimal('19.0'),
-        second_floor_guard_hysteresis=Decimal('0.30'),
     ),
-    second_floor_guard_live=True,
 )
 
 
@@ -50,8 +45,6 @@ def test_climate_settings_form_reads_every_setting() -> None:
             'air_min_band': Decimal('0.15'),
             'learned_mornings_needed': 5,
             'preheat_lead_cap_minutes': 210,
-            'second_floor_guard_threshold': Decimal('18.5'),
-            'second_floor_guard_hysteresis': Decimal('0.5'),
         },
     )
 
@@ -66,8 +59,6 @@ def test_climate_settings_form_reads_every_setting() -> None:
         ('air_min_band', '1.01'),
         ('learned_mornings_needed', '0'),
         ('preheat_lead_cap_minutes', '481'),
-        ('second_floor_guard_threshold', '4'),
-        ('second_floor_guard_hysteresis', '-0.1'),
     ],
 )
 def test_climate_setting_out_of_its_range_is_refused_at_its_field(field: str, value: str) -> None:
@@ -117,7 +108,7 @@ def test_start_offset_out_of_its_range_is_not_checked_against_the_min_band() -> 
     )
 
 
-def test_unbound_form_shows_the_stored_settings_and_no_guard_gate() -> None:
+def test_unbound_form_shows_the_stored_settings_and_no_backup_heat() -> None:
     form = ClimateSettingsForm.for_settings(STORED)
 
     assert (
@@ -125,5 +116,5 @@ def test_unbound_form_shows_the_stored_settings_and_no_guard_gate() -> None:
         form['air_min_band'].value(),
         form['learned_mornings_needed'].value(),
         form['air_start_offset'].auto_id,
-        'second_floor_guard_live' in form.fields,
-    ) == (Decimal('0.30'), Decimal('0.20'), 3, 'climate-air_start_offset', False)
+        [field for field in form.fields if 'guard' in field],
+    ) == (Decimal('0.30'), Decimal('0.20'), 3, 'climate-air_start_offset', [])

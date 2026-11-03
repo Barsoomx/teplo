@@ -4,7 +4,7 @@ from functools import partial
 
 import pytest
 
-from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
+from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.errors import ComfortWindowNotFoundError
 from apps.climate.domain.zone import ComfortWindow
 from apps.climate.stubs import ComfortWindowStoreStub
@@ -27,7 +27,7 @@ SATURDAY = (
 def f_windows() -> ComfortWindowStoreStub:
     return ComfortWindowStoreStub(
         weeks=[
-            ZoneWeek(
+            RoomWeek(
                 slug='kitchen',
                 name='Кухня',
                 windows=(
@@ -87,7 +87,7 @@ def test_deleted_window_leaves_the_rest_of_its_day(
         new=('08:00-12:00',),
     )
     assert (output, f_windows.replaced, f_recorder.records) == (
-        DeleteComfortWindowOutputDTO(zone='kitchen', changes=(change,)),
+        DeleteComfortWindowOutputDTO(room='kitchen', changes=(change,)),
         [('kitchen', {5: (ComfortWindow(weekday=5, start=time(8, 0), end=time(12, 0)),)})],
         [((change,), NOW)],
     )

@@ -23,6 +23,7 @@ from apps.panel.views.load_settings import LoadSettingsView
 from apps.panel.views.loads_settings import LoadsSettingsView
 from apps.panel.views.mark_outage_cause import MarkOutageCauseView
 from apps.panel.views.phases_partial import PhasesPartialView
+from apps.panel.views.room_settings import RoomSettingsView
 from apps.panel.views.schedule_page import SchedulePageView
 from apps.panel.views.settings_page import SettingsPageView
 from apps.panel.views.zone_settings import ZoneSettingsView
@@ -49,6 +50,7 @@ urlpatterns = [
     path('schedule/<slug:slug>/days/<weekday:weekday>/copy/', CopyComfortDayView.as_view(), name='copy-comfort-day'),
     path('schedule/<slug:slug>/copy/', CopyComfortWeekView.as_view(), name='copy-comfort-week'),
     path('settings/', SettingsPageView.as_view(), name='settings'),
+    path('settings/rooms/<slug:slug>/', RoomSettingsView.as_view(), name='room-settings'),
     path('settings/zones/<slug:slug>/', ZoneSettingsView.as_view(), name='zone-settings'),
     path('settings/climate/', ClimateSettingsView.as_view(), name='climate-settings'),
     path('settings/load-management/', LoadSettingsView.as_view(), name='load-settings'),

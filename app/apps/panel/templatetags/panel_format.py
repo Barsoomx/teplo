@@ -14,6 +14,7 @@ from django.utils.translation import gettext, gettext_lazy
 
 from apps.climate.domain.comfort_windows import WEEKDAY_FIELDS
 from apps.climate.domain.modes import ScheduleMode
+from apps.climate.domain.room_climate import ROOM
 from apps.climate.domain.week_plan import DayPeriod
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
@@ -94,6 +95,9 @@ GUARD_OFF = gettext_lazy(
 GUARD_OFF_UNREAD = gettext_lazy(
     '%(name)s: the second-floor guard would return the zone to its schedule (no second-floor reading)',
 )
+BACKUP_ON = gettext_lazy('%(name)s: backup heat would turn comfort on (%(room)s %(air)s°)')
+BACKUP_OFF = gettext_lazy('%(name)s: backup heat would return the zone to its schedule (%(room)s %(air)s°)')
+BACKUP_OFF_UNREAD = gettext_lazy('%(name)s: backup heat would return the zone to its schedule (no reading in %(room)s)')
 PHASE_LABELS = {phase.value: phase.value.upper() for phase in MEASURED_PHASES}
 LOAD_PHASES = {
     PhaseOrigin.SET: gettext_lazy('Phase %(phase)s, set'),
@@ -246,6 +250,10 @@ SETTINGS_FIELDS: dict[tuple[str, str], tuple[Promise, Callable[[object], str]]] 
         gettext_lazy('second-floor guard hysteresis'),
         _fine_degrees,
     ),
+    ('room', 'comfort_target'): (gettext_lazy('air in comfort'), _degrees),
+    ('room', 'setback_target'): (gettext_lazy('air at night'), _degrees),
+    ('room', 'backup_below'): (gettext_lazy('backup heat below'), _degrees),
+    ('room', 'backup_hysteresis'): (gettext_lazy('backup heat hysteresis'), _fine_degrees),
     ('load_settings', 'start_ceiling_amps'): (gettext_lazy('start ceiling'), _amps),
     ('load_settings', 'shed_amps'): (gettext_lazy('shed threshold'), _amps),
     ('load_settings', 'shed_hold_seconds'): (gettext_lazy('shed after'), _seconds),
@@ -412,6 +420,26 @@ def second_floor_guard_text(entry: TimelineEntry) -> str:
 
 
 @register.filter
+def backup_heat_text(entry: TimelineEntry) -> str:
+    room = entry.payload.get('room_name')
+    active = entry.payload.get('active')
+    air = floatformat(entry.payload.get('air'), 1)
+    if not isinstance(room, str) or not room:
+        return _unknown_event(entry)
+
+    if active is True and air:
+        return str(BACKUP_ON) % {'name': entry.subject_name, 'room': room, 'air': air}
+
+    if active is False and air:
+        return str(BACKUP_OFF) % {'name': entry.subject_name, 'room': room, 'air': air}
+
+    if active is False:
+        return str(BACKUP_OFF_UNREAD) % {'name': entry.subject_name, 'room': room}
+
+    return _unknown_event(entry)
+
+
+@register.filter
 def outage_overload_note(outage: OutageRecord) -> str:
     overload = outage.overload
     if overload is None:
@@ -572,8 +600,7 @@ def settings_change_text(entry: TimelineEntry) -> str:
     field = str(entry.payload.get('field'))
     old = entry.payload.get('old')
     new = entry.payload.get('new')
-    subject = SETTINGS_SUBJECTS.get(target)
-    name = load_name(entry) if subject is None else str(subject)
+    name = _settings_subject_name(entry, target)
     if target == 'schedule':
         template = SCHEDULE_CHANGES.get(field)
         if template is None:
@@ -593,6 +620,18 @@ def settings_change_text(entry: TimelineEntry) -> str:
 
     label, value_text = known
     return str(SETTING_CHANGED) % {'name': name, 'field': label, 'old': value_text(old), 'new': value_text(new)}
+
+
+def _settings_subject_name(entry: TimelineEntry, target: str) -> str:
+    subject = SETTINGS_SUBJECTS.get(target)
+    if subject is not None:
+        return str(subject)
+
+    if target != ROOM:
+        return load_name(entry)
+
+    name = entry.payload.get('name')
+    return name if isinstance(name, str) and name else entry.subject
 
 
 def _windows_text(windows: object) -> str:

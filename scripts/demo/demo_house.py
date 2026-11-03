@@ -10,7 +10,7 @@ from django.contrib.auth.models import User
 from django.core.management import call_command
 from django.utils import timezone
 
-from apps.climate.models import ComfortPeriod, Zone
+from apps.climate.models import Zone
 from apps.devices.domain.readings import Phase, PlugState, TemperatureReading, ThermostatMode, ThermostatState
 from apps.devices.models import Device
 from apps.devices.services.phase_meter_store import phase_meter_store
@@ -54,12 +54,6 @@ ENGLISH_ROOM_NAMES = {
     'office': 'Office',
     'bathroom-2f': 'Bathroom',
 }
-COMFORT_STARTS = {
-    'living-room': time(6, 30),
-    'kitchen': time(8, 30),
-    'hallway': time(13, 0),
-}
-COMFORT_END = time(23, 30)
 READINGS = {
     'thermostat-living-room': ('28.0', '27.6'),
     'thermostat-kitchen': ('28.0', '25.9'),
@@ -127,12 +121,6 @@ def main() -> None:
 
 
 def _seed_zones(now: datetime) -> None:
-    for slug, start in COMFORT_STARTS.items():
-        zone = Zone.objects.get(slug=slug)
-        ComfortPeriod.objects.filter(zone=zone).delete()
-        ComfortPeriod.objects.bulk_create(
-            [ComfortPeriod(zone=zone, weekday=weekday, start=start, end=COMFORT_END) for weekday in range(7)],
-        )
     Zone.objects.filter(slug='bathroom-2f').update(boost_until=now + timedelta(hours=1, minutes=35))
     Zone.objects.exclude(slug='hallway').update(live_control=True)
 

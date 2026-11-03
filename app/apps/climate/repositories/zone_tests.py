@@ -1,25 +1,36 @@
 from dataclasses import replace
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
+from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.errors import ZoneNotFoundError
+from apps.climate.domain.learning import ZoneLearningRecord
+from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
-from apps.climate.factories import ComfortPeriodFactory, ZoneFactory
-from apps.climate.models import Zone
+from apps.climate.domain.zone_cycle import CycleConditions, ZoneConditions, ZoneDecision, decide_zone
+from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
+from apps.climate.models import ComfortPeriod, Zone
+from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.house.factories import RoomFactory
+from apps.house.models import Room
 
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+WEEK_START = datetime(2026, 11, 2, 0, 0, tzinfo=ZoneInfo('Europe/Moscow'))
+WEEK_MINUTES = 7 * 1440
+AIR_EVERY_MINUTES = 15
+OPEN_SPACE_LEADS = (('living-room', 180), ('kitchen', 150), ('hallway', 240))
 KITCHEN_CONFIG = ZoneConfig(
     name='Кухня',
     heating_enabled=True,
@@ -96,6 +107,72 @@ def placed_zones() -> None:
 
 
 @pytest.fixture
+def f_zone_in_a_room_climate() -> Zone:
+    climate = RoomClimateFactory.create(
+        room=RoomFactory.create(slug='open-space'),
+        comfort_target=Decimal('21.5'),
+        setback_target=Decimal('19.0'),
+    )
+    zone = ZoneFactory.create(slug='kitchen', room=climate.room)
+    ComfortPeriodFactory.create(zone=zone, weekday=0, start=time(6, 30), end=time(23, 30))
+    ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=0, start=time(7, 0), end=time(22, 0))
+    ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=6, start=time(9, 0), end=time(23, 0))
+    return zone
+
+
+@pytest.fixture
+def zones_without_a_room_climate() -> list[Zone]:
+    kitchen = ZoneFactory.create(
+        slug='kitchen',
+        room=RoomFactory.create(slug='open-space'),
+        comfort_air_target=Decimal('21.0'),
+        night_air_target=Decimal('18.5'),
+    )
+    attic = ZoneFactory.create(slug='attic')
+    ComfortPeriodFactory.create(zone=kitchen, weekday=0, start=time(6, 30), end=time(23, 30))
+    ComfortPeriodFactory.create(zone=attic, weekday=3, start=time(12, 0), end=time(13, 0))
+    return [kitchen, attic]
+
+
+@pytest.fixture
+def open_space() -> Room:
+    room = RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая')
+    for slug, lead in OPEN_SPACE_LEADS:
+        zone = ZoneFactory.create(
+            slug=slug,
+            room=room,
+            air_sensor=DeviceFactory.create(
+                slug=f'air-{slug}',
+                kind=DeviceKind.TEMPERATURE_SENSOR,
+                driver=DeviceDriver.ESPHOME_TEMPERATURE,
+            ),
+            comfort_air_target=Decimal('22.0'),
+            night_air_target=Decimal('19.5'),
+            preheat_lead_minutes=lead,
+        )
+        for weekday in range(7):
+            ComfortPeriodFactory.create(zone=zone, weekday=weekday, start=time(12, 0), end=time(13, 0))
+    return room
+
+
+@pytest.fixture
+def f_zone_built(open_space: Room) -> list[ZoneSettings]:
+    return [zone for zone in ZoneRepository.all_settings() if zone.room_slug == open_space.slug]
+
+
+@pytest.fixture
+def f_room_built(open_space: Room, f_zone_built: list[ZoneSettings]) -> list[ZoneSettings]:
+    climate = RoomClimateFactory.create(
+        room=open_space,
+        comfort_target=Decimal('22.0'),
+        setback_target=Decimal('19.5'),
+    )
+    ComfortPeriod.objects.filter(zone__slug='living-room').update(room_climate=climate)
+    zone_built = {zone.slug for zone in f_zone_built}
+    return [zone for zone in ZoneRepository.all_settings() if zone.slug in zone_built]
+
+
+@pytest.fixture
 def f_commanded_zone(f_zone: Zone) -> Zone:
     Zone.objects.filter(pk=f_zone.pk).update(
         last_command_at=NOW - timedelta(minutes=5),
@@ -148,6 +225,71 @@ def test_all_settings_name_the_room_of_each_zone() -> None:
         ('hallway', 'open-space'),
         ('kitchen', 'open-space'),
     ]
+
+
+def test_a_zone_takes_windows_and_air_targets_from_its_room_climate(f_zone_in_a_room_climate: Zone) -> None:
+    [zone] = ZoneRepository.all_settings()
+    [record] = ZoneRepository.config_records()
+
+    assert (
+        zone.slug,
+        zone.windows,
+        zone.air_targets,
+        zone.preheat_lead,
+        record.room,
+        record.config.comfort_air_target,
+    ) == (
+        f_zone_in_a_room_climate.slug,
+        (
+            ComfortWindow(weekday=0, start=time(7, 0), end=time(22, 0)),
+            ComfortWindow(weekday=6, start=time(9, 0), end=time(23, 0)),
+        ),
+        AirTargets(comfort=Decimal('21.5'), night=Decimal('19.0')),
+        timedelta(minutes=180),
+        'open-space',
+        Decimal('22.0'),
+    )
+
+
+@pytest.mark.usefixtures('zones_without_a_room_climate')
+def test_a_zone_without_a_room_climate_keeps_its_own_comfort() -> None:
+    zones = ZoneRepository.all_settings()
+
+    assert (
+        [(zone.slug, zone.room_slug, zone.windows, zone.air_targets) for zone in zones],
+        [(record.slug, record.room) for record in ZoneRepository.config_records()],
+    ) == (
+        [
+            (
+                'attic',
+                None,
+                (ComfortWindow(weekday=3, start=time(12, 0), end=time(13, 0)),),
+                AirTargets(comfort=Decimal('22.0'), night=Decimal('19.5')),
+            ),
+            (
+                'kitchen',
+                'open-space',
+                (ComfortWindow(weekday=0, start=time(6, 30), end=time(23, 30)),),
+                AirTargets(comfort=Decimal('21.0'), night=Decimal('18.5')),
+            ),
+        ],
+        [('attic', None), ('kitchen', None)],
+    )
+
+
+def test_zones_decide_every_minute_of_a_week_as_before_once_their_room_holds_the_comfort(
+    f_zone_built: list[ZoneSettings],
+    f_room_built: list[ZoneSettings],
+) -> None:
+    control = ClimateSettingsRepository.control()
+
+    decisions = (_week_of_decisions(f_room_built, control), _week_of_decisions(f_zone_built, control))
+
+    assert (f_room_built, len(decisions[0]), decisions[0] == decisions[1]) == (
+        f_zone_built,
+        len(OPEN_SPACE_LEADS) * (WEEK_MINUTES + WEEK_MINUTES // AIR_EVERY_MINUTES),
+        True,
+    )
 
 
 def test_all_settings_maps_air_control(f_air_controlled_zone: Zone) -> None:
@@ -320,3 +462,30 @@ def test_saved_config_refuses_to_write_a_gate(gate: str) -> None:
 def test_saving_the_config_of_an_unknown_zone_raises() -> None:
     with pytest.raises(ZoneNotFoundError):
         ZoneRepository.save_config('attic', KITCHEN_CONFIG, ('name',))
+
+
+def _week_of_decisions(zones: list[ZoneSettings], control: ClimateControl) -> list[ZoneDecision]:
+    floor = ZoneConditions(air=None, learning=ZoneLearningRecord.unlearned(), guarded=False, writes_live=True)
+    air = replace(floor, air=Decimal('20.4'))
+    decisions: list[ZoneDecision] = []
+    for zone in zones:
+        for minute in range(WEEK_MINUTES):
+            now = WEEK_START + timedelta(minutes=minute)
+            decisions.append(
+                decide_zone(
+                    zone,
+                    ZoneMemory(),
+                    floor,
+                    CycleConditions(now=now, clock_trusted=True, control=control, outdoor=None),
+                ),
+            )
+            if minute % AIR_EVERY_MINUTES == 0:
+                decisions.append(
+                    decide_zone(
+                        zone,
+                        ZoneMemory(),
+                        air,
+                        CycleConditions(now=now, clock_trusted=True, control=control, outdoor=Decimal('-3.4')),
+                    ),
+                )
+    return decisions

@@ -9,6 +9,28 @@ class RoomOverviewSerializer(serializers.Serializer):
     floor = serializers.CharField()
     zones = serializers.SerializerMethodField()
     devices = serializers.ListField(child=serializers.CharField())
+    comfort_target = serializers.DecimalField(
+        source='comfort.comfort_target',
+        max_digits=4,
+        decimal_places=1,
+        allow_null=True,
+    )
+    setback_target = serializers.DecimalField(
+        source='comfort.setback_target',
+        max_digits=4,
+        decimal_places=1,
+        allow_null=True,
+    )
+    air_sensor = serializers.CharField(source='comfort.air_sensor', allow_null=True)
+    backup_zone = serializers.CharField(source='comfort.backup_zone', allow_null=True)
+    backup_live = serializers.SerializerMethodField()
+    backup_active = serializers.SerializerMethodField()
 
     def get_zones(self, room: RoomOverview) -> list[str]:
         return [zone.slug for zone in room.zones]
+
+    def get_backup_live(self, room: RoomOverview) -> bool:
+        return room.comfort is not None and room.comfort.backup_live
+
+    def get_backup_active(self, room: RoomOverview) -> bool:
+        return room.comfort is not None and room.comfort.backup_active

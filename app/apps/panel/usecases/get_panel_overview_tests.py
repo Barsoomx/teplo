@@ -9,9 +9,16 @@ from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.optimal_start import PreheatStart
 from apps.climate.domain.schedule import ScheduleTransition
-from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, ZoneFactory, ZoneLearningFactory
+from apps.climate.factories import (
+    ClimateSettingsFactory,
+    ComfortPeriodFactory,
+    RoomClimateFactory,
+    ZoneFactory,
+    ZoneLearningFactory,
+)
 from apps.climate.models import Zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
@@ -30,6 +37,7 @@ from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewUseCase,
     LoadOverview,
     PlugOverview,
+    RoomComfortOverview,
     SensorOverview,
     ZoneOverview,
     ZoneRegime,
@@ -117,6 +125,7 @@ def _learned_house(air: str) -> TemperatureStateStore:
 def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -153,6 +162,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
     )
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -179,6 +189,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
     store.record_failure('thermostat-hallway', error_code='device_unavailable', error='timeout')
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -208,6 +219,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
     ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -237,6 +249,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
     ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -261,6 +274,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
     ZoneFactory.create(slug='living-room', name='Гостиная', thermostat__slug='thermostat-living-room')
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -308,6 +322,7 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
     plug_store.record_failure('plug-boiler-2f', error_code='device_unavailable', error='timeout')
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -365,7 +380,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
         kind=ZoneKind.FLOOR,
         thermostat__slug='thermostat-bathroom-1f',
     )
-    ClimateSettingsFactory.create(outdoor_sensor=sensors['outdoor'], second_floor_sensor=sensors['air-second-floor'])
+    ClimateSettingsFactory.create(outdoor_sensor=sensors['outdoor'])
     store = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=monotonic)
     store.record_state(
         'air-kitchen',
@@ -380,6 +395,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
     monotonic.advance(12.5)
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -408,6 +424,7 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
     )
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -474,20 +491,30 @@ def f_held_preheat_use_case() -> GetPanelOverviewUseCase:
 
 
 @pytest.fixture
-def f_guard_use_case() -> GetPanelOverviewUseCase:
+def f_backup_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
     zone = _zone('bathroom-2f', 'Санузел 2 этаж', kind=ZoneKind.FLOOR)
-    ClimateSettingsFactory.create(second_floor_guard_zone=zone, second_floor_guard_live=True)
+    RoomClimateFactory.create(room=RoomFactory.create(slug='bedroom'), backup_zone=zone, backup_live=request.param)
     book = ControlBook()
-    book.remember_guard(True)
+    book.remember_backup('bedroom', True)
     return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), book)
 
 
 @pytest.fixture
-def f_guard_dry_run_use_case() -> GetPanelOverviewUseCase:
-    zone = _zone('bathroom-2f', 'Санузел 2 этаж', kind=ZoneKind.FLOOR)
-    ClimateSettingsFactory.create(second_floor_guard_zone=zone)
+def f_room_comfort_use_case() -> GetPanelOverviewUseCase:
+    ground = FloorFactory.create(slug='floor-1', name='1 этаж', level=1)
+    upstairs = FloorFactory.create(slug='floor-2', name='2 этаж', level=2)
+    open_space = RoomFactory.create(slug='open-space', floor=ground)
+    bedroom = RoomFactory.create(slug='bedroom', floor=upstairs, position=1)
+    RoomFactory.create(slug='office', floor=upstairs, position=2)
+    RoomClimateFactory.create(room=open_space, setback_target=Decimal('19.0'))
+    RoomClimateFactory.create(
+        room=bedroom,
+        air_sensor=_sensor('air-second-floor', room=bedroom),
+        comfort_target=Decimal('20.5'),
+        backup_zone=_zone('bathroom-2f', 'Санузел 2 этаж', kind=ZoneKind.FLOOR),
+    )
     book = ControlBook()
-    book.remember_guard(True)
+    book.remember_backup('bedroom', True)
     return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), book)
 
 
@@ -495,6 +522,7 @@ def f_guard_dry_run_use_case() -> GetPanelOverviewUseCase:
 def f_outages_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -609,6 +637,7 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
     guard_book.note_waiting(frozenset({'kitchen'}))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
+        rooms=RoomClimateRepository(),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -853,20 +882,61 @@ def test_overview_keeps_the_preheat_start_the_heating_cycle_holds(
     assert (zone.regime, zone.lead, zone.target_setpoint) == (ZoneRegime.PREHEAT, LEARNED_LEAD, Decimal('30.0'))
 
 
-def test_overview_shows_the_target_the_live_second_floor_guard_raises(
-    f_guard_use_case: GetPanelOverviewUseCase,
+@pytest.mark.parametrize(
+    ('f_backup_use_case', 'target'),
+    [(True, Decimal('28.0')), (False, Decimal('22.0'))],
+    ids=['live_raises_to_comfort', 'gate_off_keeps_night'],
+    indirect=['f_backup_use_case'],
+)
+def test_overview_shows_the_target_backup_heat_raises_only_while_its_gate_is_on(
+    f_backup_use_case: GetPanelOverviewUseCase,
+    target: Decimal,
 ) -> None:
-    zone = f_guard_use_case.execute(GetPanelOverviewInputDTO(now=NIGHT)).zones[0]
+    zone = f_backup_use_case.execute(GetPanelOverviewInputDTO(now=NIGHT)).zones[0]
 
-    assert (zone.regime, zone.target_setpoint) == (ZoneRegime.NIGHT, Decimal('28.0'))
+    assert (zone.regime, zone.target_setpoint) == (ZoneRegime.NIGHT, target)
 
 
-def test_overview_keeps_the_night_target_while_the_guard_runs_in_dry_run(
-    f_guard_dry_run_use_case: GetPanelOverviewUseCase,
+def test_overview_gives_each_room_its_comfort_and_its_backup_heat(
+    f_room_comfort_use_case: GetPanelOverviewUseCase,
 ) -> None:
-    zone = f_guard_dry_run_use_case.execute(GetPanelOverviewInputDTO(now=NIGHT)).zones[0]
+    output = f_room_comfort_use_case.execute(GetPanelOverviewInputDTO(now=NIGHT))
 
-    assert (zone.regime, zone.target_setpoint) == (ZoneRegime.NIGHT, Decimal('22.0'))
+    assert (
+        [(room.slug, room.comfort) for floor in output.floors for room in floor.rooms],
+        output.zones[0].target_setpoint,
+    ) == (
+        [
+            (
+                'open-space',
+                RoomComfortOverview(
+                    comfort_target=Decimal('22.0'),
+                    setback_target=Decimal('19.0'),
+                    air_sensor=None,
+                    backup_zone=None,
+                    backup_zone_name=None,
+                    backup_below=Decimal('19.0'),
+                    backup_live=False,
+                    backup_active=False,
+                ),
+            ),
+            (
+                'bedroom',
+                RoomComfortOverview(
+                    comfort_target=Decimal('20.5'),
+                    setback_target=Decimal('19.5'),
+                    air_sensor='air-second-floor',
+                    backup_zone='bathroom-2f',
+                    backup_zone_name='Санузел 2 этаж',
+                    backup_below=Decimal('19.0'),
+                    backup_live=False,
+                    backup_active=True,
+                ),
+            ),
+            ('office', None),
+        ],
+        Decimal('22.0'),
+    )
 
 
 def test_overview_lists_zones_by_name(f_two_zone_use_case: GetPanelOverviewUseCase) -> None:

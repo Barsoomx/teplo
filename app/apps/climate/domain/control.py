@@ -2,7 +2,6 @@ from dataclasses import dataclass
 
 from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.optimal_start import OptimalStartSettings
-from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
 from apps.climate.domain.sensors import ClimateSensors
 
 
@@ -11,4 +10,3 @@ class ClimateControl:
     sensors: ClimateSensors
     regulation: AirRegulationSettings
     optimal_start: OptimalStartSettings
-    second_floor_guard: SecondFloorGuardSettings

@@ -21,7 +21,7 @@ class DeleteComfortWindowInputDTO:
 
 @dataclass(frozen=True, kw_only=True)
 class DeleteComfortWindowOutputDTO:
-    zone: str
+    room: str
     changes: tuple[SettingChange, ...]
 
 
@@ -58,4 +58,4 @@ class DeleteComfortWindowUseCase(BaseUseCase[DeleteComfortWindowInputDTO, Delete
                 input_dto.now,
                 write=partial(self._windows.replace_days, week.slug, edit.days),
             )
-        return DeleteComfortWindowOutputDTO(zone=week.slug, changes=edit.changes)
+        return DeleteComfortWindowOutputDTO(room=week.slug, changes=edit.changes)

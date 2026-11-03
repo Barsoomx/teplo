@@ -4,8 +4,7 @@ from functools import partial
 
 import pytest
 
-from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
-from apps.climate.domain.errors import ZoneNotFoundError
+from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.zone import ComfortWindow
 from apps.climate.stubs import ComfortWindowStoreStub
 from apps.climate.usecases.copy_comfort_week import (
@@ -15,6 +14,7 @@ from apps.climate.usecases.copy_comfort_week import (
 )
 from apps.core.domain.settings import SettingChange
 from apps.core.stubs import SettingsRecorderStub, TransactionStub
+from apps.house.domain.errors import RoomNotFoundError
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 KITCHEN_SUNDAY = ComfortWindow(weekday=6, start=time(10, 0), end=time(20, 0))
@@ -28,7 +28,7 @@ def _hallway_change(field: str, old: tuple[str, ...], new: tuple[str, ...]) -> S
 def f_windows() -> ComfortWindowStoreStub:
     return ComfortWindowStoreStub(
         weeks=[
-            ZoneWeek(
+            RoomWeek(
                 slug='kitchen',
                 name='Кухня',
                 windows=(
@@ -36,7 +36,7 @@ def f_windows() -> ComfortWindowStoreStub:
                     StoredWindow(id=2, weekday=5, start=time(8, 0), end=time(12, 0)),
                 ),
             ),
-            ZoneWeek(
+            RoomWeek(
                 slug='hallway',
                 name='Прихожая',
                 windows=(
@@ -44,7 +44,7 @@ def f_windows() -> ComfortWindowStoreStub:
                     StoredWindow(id=11, weekday=6, start=time(9, 0), end=time(22, 0)),
                 ),
             ),
-            ZoneWeek(
+            RoomWeek(
                 slug='bathroom-2f',
                 name='Санузел 2 этаж',
                 windows=(
@@ -87,12 +87,12 @@ def f_use_case_after_a_window_was_added_to_the_source_meanwhile(
     )
 
 
-def test_week_copied_to_another_zone_replaces_the_days_that_differ(
+def test_week_copied_to_another_room_replaces_the_days_that_differ(
     f_use_case: CopyComfortWeekUseCase,
     f_windows: ComfortWindowStoreStub,
     f_recorder: SettingsRecorderStub,
 ) -> None:
-    output = f_use_case.execute(CopyComfortWeekInputDTO(zone='kitchen', to_zones=('hallway',), now=NOW))
+    output = f_use_case.execute(CopyComfortWeekInputDTO(room='kitchen', to_rooms=('hallway',), now=NOW))
 
     changes = (
         _hallway_change('monday', ('07:00-23:00',), ('06:30-23:30',)),
@@ -100,7 +100,7 @@ def test_week_copied_to_another_zone_replaces_the_days_that_differ(
         _hallway_change('sunday', ('09:00-22:00',), ()),
     )
     assert (output, f_windows.replaced, f_recorder.records) == (
-        CopyComfortWeekOutputDTO(zones=('hallway',), changes=changes),
+        CopyComfortWeekOutputDTO(rooms=('hallway',), changes=changes),
         [
             (
                 'hallway',
@@ -115,43 +115,43 @@ def test_week_copied_to_another_zone_replaces_the_days_that_differ(
     )
 
 
-def test_zone_with_the_same_week_and_the_source_zone_are_left_as_they_are(
+def test_room_with_the_same_week_and_the_source_room_are_left_as_they_are(
     f_use_case: CopyComfortWeekUseCase,
     f_windows: ComfortWindowStoreStub,
     f_recorder: SettingsRecorderStub,
 ) -> None:
-    output = f_use_case.execute(CopyComfortWeekInputDTO(zone='kitchen', to_zones=('bathroom-2f', 'kitchen'), now=NOW))
+    output = f_use_case.execute(CopyComfortWeekInputDTO(room='kitchen', to_rooms=('bathroom-2f', 'kitchen'), now=NOW))
 
     assert (output, f_windows.replaced, f_recorder.records) == (
-        CopyComfortWeekOutputDTO(zones=('bathroom-2f',), changes=()),
+        CopyComfortWeekOutputDTO(rooms=('bathroom-2f',), changes=()),
         [],
         [],
     )
 
 
-def test_week_copied_to_an_unknown_zone_raises_and_writes_nothing(
+def test_week_copied_to_an_unknown_room_raises_and_writes_nothing(
     f_use_case: CopyComfortWeekUseCase,
     f_windows: ComfortWindowStoreStub,
 ) -> None:
-    with pytest.raises(ZoneNotFoundError):
-        f_use_case.execute(CopyComfortWeekInputDTO(zone='kitchen', to_zones=('hallway', 'attic'), now=NOW))
+    with pytest.raises(RoomNotFoundError):
+        f_use_case.execute(CopyComfortWeekInputDTO(room='kitchen', to_rooms=('hallway', 'attic'), now=NOW))
 
     assert f_windows.replaced == []
 
 
 @pytest.mark.parametrize(
-    ('to_zones', 'outcomes'),
+    ('to_rooms', 'outcomes'),
     [(('hallway',), ['committed']), (('hallway', 'attic'), ['rolled_back'])],
-    ids=['copied', 'unknown_zone'],
+    ids=['copied', 'unknown_room'],
 )
 def test_weeks_are_read_written_and_journaled_in_one_transaction(
     f_use_case: CopyComfortWeekUseCase,
     f_transaction: TransactionStub,
-    to_zones: tuple[str, ...],
+    to_rooms: tuple[str, ...],
     outcomes: list[str],
 ) -> None:
-    with suppress(ZoneNotFoundError):
-        f_use_case.execute(CopyComfortWeekInputDTO(zone='kitchen', to_zones=to_zones, now=NOW))
+    with suppress(RoomNotFoundError):
+        f_use_case.execute(CopyComfortWeekInputDTO(room='kitchen', to_rooms=to_rooms, now=NOW))
 
     assert f_transaction.outcomes == outcomes
 
@@ -161,7 +161,7 @@ def test_week_copied_after_a_window_was_added_to_it_copies_that_window_too(
     f_windows: ComfortWindowStoreStub,
 ) -> None:
     f_use_case_after_a_window_was_added_to_the_source_meanwhile.execute(
-        CopyComfortWeekInputDTO(zone='kitchen', to_zones=('hallway',), now=NOW),
+        CopyComfortWeekInputDTO(room='kitchen', to_rooms=('hallway',), now=NOW),
     )
 
     assert f_windows.replaced[-1] == (

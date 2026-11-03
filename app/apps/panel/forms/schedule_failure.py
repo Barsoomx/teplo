@@ -9,7 +9,7 @@ class ScheduleFailure:
     messages: tuple[str, ...]
     weekday: int | None = None
     window: int | None = None
-    zone: str = ''
+    room: str = ''
     start: str = ''
     end: str = ''
     chosen: tuple[str, ...] = ()

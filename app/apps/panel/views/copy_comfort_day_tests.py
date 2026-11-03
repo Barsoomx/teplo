@@ -8,10 +8,10 @@ import pytest
 from django.db import IntegrityError, OperationalError
 from django.test import Client
 
-from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.usecases.copy_comfort_day import CopyComfortDayInputDTO, CopyComfortDayOutputDTO
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingProblem
+from apps.house.domain.errors import RoomNotFoundError
 from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO
 
 pytestmark = pytest.mark.django_db
@@ -24,7 +24,7 @@ NOT_SAVED = 'Не сохранено: база данных не приняла 
 @pytest.fixture
 def m_copy_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.copy_comfort_day.CopyComfortDayUseCase') as use_case:
-        use_case.init.return_value.execute.return_value = CopyComfortDayOutputDTO(zone='kitchen', changes=())
+        use_case.init.return_value.execute.return_value = CopyComfortDayOutputDTO(room='kitchen', changes=())
         yield use_case
 
 
@@ -38,9 +38,9 @@ def m_off_grid_copy_use_case() -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def m_missing_zone_copy_use_case() -> Iterator[MagicMock]:
+def m_missing_room_copy_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.copy_comfort_day.CopyComfortDayUseCase') as use_case:
-        use_case.init.return_value.execute.side_effect = ZoneNotFoundError('attic')
+        use_case.init.return_value.execute.side_effect = RoomNotFoundError('attic')
         yield use_case
 
 
@@ -71,7 +71,7 @@ def test_day_copied_to_the_picked_days_goes_to_the_use_case(
         replace(executed, now=NOW),
         'id="schedule-kitchen"' in response.content.decode(),
         m_schedule_use_case.init.call_count,
-    ) == (200, CopyComfortDayInputDTO(zone='kitchen', weekday=0, to_weekdays=(1, 4), now=NOW), True, 1)
+    ) == (200, CopyComfortDayInputDTO(room='kitchen', weekday=0, to_weekdays=(1, 4), now=NOW), True, 1)
 
 
 def test_copy_without_a_picked_day_is_explained_before_the_use_case(
@@ -109,16 +109,16 @@ def test_day_with_a_window_off_the_grid_is_explained_with_the_days_kept_picked(
     ) == (200, True, True, False, 1, 1)
 
 
-def test_copy_from_an_unknown_zone_returns_404(
+def test_copy_from_an_unknown_room_returns_404(
     f_client: Client,
-    m_missing_zone_copy_use_case: MagicMock,
+    m_missing_room_copy_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
 ) -> None:
     response = f_client.post('/schedule/attic/days/0/copy/', {'weekdays': ['1']})
 
     assert (
         response.status_code,
-        m_missing_zone_copy_use_case.init.call_count,
+        m_missing_room_copy_use_case.init.call_count,
         m_schedule_use_case.init.call_count,
     ) == (404, 1, 0)
 

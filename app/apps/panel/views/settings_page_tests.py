@@ -12,7 +12,7 @@ pytestmark = pytest.mark.django_db
 GATE_INPUTS = (
     'name="live_control"',
     'name="air_control_live"',
-    'name="second_floor_guard_live"',
+    'name="backup_live"',
     'name="load_management_live"',
     'name="loads-0-live"',
     'name="loads-1-live"',
@@ -55,7 +55,7 @@ def test_settings_page_shows_climate_load_management_and_the_shedding_order(
     assert (
         'name="air_start_offset" value="0.30"' in content,
         'name="air_min_band" value="0.20"' in content,
-        'name="second_floor_guard_threshold" value="19.0"' in content,
+        'name="second_floor_guard_threshold"' not in content,
         'name="shed_amps" value="24.0"' in content,
         'name="loads-TOTAL_FORMS" value="2"' in content,
         'name="loads-1-priority" value="2"' in content,
@@ -76,7 +76,7 @@ def test_settings_page_shows_every_gate_read_only_with_a_link_to_the_admin(
         [
             'href="/admin/climate/zone/3/change/"' in content,
             'href="/admin/climate/zone/4/change/"' in content,
-            'href="/admin/climate/climatesettings/1/change/"' in content,
+            'href="/admin/climate/roomclimate/6/change/"' in content,
             'href="/admin/power/loadsettings/1/change/"' in content,
             'href="/admin/power/load/1/change/"' in content,
             'href="/admin/power/load/2/change/"' in content,
@@ -111,3 +111,36 @@ def test_settings_page_requires_login(f_anonymous_client: Client, m_settings_use
         '/login/?next=/settings/',
         0,
     )
+
+
+def test_settings_page_lists_each_room_with_the_cards_of_its_zones_and_then_the_zones_in_no_room(
+    f_russian_client: Client,
+    m_settings_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/settings/')
+
+    content = response.content.decode()
+    places = [
+        content.find(marker)
+        for marker in (
+            'id="rooms-title">Комнаты</h2>',
+            'id="room-settings-bathroom-1f"',
+            'id="zone-settings-bathroom-1f"',
+            'id="room-settings-bedroom"',
+            'id="zones-title">Зоны</h2>',
+            'id="zone-settings-kitchen"',
+            'id="climate-settings"',
+        )
+    ]
+    assert (
+        -1 in places,
+        places == sorted(places),
+        'hx-post="/settings/rooms/bedroom/"' in content,
+        'Спальня <small class="settings-floor">2 этаж</small>' in content,
+        content.count('name="comfort_target"'),
+        'name="setback_target" value="19.5"' in content,
+        content.count('name="backup_below"'),
+        'Резервный обогрев от пола: Санузел 2 этаж, °C' in content,
+        content.count('Резервный обогрев'),
+        m_settings_use_case.init.call_count,
+    ) == (False, True, True, True, 2, True, 1, True, 2, 1)

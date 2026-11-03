@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 
 from apps.climate.domain.learning import EARLY_STOP_OFFSET_MAX, EARLY_STOP_OFFSET_MIN
-from apps.climate.domain.zone_config import SETPOINT_MAX, SETPOINT_MIN, tenths
 from apps.core.domain.settings import SettingProblem
 
 CLIMATE_SETTINGS = 'climate_settings'
@@ -20,8 +19,6 @@ FIELDS = (
     'air_min_band',
     'learned_mornings_needed',
     'preheat_lead_cap_minutes',
-    'second_floor_guard_threshold',
-    'second_floor_guard_hysteresis',
 )
 
 
@@ -32,8 +29,6 @@ class ClimateConfig:
     air_min_band: Decimal
     learned_mornings_needed: int
     preheat_lead_cap_minutes: int
-    second_floor_guard_threshold: Decimal
-    second_floor_guard_hysteresis: Decimal
 
     def normalized(self) -> 'ClimateConfig':
         return ClimateConfig(
@@ -42,8 +37,6 @@ class ClimateConfig:
             air_min_band=hundredths(self.air_min_band),
             learned_mornings_needed=self.learned_mornings_needed,
             preheat_lead_cap_minutes=self.preheat_lead_cap_minutes,
-            second_floor_guard_threshold=tenths(self.second_floor_guard_threshold),
-            second_floor_guard_hysteresis=hundredths(self.second_floor_guard_hysteresis),
         )
 
 
@@ -51,7 +44,6 @@ class ClimateConfig:
 class ClimateConfigRecord:
     id: int | None
     config: ClimateConfig
-    second_floor_guard_live: bool
 
 
 def hundredths(value: Decimal) -> Decimal:
@@ -67,8 +59,6 @@ def climate_config_problems(config: ClimateConfig) -> tuple[SettingProblem, ...]
         ('air_start_offset', config.air_start_offset, OFFSET_MIN, OFFSET_MAX),
         ('initial_early_stop_offset', config.initial_early_stop_offset, EARLY_STOP_OFFSET_MIN, EARLY_STOP_OFFSET_MAX),
         ('air_min_band', config.air_min_band, MIN_BAND_MIN, MIN_BAND_MAX),
-        ('second_floor_guard_threshold', config.second_floor_guard_threshold, SETPOINT_MIN, SETPOINT_MAX),
-        ('second_floor_guard_hysteresis', config.second_floor_guard_hysteresis, OFFSET_MIN, OFFSET_MAX),
     )
     integers = (
         ('learned_mornings_needed', config.learned_mornings_needed, MORNINGS_NEEDED_MIN, MORNINGS_NEEDED_MAX),

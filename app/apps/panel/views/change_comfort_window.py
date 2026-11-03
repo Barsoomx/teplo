@@ -20,7 +20,7 @@ logger = structlog.get_logger(__name__)
 class ChangeComfortWindowView(LoginRequiredMixin, View):
     def post(self, request: HttpRequest, window_id: int) -> HttpResponse:
         form = ComfortWindowForm(request.POST)
-        changed_zone = None
+        changed_room = None
         if form.is_valid():
             try:
                 output = ChangeComfortWindowUseCase.init().execute(
@@ -39,11 +39,11 @@ class ChangeComfortWindowView(LoginRequiredMixin, View):
                 logger.warning('schedule_not_saved', action='change', window=window_id, error=str(error))
                 add_not_saved(form)
             else:
-                changed_zone = output.zone
+                changed_room = output.room
 
         schedule = GetSchedulePageUseCase.init().execute(GetSchedulePageInputDTO())
-        zone = schedule.zone_of_window(window_id) if changed_zone is None else schedule.zone(changed_zone)
-        if zone is None:
+        room = schedule.room_of_window(window_id) if changed_room is None else schedule.room(changed_room)
+        if room is None:
             raise Http404(window_id)
 
         failure = None
@@ -55,4 +55,4 @@ class ChangeComfortWindowView(LoginRequiredMixin, View):
                 start=str(request.POST.get('start', '')),
                 end=str(request.POST.get('end', '')),
             )
-        return render(request, 'panel/_schedule_zone.html', {'zone': zone, 'schedule': schedule, 'failure': failure})
+        return render(request, 'panel/_schedule_room.html', {'room': room, 'schedule': schedule, 'failure': failure})

@@ -26,6 +26,7 @@ from apps.panel.templatetags.panel_format import (
     air_control_note,
     air_control_text,
     alert_text,
+    backup_heat_text,
     clock_note,
     command_summary,
     day_minute,
@@ -426,6 +427,34 @@ def test_optimal_start_text_compares_the_would_be_start_with_the_fixed_one(
 )
 def test_second_floor_guard_text_says_what_the_guard_would_do(payload: dict[str, object], expected: str) -> None:
     assert second_floor_guard_text(_entry('second_floor_guard_dry_run', payload, name='Санузел 2 этаж')) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (
+            {'room': 'bedroom', 'room_name': 'Спальня', 'zone': 'bathroom-2f', 'active': True, 'air': '18.8'},
+            'Санузел 2 этаж: резервный обогрев включил бы комфорт (Спальня 18,8°)',
+        ),
+        (
+            {'room': 'bedroom', 'room_name': 'Спальня', 'zone': 'bathroom-2f', 'active': False, 'air': '19.3'},
+            'Санузел 2 этаж: резервный обогрев вернул бы расписание (Спальня 19,3°)',
+        ),
+        (
+            {'room': 'bedroom', 'room_name': 'Спальня', 'zone': 'bathroom-2f', 'active': False, 'air': None},
+            'Санузел 2 этаж: резервный обогрев вернул бы расписание (нет показаний: Спальня)',
+        ),
+        ({'active': True, 'air': '18.8'}, 'Санузел 2 этаж: неизвестное событие'),
+        ({}, 'Санузел 2 этаж: неизвестное событие'),
+    ],
+    ids=['on', 'off', 'off_without_a_reading', 'no_room', 'empty'],
+)
+def test_backup_heat_text_says_what_backup_heat_would_do_and_names_its_room(
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    assert backup_heat_text(_entry('backup_heat_dry_run', payload, name='Санузел 2 этаж')) == expected
 
 
 @pytest.mark.usefixtures('english')
@@ -931,6 +960,52 @@ def test_weekday_names_follow_the_language() -> None:
             ),
             'Чердак: настройки изменены',
         ),
+        (
+            _settings_entry(
+                'bedroom',
+                'bedroom',
+                {'object': 'room', 'name': 'Спальня', 'field': 'comfort_target', 'old': '20.5', 'new': '21.0'},
+            ),
+            'Спальня: воздух в комфорте 20,5° → 21°',
+        ),
+        (
+            _settings_entry(
+                'bathroom-1f',
+                'Санузел 1 этаж: пол',
+                {'object': 'room', 'name': 'Санузел 1 этаж', 'field': 'setback_target', 'old': '19.5', 'new': '19.0'},
+            ),
+            'Санузел 1 этаж: воздух ночью 19,5° → 19°',
+        ),
+        (
+            _settings_entry(
+                'bedroom',
+                'bedroom',
+                {'object': 'room', 'name': 'Спальня', 'field': 'backup_below', 'old': '19.0', 'new': '18.5'},
+            ),
+            'Спальня: резервный обогрев ниже 19° → 18,5°',
+        ),
+        (
+            _settings_entry(
+                'bedroom',
+                'bedroom',
+                {'object': 'room', 'name': 'Спальня', 'field': 'backup_hysteresis', 'old': '0.30', 'new': '0.50'},
+            ),
+            'Спальня: гистерезис резервного обогрева 0,30° → 0,50°',
+        ),
+        (
+            _settings_entry(
+                '',
+                '',
+                {
+                    'object': 'climate_settings',
+                    'name': '',
+                    'field': 'second_floor_guard_threshold',
+                    'old': '19.0',
+                    'new': '18.5',
+                },
+            ),
+            'Климат: защита второго этажа ниже 19° → 18,5°',
+        ),
     ],
     ids=[
         'setpoint',
@@ -945,6 +1020,11 @@ def test_weekday_names_follow_the_language() -> None:
         'nominal_current_cleared',
         'priority',
         'unknown_field_of_a_zone_gone',
+        'room_comfort_target',
+        'room_named_by_its_payload_not_by_a_zone_of_the_same_slug',
+        'backup_heat_threshold',
+        'backup_heat_hysteresis',
+        'old_guard_entry',
     ],
 )
 def test_settings_change_text_words_what_changed(entry: TimelineEntry, expected: str) -> None:

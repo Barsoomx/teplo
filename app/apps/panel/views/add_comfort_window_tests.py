@@ -8,10 +8,10 @@ import pytest
 from django.db import IntegrityError, OperationalError
 from django.test import Client
 
-from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.usecases.add_comfort_window import AddComfortWindowInputDTO, AddComfortWindowOutputDTO
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingProblem
+from apps.house.domain.errors import RoomNotFoundError
 from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO
 
 pytestmark = pytest.mark.django_db
@@ -24,7 +24,7 @@ NOT_SAVED = 'Не сохранено: база данных не приняла 
 @pytest.fixture
 def m_add_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.add_comfort_window.AddComfortWindowUseCase') as use_case:
-        use_case.init.return_value.execute.return_value = AddComfortWindowOutputDTO(zone='kitchen', changes=())
+        use_case.init.return_value.execute.return_value = AddComfortWindowOutputDTO(room='kitchen', changes=())
         yield use_case
 
 
@@ -38,9 +38,9 @@ def m_overlap_add_use_case() -> Iterator[MagicMock]:
 
 
 @pytest.fixture
-def m_missing_zone_add_use_case() -> Iterator[MagicMock]:
+def m_missing_room_add_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.add_comfort_window.AddComfortWindowUseCase') as use_case:
-        use_case.init.return_value.execute.side_effect = ZoneNotFoundError('attic')
+        use_case.init.return_value.execute.side_effect = RoomNotFoundError('attic')
         yield use_case
 
 
@@ -58,7 +58,7 @@ def m_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[Mag
         yield use_case
 
 
-def test_added_window_goes_to_the_use_case_and_the_zone_is_drawn_again(
+def test_added_window_goes_to_the_use_case_and_the_room_is_drawn_again(
     f_client: Client,
     m_add_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
@@ -77,7 +77,7 @@ def test_added_window_goes_to_the_use_case_and_the_zone_is_drawn_again(
         m_schedule_use_case.init.call_count,
     ) == (
         200,
-        AddComfortWindowInputDTO(zone='kitchen', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW),
+        AddComfortWindowInputDTO(room='kitchen', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW),
         True,
         False,
         False,
@@ -121,14 +121,14 @@ def test_overlapping_window_is_explained_in_its_day(
     ) == (200, 1, True, 1, 1)
 
 
-def test_window_for_an_unknown_zone_returns_404(
+def test_window_for_an_unknown_room_returns_404(
     f_client: Client,
-    m_missing_zone_add_use_case: MagicMock,
+    m_missing_room_add_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
 ) -> None:
     response = f_client.post('/schedule/attic/days/0/windows/', {'start': '05:00', 'end': '06:00'})
 
-    assert (response.status_code, m_missing_zone_add_use_case.init.call_count, m_schedule_use_case.init.call_count) == (
+    assert (response.status_code, m_missing_room_add_use_case.init.call_count, m_schedule_use_case.init.call_count) == (
         404,
         1,
         0,

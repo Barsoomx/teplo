@@ -52,6 +52,9 @@
         {% elif entry.kind == 'second_floor_guard_dry_run' %}
         <span class="event-mark">{% icon 'eye' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|second_floor_guard_text }}</p></div>
+        {% elif entry.kind == 'backup_heat_dry_run' %}
+        <span class="event-mark">{% icon 'eye' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|backup_heat_text }}</p></div>
         {% elif entry.kind == 'alert_raised' %}
         <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|alert_text }}</p></div>

@@ -5,12 +5,14 @@ from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
-from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
+from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
+from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
+from apps.house.domain.errors import RoomNotFoundError
 
 ZoneStamp = tuple[str, str, datetime]
 
@@ -162,8 +164,36 @@ class ClimateConfigStoreStub:
         self._record = replace(self._record, config=replace(self._record.config, **written))
 
 
+class RoomClimateConfigStoreStub:
+    def __init__(self, records: list[RoomClimateConfigRecord]) -> None:
+        self._records = records
+        self._saved: list[tuple[str, RoomClimateConfig, tuple[str, ...]]] = []
+
+    @property
+    def saved(self) -> list[tuple[str, RoomClimateConfig, tuple[str, ...]]]:
+        return self._saved
+
+    def config_records(self) -> list[RoomClimateConfigRecord]:
+        return list(self._records)
+
+    def config_for_update(self, slug: str) -> RoomClimateConfigRecord:
+        record = next((record for record in self._records if record.slug == slug), None)
+        if record is None:
+            raise RoomNotFoundError(slug)
+
+        return record
+
+    def save_config(self, slug: str, config: RoomClimateConfig, fields: Collection[str]) -> None:
+        self._saved.append((slug, config, tuple(fields)))
+        written = {field: getattr(config, field) for field in fields}
+        self._records = [
+            replace(record, config=replace(record.config, **written)) if record.slug == slug else record
+            for record in self._records
+        ]
+
+
 class ComfortWindowStoreStub:
-    def __init__(self, weeks: list[ZoneWeek]) -> None:
+    def __init__(self, weeks: list[RoomWeek]) -> None:
         self._weeks = weeks
         self._replaced: list[tuple[str, dict[int, tuple[ComfortWindow, ...]]]] = []
 
@@ -171,17 +201,17 @@ class ComfortWindowStoreStub:
     def replaced(self) -> list[tuple[str, dict[int, tuple[ComfortWindow, ...]]]]:
         return self._replaced
 
-    def weeks(self) -> list[ZoneWeek]:
+    def weeks(self) -> list[RoomWeek]:
         return list(self._weeks)
 
-    def week_for_update(self, slug: str) -> ZoneWeek:
+    def week_for_update(self, slug: str) -> RoomWeek:
         week = next((week for week in self._weeks if week.slug == slug), None)
         if week is None:
-            raise ZoneNotFoundError(slug)
+            raise RoomNotFoundError(slug)
 
         return week
 
-    def window_week_for_update(self, window_id: int) -> ZoneWeek:
+    def window_week_for_update(self, window_id: int) -> RoomWeek:
         week = next((week for week in self._weeks if week.stored(window_id) is not None), None)
         if week is None:
             raise ComfortWindowNotFoundError(window_id)

@@ -12,7 +12,6 @@ from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
 from apps.climate.domain.modes import AirState, ScheduleMode, ZoneKind
 from apps.climate.domain.optimal_start import OptimalStartSettings, PreheatStart
-from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 
@@ -22,19 +21,13 @@ MORNING = datetime(2026, 11, 2, 7, 0, tzinfo=MOSCOW)
 NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
 OUTDOOR = Decimal('-3.4')
 CONTROL = ClimateControl(
-    sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug='air-second-floor'),
+    sensors=ClimateSensors(outdoor_slug='outdoor'),
     regulation=AirRegulationSettings(
         start_offset=Decimal('0.3'),
         initial_early_stop_offset=Decimal('0.3'),
         min_band=Decimal('0.2'),
     ),
     optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
-    second_floor_guard=SecondFloorGuardSettings(
-        zone_slug='bathroom-2f',
-        threshold=Decimal('19.0'),
-        hysteresis=Decimal('0.3'),
-        live=False,
-    ),
 )
 UNLEARNED = ZoneLearningRecord.unlearned()
 LEARNED = ZoneLearningRecord(

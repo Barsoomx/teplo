@@ -15,7 +15,7 @@ from apps.telemetry.services.settings_journal import SettingsJournal
 
 @dataclass(frozen=True, kw_only=True)
 class AddComfortWindowInputDTO:
-    zone: str
+    room: str
     weekday: int
     start: time
     end: time
@@ -24,7 +24,7 @@ class AddComfortWindowInputDTO:
 
 @dataclass(frozen=True, kw_only=True)
 class AddComfortWindowOutputDTO:
-    zone: str
+    room: str
     changes: tuple[SettingChange, ...]
 
 
@@ -48,7 +48,7 @@ class AddComfortWindowUseCase(BaseUseCase[AddComfortWindowInputDTO, AddComfortWi
             return self._add(input_dto)
 
     def _add(self, input_dto: AddComfortWindowInputDTO) -> AddComfortWindowOutputDTO:
-        week = self._windows.week_for_update(input_dto.zone)
+        week = self._windows.week_for_update(input_dto.room)
         window = ComfortWindow(weekday=input_dto.weekday, start=input_dto.start, end=input_dto.end)
         edit = schedule_edit(week, {input_dto.weekday: (*week.day(input_dto.weekday), window)}, written=(window,))
         if edit.changes:
@@ -57,4 +57,4 @@ class AddComfortWindowUseCase(BaseUseCase[AddComfortWindowInputDTO, AddComfortWi
                 input_dto.now,
                 write=partial(self._windows.replace_days, week.slug, edit.days),
             )
-        return AddComfortWindowOutputDTO(zone=week.slug, changes=edit.changes)
+        return AddComfortWindowOutputDTO(room=week.slug, changes=edit.changes)

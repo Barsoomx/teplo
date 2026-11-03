@@ -1,0 +1,32 @@
+{% load i18n panel_format %}<article class="settings-card settings-room" id="room-settings-{{ room.slug }}">
+  <form class="settings-form" hx-post="{% url 'panel:room-settings' room.slug %}" hx-target="closest .settings-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <h3 class="settings-name">{{ room.name }} <small class="settings-floor">{{ room.floor_name }}</small></h3>
+    {% if room.backup_zone_slug %}
+    <div class="gates">
+      {% url 'admin:climate_roomclimate_change' room.id as admin_url %}
+      {% translate 'Backup heat' as label %}{% include 'panel/_gate.html' with live=room.backup_live url=admin_url %}
+    </div>
+    {% endif %}
+    {% include 'panel/_form_errors.html' with form=room_form %}
+    <fieldset class="field-group">
+      <legend class="field-group-title">{% translate 'Air, °C' %}</legend>
+      <div class="field-grid">
+        {% translate 'Comfort' as label %}{% include 'panel/_field.html' with field=room_form.comfort_target %}
+        {% translate 'Night' as label %}{% include 'panel/_field.html' with field=room_form.setback_target %}
+      </div>
+    </fieldset>
+    {% if room.backup_zone_slug %}
+    <fieldset class="field-group">
+      <legend class="field-group-title">{% blocktranslate with zone=room.backup_zone_name %}Backup heat from the floor of {{ zone }}, °C{% endblocktranslate %}</legend>
+      <div class="field-grid">
+        {% translate 'Turns on below' as label %}{% include 'panel/_field.html' with field=room_form.backup_below %}
+        {% translate 'Releases above that by' as label %}{% include 'panel/_field.html' with field=room_form.backup_hysteresis %}
+      </div>
+    </fieldset>
+    {% endif %}
+    <div class="settings-foot">
+      <button class="button" type="submit">{% translate 'Save' %}</button>
+      {% if outcome == 'saved' %}<p class="saved" role="status">{% translate 'Saved. The heating cycle reads it within a minute.' %}</p>{% elif outcome == 'unchanged' %}<p class="saved" role="status">{% translate 'Nothing changed' %}</p>{% endif %}
+    </div>
+  </form>
+</article>

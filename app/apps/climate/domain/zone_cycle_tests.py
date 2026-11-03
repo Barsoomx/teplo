@@ -14,7 +14,6 @@ from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.optimal_start import OptimalStartSettings, PreheatStart
-from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.domain.zone_cycle import (
@@ -39,19 +38,13 @@ SENSOR_BACK = datetime(2026, 11, 2, 2, 46, tzinfo=MOSCOW)
 OUTDOOR = Decimal('-3.4')
 TARGET = Decimal('22.0')
 CONTROL = ClimateControl(
-    sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug='air-second-floor'),
+    sensors=ClimateSensors(outdoor_slug='outdoor'),
     regulation=AirRegulationSettings(
         start_offset=Decimal('0.3'),
         initial_early_stop_offset=Decimal('0.3'),
         min_band=Decimal('0.2'),
     ),
     optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
-    second_floor_guard=SecondFloorGuardSettings(
-        zone_slug='bathroom-2f',
-        threshold=Decimal('19.0'),
-        hysteresis=Decimal('0.3'),
-        live=False,
-    ),
 )
 UNLEARNED = ZoneLearningRecord.unlearned()
 LEARNED = ZoneLearningRecord(

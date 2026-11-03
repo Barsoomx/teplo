@@ -12,17 +12,34 @@ WEEKDAYS = [
 
 
 class ComfortPeriod(models.Model):
-    zone = models.ForeignKey('climate.Zone', on_delete=models.CASCADE, related_name='comfort_periods')
+    zone = models.ForeignKey(
+        'climate.Zone',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='comfort_periods',
+    )
+    room_climate = models.ForeignKey(
+        'climate.RoomClimate',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='comfort_periods',
+    )
     weekday = models.PositiveSmallIntegerField(choices=WEEKDAYS)
     start = models.TimeField()
     end = models.TimeField()
 
     class Meta:
-        ordering = ('zone', 'weekday', 'start')
+        ordering = ('weekday', 'start', 'end')
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(end__gt=models.F('start')),
                 name='comfort_period_end_after_start',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(zone__isnull=False) | models.Q(room_climate__isnull=False),
+                name='comfort_period_has_an_owner',
             ),
         ]
 

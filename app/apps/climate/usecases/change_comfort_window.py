@@ -24,7 +24,7 @@ class ChangeComfortWindowInputDTO:
 
 @dataclass(frozen=True, kw_only=True)
 class ChangeComfortWindowOutputDTO:
-    zone: str
+    room: str
     changes: tuple[SettingChange, ...]
 
 
@@ -62,4 +62,4 @@ class ChangeComfortWindowUseCase(BaseUseCase[ChangeComfortWindowInputDTO, Change
                 input_dto.now,
                 write=partial(self._windows.replace_days, week.slug, edit.days),
             )
-        return ChangeComfortWindowOutputDTO(zone=week.slug, changes=edit.changes)
+        return ChangeComfortWindowOutputDTO(room=week.slug, changes=edit.changes)

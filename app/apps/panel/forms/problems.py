@@ -14,6 +14,7 @@ PROBLEM_MESSAGES = {
     'above_comfort': gettext_lazy('Must not be above comfort'),
     'below_comfort': gettext_lazy('Must not be below comfort'),
     'not_below_limit': gettext_lazy('Must be below the floor limit'),
+    'not_below_setback': gettext_lazy('Must be at least 0.5° below the night target, or backup heat fights it'),
     'below_min_band': BELOW_MIN_BAND,
     'above_start_ceiling': gettext_lazy('Must not be above the start ceiling'),
     'not_below_shed': gettext_lazy('Must be below the shed threshold'),

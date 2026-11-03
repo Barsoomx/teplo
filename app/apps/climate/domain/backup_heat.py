@@ -6,24 +6,24 @@ from apps.climate.domain.zone import FloorSetpoints
 
 
 @dataclass(frozen=True, kw_only=True)
-class SecondFloorGuardSettings:
+class BackupHeat:
     zone_slug: str | None
-    threshold: Decimal
+    below: Decimal
     hysteresis: Decimal
     live: bool
 
 
-def decide_second_floor_guard(active: bool, air: Decimal | None, settings: SecondFloorGuardSettings) -> bool:
-    if air is None or settings.zone_slug is None:
+def decide_backup_heat(active: bool, air: Decimal | None, backup: BackupHeat) -> bool:
+    if air is None or backup.zone_slug is None:
         return False
 
-    if air < settings.threshold:
+    if air < backup.below:
         return True
 
-    return active and air < settings.threshold + settings.hysteresis
+    return active and air < backup.below + backup.hysteresis
 
 
-def apply_second_floor_guard(target: ThermostatTarget, setpoints: FloorSetpoints) -> ThermostatTarget:
+def apply_backup_heat(target: ThermostatTarget, setpoints: FloorSetpoints) -> ThermostatTarget:
     if not target.power or (target.setpoint is not None and target.setpoint >= setpoints.comfort):
         return target
 

@@ -25,7 +25,7 @@ class StoredWindow:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ZoneWeek:
+class RoomWeek:
     slug: str
     name: str
     windows: tuple[StoredWindow, ...]
@@ -70,7 +70,7 @@ def window_problems(day: Sequence[ComfortWindow], written: Sequence[ComfortWindo
 
 
 def schedule_edit(
-    week: ZoneWeek,
+    week: RoomWeek,
     days: Mapping[int, Sequence[ComfortWindow]],
     written: Sequence[ComfortWindow],
 ) -> ScheduleEdit:

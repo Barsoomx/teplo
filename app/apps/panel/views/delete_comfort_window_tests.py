@@ -21,7 +21,7 @@ NOT_SAVED = 'Не сохранено: база данных не приняла 
 @pytest.fixture
 def m_delete_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.delete_comfort_window.DeleteComfortWindowUseCase') as use_case:
-        use_case.init.return_value.execute.return_value = DeleteComfortWindowOutputDTO(zone='kitchen', changes=())
+        use_case.init.return_value.execute.return_value = DeleteComfortWindowOutputDTO(room='kitchen', changes=())
         yield use_case
 
 
@@ -46,7 +46,7 @@ def m_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[Mag
         yield use_case
 
 
-def test_deleted_window_goes_to_the_use_case_and_its_zone_is_drawn_again(
+def test_deleted_window_goes_to_the_use_case_and_its_room_is_drawn_again(
     f_client: Client,
     m_delete_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
@@ -100,7 +100,7 @@ def test_deleting_a_window_requires_login(f_anonymous_client: Client, m_delete_u
     ids=['database_locked', 'check_failed'],
     indirect=True,
 )
-def test_window_the_database_does_not_delete_stays_open_in_its_zone_with_the_reason(
+def test_window_the_database_does_not_delete_stays_open_in_its_room_with_the_reason(
     f_russian_client: Client,
     m_delete_use_case_the_database_refuses: MagicMock,
     m_schedule_use_case: MagicMock,

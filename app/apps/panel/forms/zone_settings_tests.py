@@ -29,6 +29,7 @@ KITCHEN = ZoneConfigRecord(
     air_control_live=True,
 )
 BATHROOM = replace(KITCHEN, slug='bathroom-1f', kind=ZoneKind.FLOOR)
+OPEN_SPACE_KITCHEN = replace(KITCHEN, room='open-space')
 POSTED = {
     'name': 'Кухня',
     'heating_enabled': 'on',
@@ -72,6 +73,16 @@ def test_floor_zone_form_leaves_out_the_air_targets() -> None:
         False,
         False,
     )
+
+
+def test_form_of_a_zone_whose_room_holds_the_comfort_leaves_out_the_air_targets() -> None:
+    form = ZoneSettingsForm.for_zone(OPEN_SPACE_KITCHEN, QueryDict(urlencode({**POSTED, 'night_air_target': 'cold'})))
+
+    assert (
+        form.is_valid(),
+        [field for field in ('comfort_air_target', 'night_air_target') if field in form.fields],
+        form.cleaned_data['preheat_lead_minutes'],
+    ) == (True, [], 150)
 
 
 def test_heating_left_unticked_reads_as_off() -> None:

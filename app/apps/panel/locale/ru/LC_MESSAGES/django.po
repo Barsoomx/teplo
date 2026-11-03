@@ -669,21 +669,15 @@ msgstr "Копировать окна дня «%(day)s» в"
 msgid "Copy"
 msgstr "Копировать"
 
-msgid "Copy this week to other zones"
-msgstr "Копировать неделю в другие зоны"
-
 #, python-format
 msgid "Copy the week of %(name)s to"
-msgstr "Копировать неделю зоны «%(name)s» в"
+msgstr "Копировать неделю комнаты «%(name)s» в"
 
 msgid "Copy the week"
 msgstr "Копировать неделю"
 
 msgid "Pick at least one day"
 msgstr "Выберите хотя бы один день"
-
-msgid "Pick at least one zone"
-msgstr "Выберите хотя бы одну зону"
 
 msgid "Changes take effect through the usual paths. The heating cycle reads them within a minute, and a thermostat takes a new setpoint at its zone’s next allowed write, at most one change per 30 minutes. Load management reads its settings within a minute."
 msgstr "Изменения действуют обычным путём. Цикл отопления читает их в течение минуты, а термостат получает новую уставку при следующей разрешённой записи своей зоны — не чаще одного изменения в 30 минут. Управление нагрузкой читает свои настройки в течение минуты."
@@ -739,9 +733,6 @@ msgstr "Сохранено. Термостат получит это при сл
 msgid "Nothing changed"
 msgstr "Ничего не изменилось"
 
-msgid "Second-floor guard"
-msgstr "Защита второго этажа"
-
 msgid "Air mode, °C"
 msgstr "По воздуху, °C"
 
@@ -762,9 +753,6 @@ msgstr "Сколько утр выучить"
 
 msgid "Longest warm-up, min"
 msgstr "Самый долгий разогрев, мин"
-
-msgid "Second-floor guard, °C"
-msgstr "Защита второго этажа, °C"
 
 msgid "Turns on below"
 msgstr "Включается ниже"
@@ -1010,3 +998,62 @@ msgstr "фаза"
 
 msgid "nominal current"
 msgstr "номинальный ток"
+
+msgid "Rooms"
+msgstr "Комнаты"
+
+msgid "Backup heat"
+msgstr "Резервный обогрев"
+
+#, python-format
+msgid "Backup heat from the floor of %(zone)s, °C"
+msgstr "Резервный обогрев от пола: %(zone)s, °C"
+
+#, python-format
+msgid "Backup heat: %(zone)s"
+msgstr "Резерв: %(zone)s"
+
+#, python-format
+msgid "Backup heat below %(below)s°: %(zone)s"
+msgstr "Резерв ниже %(below)s°: %(zone)s"
+
+#, python-format
+msgid "%(name)s: backup heat would turn comfort on (%(room)s %(air)s°)"
+msgstr "%(name)s: резервный обогрев включил бы комфорт (%(room)s %(air)s°)"
+
+#, python-format
+msgid "%(name)s: backup heat would return the zone to its schedule (%(room)s %(air)s°)"
+msgstr "%(name)s: резервный обогрев вернул бы расписание (%(room)s %(air)s°)"
+
+#, python-format
+msgid "%(name)s: backup heat would return the zone to its schedule (no reading in %(room)s)"
+msgstr "%(name)s: резервный обогрев вернул бы расписание (нет показаний: %(room)s)"
+
+msgid "backup heat below"
+msgstr "резервный обогрев ниже"
+
+msgid "backup heat hysteresis"
+msgstr "гистерезис резервного обогрева"
+
+msgid "Must be at least 0.5° below the night target, or backup heat fights it"
+msgstr "Должно быть хотя бы на 0,5° ниже ночной цели, иначе резерв спорит с ней"
+
+#, python-format
+msgid "%(zone)s: warm-up starts %(lead)s before comfort."
+msgstr "%(zone)s: разогрев начинается за %(lead)s до комфорта."
+
+#, python-format
+msgid "%(zone)s: air mode starts the warm-up by what the room has learned, at most %(cap)s before comfort; until it has %(mornings)s learned mornings, %(lead)s before comfort."
+msgstr "%(zone)s: режим по воздуху начинает разогрев по выученному, не раньше чем за %(cap)s до комфорта; пока выученных утр меньше %(mornings)s — за %(lead)s."
+
+msgid "teplo has nothing to heat this room by its schedule yet."
+msgstr "teplo пока нечем греть эту комнату по расписанию."
+
+msgid "Copy this week to other rooms"
+msgstr "Копировать неделю в другие комнаты"
+
+msgid "Pick at least one room"
+msgstr "Выберите хотя бы одну комнату"
+
+msgid "No rooms yet. Rooms come from the site data."
+msgstr "Комнат пока нет. Они задаются данными сайта."

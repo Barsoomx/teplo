@@ -12,8 +12,6 @@ DEFAULTS = ClimateConfig(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
-    second_floor_guard_threshold=Decimal('19.0'),
-    second_floor_guard_hysteresis=Decimal('0.30'),
 )
 
 
@@ -28,8 +26,6 @@ DEFAULTS = ClimateConfig(
             air_min_band=Decimal('0.10'),
             learned_mornings_needed=1,
             preheat_lead_cap_minutes=480,
-            second_floor_guard_threshold=Decimal('5.0'),
-            second_floor_guard_hysteresis=Decimal('2.00'),
         ),
         replace(DEFAULTS, air_start_offset=Decimal('1.00'), air_min_band=Decimal('1.00')),
     ],
@@ -48,16 +44,14 @@ def test_climate_settings_within_their_ranges_pass(config: ClimateConfig) -> Non
         (replace(DEFAULTS, air_start_offset=Decimal('2.00'), air_min_band=Decimal('1.01')), ('air_min_band',)),
         (replace(DEFAULTS, learned_mornings_needed=0), ('learned_mornings_needed',)),
         (replace(DEFAULTS, preheat_lead_cap_minutes=481), ('preheat_lead_cap_minutes',)),
-        (replace(DEFAULTS, second_floor_guard_threshold=Decimal('4.9')), ('second_floor_guard_threshold',)),
-        (replace(DEFAULTS, second_floor_guard_hysteresis=Decimal('-0.01')), ('second_floor_guard_hysteresis',)),
         (
             replace(
                 DEFAULTS,
-                second_floor_guard_hysteresis=Decimal('3.00'),
+                preheat_lead_cap_minutes=500,
                 learned_mornings_needed=0,
                 air_start_offset=Decimal('2.50'),
             ),
-            ('air_start_offset', 'learned_mornings_needed', 'second_floor_guard_hysteresis'),
+            ('air_start_offset', 'learned_mornings_needed', 'preheat_lead_cap_minutes'),
         ),
     ],
     ids=[
@@ -67,8 +61,6 @@ def test_climate_settings_within_their_ranges_pass(config: ClimateConfig) -> Non
         'band_too_wide',
         'mornings',
         'lead_cap',
-        'guard_threshold',
-        'guard_hysteresis',
         'several',
     ],
 )
@@ -119,20 +111,18 @@ def test_start_offset_below_the_band_is_refused_after_the_values_out_of_range() 
     )
 
 
-def test_normalized_offsets_keep_two_decimals_and_the_threshold_one() -> None:
+def test_normalized_offsets_keep_two_decimals() -> None:
     config = replace(
         DEFAULTS,
         air_start_offset=Decimal('0.4'),
+        initial_early_stop_offset=Decimal('0.255'),
         air_min_band=Decimal('0.3'),
-        second_floor_guard_threshold=Decimal('18'),
-        second_floor_guard_hysteresis=Decimal('0.5'),
     )
 
     normalized = config.normalized()
 
     assert (
         str(normalized.air_start_offset),
+        str(normalized.initial_early_stop_offset),
         str(normalized.air_min_band),
-        str(normalized.second_floor_guard_threshold),
-        str(normalized.second_floor_guard_hysteresis),
-    ) == ('0.40', '0.30', '18.0', '0.50')
+    ) == ('0.40', '0.26', '0.30')

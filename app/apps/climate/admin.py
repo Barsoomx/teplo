@@ -4,19 +4,38 @@ from typing import Any
 from django import forms
 from django.contrib import admin
 from django.http import HttpRequest
+from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.climate_config import start_offset_keeps_band
-from apps.climate.models import ClimateSettings, ComfortPeriod, Zone, ZoneLearning
+from apps.climate.models import ClimateSettings, ComfortPeriod, RoomClimate, Zone, ZoneLearning
 from apps.climate.models.climate_settings import START_OFFSET_BELOW_MIN_BAND
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.devices.models import Device
 from apps.power.models import Load
 
 SHED_ZONE_FIELDS = ('slug', 'thermostat')
+GUARD_FIELDS = (
+    'second_floor_sensor',
+    'second_floor_guard_zone',
+    'second_floor_guard_threshold',
+    'second_floor_guard_hysteresis',
+    'second_floor_guard_live',
+)
+AIR_SENSOR_OF_A_ZONE = gettext_lazy('This sensor is the air sensor of a zone')
+AIR_SENSOR_IN_ANOTHER_ROOM = gettext_lazy('This sensor is placed in another room')
 
 
 class ComfortPeriodInline(admin.TabularInline):
     model = ComfortPeriod
+    fk_name = 'zone'
+    exclude = ('room_climate',)
+    extra = 0
+
+
+class RoomComfortPeriodInline(admin.TabularInline):
+    model = ComfortPeriod
+    fk_name = 'room_climate'
+    exclude = ('zone',)
     extra = 0
 
 
@@ -36,7 +55,12 @@ class ZoneAdmin(admin.ModelAdmin):
     list_editable = ('heating_enabled', 'live_control', 'air_control_live')
     list_filter = ('room',)
     readonly_fields = ('boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
-    inlines = (ComfortPeriodInline,)
+
+    def get_inlines(self, request: HttpRequest, obj: Zone | None) -> tuple[type[ComfortPeriodInline], ...]:  # noqa: ARG002
+        if obj is not None and RoomClimate.objects.filter(room__zones=obj).exists():
+            return ()
+
+        return (ComfortPeriodInline,)
 
     def get_readonly_fields(self, request: HttpRequest, obj: Zone | None = None) -> tuple[str, ...]:
         fields = tuple(super().get_readonly_fields(request, obj))
@@ -52,6 +76,43 @@ class ZoneAdmin(admin.ModelAdmin):
         ).update(room=obj.room_id)
 
 
+class RoomClimateAdminForm(forms.ModelForm):
+    def clean(self) -> dict[str, Any]:
+        super().clean()
+        sensor = self.cleaned_data.get('air_sensor')
+        if sensor is None:
+            return self.cleaned_data
+
+        if Zone.objects.filter(air_sensor=sensor).exists():
+            self.add_error('air_sensor', AIR_SENSOR_OF_A_ZONE)
+        elif sensor.room_id is not None and sensor.room_id != self.instance.room_id:
+            self.add_error('air_sensor', AIR_SENSOR_IN_ANOTHER_ROOM)
+        return self.cleaned_data
+
+
+@admin.register(RoomClimate)
+class RoomClimateAdmin(admin.ModelAdmin):
+    form = RoomClimateAdminForm
+    list_display = (
+        'room',
+        'comfort_target',
+        'setback_target',
+        'air_sensor',
+        'backup_zone',
+        'backup_below',
+        'backup_live',
+    )
+    list_editable = ('backup_live',)
+    readonly_fields = ('room',)
+    inlines = (RoomComfortPeriodInline,)
+
+    def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
+        return False
+
+    def has_delete_permission(self, request: HttpRequest, obj: RoomClimate | None = None) -> bool:  # noqa: ARG002
+        return False
+
+
 class ClimateSettingsAdminForm(forms.ModelForm):
     def clean(self) -> dict[str, Any]:
         super().clean()
@@ -65,13 +126,8 @@ class ClimateSettingsAdminForm(forms.ModelForm):
 @admin.register(ClimateSettings)
 class ClimateSettingsAdmin(admin.ModelAdmin):
     form = ClimateSettingsAdminForm
-    list_display = (
-        '__str__',
-        'outdoor_sensor',
-        'second_floor_sensor',
-        'second_floor_guard_zone',
-        'second_floor_guard_live',
-    )
+    list_display = ('__str__', 'outdoor_sensor')
+    exclude = GUARD_FIELDS
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
         return not ClimateSettings.objects.exists()

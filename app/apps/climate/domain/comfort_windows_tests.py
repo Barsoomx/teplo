@@ -3,9 +3,9 @@ from datetime import time
 import pytest
 
 from apps.climate.domain.comfort_windows import (
+    RoomWeek,
     ScheduleEdit,
     StoredWindow,
-    ZoneWeek,
     on_grid,
     schedule_edit,
     window_problems,
@@ -17,7 +17,7 @@ from apps.core.domain.settings import SettingChange, SettingProblem
 MONDAY = ComfortWindow(weekday=0, start=time(6, 30), end=time(23, 30))
 SATURDAY_MORNING = ComfortWindow(weekday=5, start=time(8, 0), end=time(12, 0))
 SATURDAY_EVENING = ComfortWindow(weekday=5, start=time(14, 0), end=time(23, 30))
-WEEK = ZoneWeek(
+WEEK = RoomWeek(
     slug='kitchen',
     name='Кухня',
     windows=(

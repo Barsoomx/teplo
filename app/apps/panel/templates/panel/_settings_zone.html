@@ -21,7 +21,7 @@
         {% translate 'Limit in air mode' as label %}{% include 'panel/_field.html' with field=form.floor_limit_setpoint %}
       </div>
     </fieldset>
-    {% if zone.kind == 'air' %}
+    {% if zone.kind == 'air' and not zone.room %}
     <fieldset class="field-group">
       <legend class="field-group-title">{% translate 'Air, °C' %}</legend>
       <div class="field-grid">

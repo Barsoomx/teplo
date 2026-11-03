@@ -4,6 +4,7 @@ from django.views.generic import TemplateView
 from apps.panel.forms.climate_settings import ClimateSettingsForm
 from apps.panel.forms.load_settings import LoadSettingsForm
 from apps.panel.forms.loads import load_formset, load_rows
+from apps.panel.forms.room_settings import RoomSettingsForm
 from apps.panel.forms.zone_settings import ZoneSettingsForm
 from apps.panel.usecases.get_settings_page import GetSettingsPageInputDTO, GetSettingsPageUseCase
 
@@ -16,7 +17,17 @@ class SettingsPageView(LoginRequiredMixin, TemplateView):
         page = GetSettingsPageUseCase.init().execute(GetSettingsPageInputDTO())
         formset = load_formset(page.loads)
         context['page'] = page
-        context['zone_forms'] = [(zone, ZoneSettingsForm.for_zone(zone)) for zone in page.zones]
+        context['room_sections'] = [
+            (
+                room,
+                RoomSettingsForm.for_room(room),
+                [(zone, ZoneSettingsForm.for_zone(zone)) for zone in page.zones if zone.room == room.slug],
+            )
+            for room in page.rooms
+        ]
+        context['loose_zone_forms'] = [
+            (zone, ZoneSettingsForm.for_zone(zone)) for zone in page.zones if zone.room is None
+        ]
         context['climate_form'] = ClimateSettingsForm.for_settings(page.climate)
         context['load_settings_form'] = LoadSettingsForm.for_settings(page.load_settings)
         context['formset'] = formset

@@ -6,10 +6,10 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
+from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.errors import ComfortWindowNotFoundError
 from apps.climate.domain.zone import ComfortWindow
-from apps.climate.factories import ComfortPeriodFactory, ZoneFactory
+from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory
 from apps.climate.models import ComfortPeriod
 from apps.climate.stubs import ComfortWindowStoreStub
 from apps.climate.usecases.change_comfort_window import (
@@ -20,6 +20,7 @@ from apps.climate.usecases.change_comfort_window import (
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
 from apps.core.stubs import SettingsRecorderStub, TransactionStub
+from apps.house.factories import RoomFactory
 from apps.telemetry.models import JournalEntry
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
@@ -33,7 +34,7 @@ SATURDAY = (
 def f_windows() -> ComfortWindowStoreStub:
     return ComfortWindowStoreStub(
         weeks=[
-            ZoneWeek(
+            RoomWeek(
                 slug='kitchen',
                 name='Кухня',
                 windows=(
@@ -79,9 +80,9 @@ def f_use_case_after_another_edit_of_its_day_was_saved_meanwhile(
 
 @pytest.fixture
 def f_stored_saturday_morning() -> ComfortPeriod:
-    zone = ZoneFactory.create(slug='kitchen', name='Кухня')
-    ComfortPeriodFactory.create(zone=zone, weekday=5, start=time(14, 0), end=time(23, 30))
-    return ComfortPeriodFactory.create(zone=zone, weekday=5, start=time(8, 0), end=time(12, 0))
+    climate = RoomClimateFactory.create(room=RoomFactory.create(slug='kitchen', name='Кухня'))
+    ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=5, start=time(14, 0), end=time(23, 30))
+    return ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=5, start=time(8, 0), end=time(12, 0))
 
 
 def test_changed_window_takes_its_new_times_beside_the_rest_of_its_day(
@@ -100,7 +101,7 @@ def test_changed_window_takes_its_new_times_beside_the_rest_of_its_day(
         new=('09:00-13:00', '14:00-23:30'),
     )
     assert (output, f_windows.replaced, f_recorder.records) == (
-        ChangeComfortWindowOutputDTO(zone='kitchen', changes=(change,)),
+        ChangeComfortWindowOutputDTO(room='kitchen', changes=(change,)),
         [
             (
                 'kitchen',
@@ -134,7 +135,7 @@ def test_window_kept_as_it_was_writes_and_journals_nothing(
     output = f_use_case.execute(ChangeComfortWindowInputDTO(window=1, start=time(6, 30), end=time(23, 30), now=NOW))
 
     assert (output, f_windows.replaced, f_recorder.records) == (
-        ChangeComfortWindowOutputDTO(zone='kitchen', changes=()),
+        ChangeComfortWindowOutputDTO(room='kitchen', changes=()),
         [],
         [],
     )
@@ -176,7 +177,7 @@ def test_window_whose_day_another_edit_saved_meanwhile_is_not_found_and_nothing_
 
 
 @pytest.mark.django_db
-def test_zone_of_the_window_is_locked_before_its_week_is_read_and_the_change_is_journaled_in_the_same_transaction(
+def test_room_of_the_window_is_locked_before_its_week_is_read_and_the_change_is_journaled_in_the_same_transaction(
     f_stored_saturday_morning: ComfortPeriod,
 ) -> None:
     with CaptureQueriesContext(connection) as queries:

@@ -14,7 +14,7 @@ from apps.telemetry.services.settings_journal import SettingsJournal
 
 @dataclass(frozen=True, kw_only=True)
 class CopyComfortDayInputDTO:
-    zone: str
+    room: str
     weekday: int
     to_weekdays: tuple[int, ...]
     now: datetime
@@ -22,7 +22,7 @@ class CopyComfortDayInputDTO:
 
 @dataclass(frozen=True, kw_only=True)
 class CopyComfortDayOutputDTO:
-    zone: str
+    room: str
     changes: tuple[SettingChange, ...]
 
 
@@ -46,7 +46,7 @@ class CopyComfortDayUseCase(BaseUseCase[CopyComfortDayInputDTO, CopyComfortDayOu
             return self._copy_day(input_dto)
 
     def _copy_day(self, input_dto: CopyComfortDayInputDTO) -> CopyComfortDayOutputDTO:
-        week = self._windows.week_for_update(input_dto.zone)
+        week = self._windows.week_for_update(input_dto.room)
         source = week.day(input_dto.weekday)
         days = {
             weekday: tuple(replace(window, weekday=weekday) for window in source)
@@ -60,4 +60,4 @@ class CopyComfortDayUseCase(BaseUseCase[CopyComfortDayInputDTO, CopyComfortDayOu
                 input_dto.now,
                 write=partial(self._windows.replace_days, week.slug, edit.days),
             )
-        return CopyComfortDayOutputDTO(zone=week.slug, changes=edit.changes)
+        return CopyComfortDayOutputDTO(room=week.slug, changes=edit.changes)

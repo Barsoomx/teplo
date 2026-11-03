@@ -8,11 +8,12 @@ from django.conf import settings
 from django.db import OperationalError
 from django.utils import timezone
 
+from apps.climate.domain.backup_heat import decide_backup_heat
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.drive import StartPermits, ZoneDrive, ZoneStart, plan_drive
 from apps.climate.domain.errors import ZoneNotFoundError
-from apps.climate.domain.events import SecondFloorGuardDryRun, ZoneCommandFailed, ZoneCommandIssued
+from apps.climate.domain.events import BackupHeatDryRun, ZoneCommandFailed, ZoneCommandIssued
 from apps.climate.domain.learning import (
     Morning,
     ZoneLearningRecord,
@@ -23,8 +24,8 @@ from apps.climate.domain.learning import (
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.climate.domain.observation import StopWatch
-from apps.climate.domain.ports import LoadGate, WriteGate, ZoneLearningStore, ZoneStore
-from apps.climate.domain.second_floor_guard import decide_second_floor_guard
+from apps.climate.domain.ports import LoadGate, RoomClimateStore, WriteGate, ZoneLearningStore, ZoneStore
+from apps.climate.domain.room_climate import RoomClimateSettings
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import (
     MINUTE,
@@ -37,6 +38,7 @@ from apps.climate.domain.zone_cycle import (
     hold_air_dry_run,
 )
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook, control_book
@@ -82,6 +84,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     def __init__(
         self,
         zones: ZoneStore,
+        rooms: RoomClimateStore,
         climate_settings: ClimateSettingsRepository,
         learning: ZoneLearningStore,
         store: ThermostatStateStore,
@@ -95,6 +98,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     ) -> None:
         super().__init__(dispatcher=dispatcher)
         self._zones = zones
+        self._rooms = rooms
         self._climate_settings = climate_settings
         self._learning = learning
         self._store = store
@@ -109,6 +113,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     def init(cls) -> 'RunHeatingCycleUseCase':
         return cls(
             zones=ZoneRepository(),
+            rooms=RoomClimateRepository(),
             climate_settings=ClimateSettingsRepository(),
             learning=ZoneLearningRepository(),
             store=thermostat_state_store,
@@ -125,7 +130,8 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         control = self._climate_settings.control()
         zones = self._zones.all_settings()
         learning = self._learning.all_records()
-        guarded_zone = self._run_guard(zones, control, now)
+        rooms = self._rooms.all_settings()
+        backed_up = self._run_backup(rooms, zones, now)
         cycle = CycleConditions(
             now=now,
             clock_trusted=input_dto.clock_trusted,
@@ -136,7 +142,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         runs = [
             self._plan(
                 zone,
-                self._conditions(zone, learning, guarded_zone),
+                self._conditions(zone, learning, backed_up),
                 cycle,
                 held=zone.slug in held,
                 read_at=input_dto.monotonic,
@@ -148,7 +154,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             outcomes={
                 zone.slug: self._run_zone(
                     zone,
-                    self._conditions(zone, learning, guarded_zone),
+                    self._conditions(zone, learning, backed_up),
                     cycle,
                     permits,
                     read_at=input_dto.monotonic,
@@ -161,42 +167,62 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         self,
         zone: ZoneSettings,
         learning: dict[str, ZoneLearningRecord],
-        guarded_zone: str | None,
+        backed_up: frozenset[str],
     ) -> ZoneConditions:
         return ZoneConditions(
             air=self._temperature(zone.air_sensor_slug),
             learning=learning.get(zone.slug, ZoneLearningRecord.unlearned()),
-            guarded=zone.slug == guarded_zone,
+            guarded=zone.slug in backed_up,
             writes_live=zone.live_control and not self._dry_run,
         )
 
-    def _run_guard(self, zones: list[ZoneSettings], control: ClimateControl, now: datetime) -> str | None:
-        guard = control.second_floor_guard
-        air = self._temperature(control.sensors.second_floor_slug)
-        previous = self._book.guard_active()
-        active = decide_second_floor_guard(previous, air, guard)
-        self._book.remember_guard(active)
-        zone = next((zone for zone in zones if zone.slug == guard.zone_slug), None)
-        if zone is None:
-            return None
+    def _run_backup(
+        self,
+        rooms: list[RoomClimateSettings],
+        zones: list[ZoneSettings],
+        now: datetime,
+    ) -> frozenset[str]:
+        by_slug = {zone.slug: zone for zone in zones}
+        backed_up: set[str] = set()
+        for room in rooms:
+            air = self._temperature(room.air_sensor_slug)
+            previous = self._book.backup_active(room.slug)
+            active = decide_backup_heat(previous, air, room.backup)
+            self._book.remember_backup(room.slug, active)
+            zone = None if room.backup.zone_slug is None else by_slug.get(room.backup.zone_slug)
+            if zone is None:
+                continue
 
-        if active != previous:
-            self._note_guard(zone, active, air, live=guard.live, now=now)
-        return zone.slug if active and guard.live else None
+            if active != previous:
+                self._note_backup(room, zone, active, air, now=now)
+            if active and room.backup.live:
+                backed_up.add(zone.slug)
+        return frozenset(backed_up)
 
-    def _note_guard(self, zone: ZoneSettings, active: bool, air: Decimal | None, *, live: bool, now: datetime) -> None:
+    def _note_backup(
+        self,
+        room: RoomClimateSettings,
+        zone: ZoneSettings,
+        active: bool,
+        air: Decimal | None,
+        *,
+        now: datetime,
+    ) -> None:
         logger.info(
-            'second_floor_guard_changed',
+            'backup_heat_changed',
+            room=room.slug,
             zone=zone.slug,
             active=active,
             air=None if air is None else str(air),
-            live=live,
+            live=room.backup.live,
         )
-        if live:
+        if room.backup.live:
             return
 
         self._event_store.add_event(
-            SecondFloorGuardDryRun(
+            BackupHeatDryRun(
+                room=room.slug,
+                room_name=room.name,
                 zone=zone.slug,
                 active=active,
                 air=air,

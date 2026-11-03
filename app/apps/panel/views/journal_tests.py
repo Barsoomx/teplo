@@ -395,6 +395,21 @@ def m_dry_run_timeline_use_case() -> Iterator[MagicMock]:
                             payload={'zone': 'bathroom-2f', 'active': True, 'air': '18.8', 'setpoint': '30.0'},
                             created_at=MORNING - timedelta(minutes=10),
                         ),
+                        TimelineEntry(
+                            kind='backup_heat_dry_run',
+                            subject='bathroom-2f',
+                            subject_name='Санузел 2 этаж',
+                            device_kind=None,
+                            payload={
+                                'room': 'bedroom',
+                                'room_name': 'Спальня',
+                                'zone': 'bathroom-2f',
+                                'active': False,
+                                'air': '19.3',
+                                'setpoint': '30.0',
+                            },
+                            created_at=MORNING - timedelta(minutes=12),
+                        ),
                     ),
                 ),
             ),
@@ -622,7 +637,7 @@ def test_journal_reads_alerts_like_the_telegram_messages(
     ) == (True, True, True, False, 1)
 
 
-def test_journal_words_what_air_control_optimal_start_and_the_guard_would_do(
+def test_journal_words_what_air_control_optimal_start_backup_heat_and_the_old_guard_would_do(
     f_russian_client: Client,
     m_dry_run_timeline_use_case: MagicMock,
 ) -> None:
@@ -637,9 +652,10 @@ def test_journal_words_what_air_control_optimal_start_and_the_guard_would_do(
         'На термостате было бы 18°' in content,
         'Кухня: в режиме по воздуху начал бы разогрев в 04:10, а не в 03:30' in content,
         'Санузел 2 этаж: защита второго этажа включила бы комфорт (2 этаж 18,8°)' in content,
+        'Санузел 2 этаж: резервный обогрев вернул бы расписание (Спальня 19,3°)' in content,
         'неизвестное событие' in content,
         m_dry_run_timeline_use_case.init.call_count,
-    ) == (True, 1, True, True, True, True, True, False, 1)
+    ) == (True, 1, True, True, True, True, True, True, False, 1)
 
 
 def test_journal_shows_a_power_outage_with_its_cause_and_the_answers_to_change_it(

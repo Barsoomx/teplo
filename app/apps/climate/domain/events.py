@@ -52,7 +52,9 @@ class OptimalStartDryRun(DomainEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
-class SecondFloorGuardDryRun(DomainEvent):
+class BackupHeatDryRun(DomainEvent):
+    room: str
+    room_name: str
     zone: str
     active: bool
     air: Decimal | None

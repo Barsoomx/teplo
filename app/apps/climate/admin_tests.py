@@ -10,9 +10,16 @@ from django.http import HttpRequest
 from django.test import RequestFactory
 from django.utils import translation
 
-from apps.climate.admin import ClimateSettingsAdmin, ZoneAdmin, ZoneLearningAdmin
-from apps.climate.factories import ClimateSettingsFactory, ZoneFactory, ZoneLearningFactory
-from apps.climate.models import ClimateSettings, Zone, ZoneLearning
+from apps.climate.admin import (
+    GUARD_FIELDS,
+    ClimateSettingsAdmin,
+    ComfortPeriodInline,
+    RoomClimateAdmin,
+    ZoneAdmin,
+    ZoneLearningAdmin,
+)
+from apps.climate.factories import ClimateSettingsFactory, RoomClimateFactory, ZoneFactory, ZoneLearningFactory
+from apps.climate.models import ClimateSettings, RoomClimate, Zone, ZoneLearning
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
@@ -29,9 +36,19 @@ CLIMATE_POSTED = {
     'air_min_band': '0.20',
     'preheat_lead_cap_minutes': '240',
     'learned_mornings_needed': '3',
-    'second_floor_guard_threshold': '19.0',
-    'second_floor_guard_hysteresis': '0.30',
 }
+BEDROOM_POSTED = {
+    'comfort_target': '20.5',
+    'setback_target': '19.5',
+    'backup_below': '19.0',
+    'backup_hysteresis': '0.30',
+}
+SENSOR_OF_A_ZONE = 'This sensor is the air sensor of a zone'
+SENSOR_IN_ANOTHER_ROOM = 'This sensor is placed in another room'
+SETBACK_ABOVE_COMFORT = 'The night target must not be above the comfort target'
+BACKUP_NOT_BELOW_SETBACK = (
+    'Backup heat must turn on at least 0.5° below the night target, or it fights the night target'
+)
 BELOW_MIN_BAND = 'Must not be below the air min band, or heating stops above the target'
 IDLE_NOT_BELOW_LIMIT = (
     'The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats'
@@ -58,6 +75,49 @@ def f_zone_learning_admin() -> ZoneLearningAdmin:
 @pytest.fixture
 def f_climate_settings_admin() -> ClimateSettingsAdmin:
     return ClimateSettingsAdmin(ClimateSettings, admin.site)
+
+
+@pytest.fixture
+def f_room_climate_admin() -> RoomClimateAdmin:
+    return RoomClimateAdmin(RoomClimate, admin.site)
+
+
+@pytest.fixture
+def f_bedroom_climate() -> RoomClimate:
+    return RoomClimateFactory.create(
+        room=RoomFactory.create(slug='bedroom', name='Спальня'),
+        comfort_target=Decimal('20.5'),
+        backup_zone=ZoneFactory.create(slug='bathroom-2f'),
+    )
+
+
+@pytest.fixture
+def f_sensors(f_bedroom_climate: RoomClimate) -> dict[str, Device]:
+    office = RoomFactory.create(slug='office', name='Кабинет')
+    sensors = {
+        slug: DeviceFactory.create(
+            slug=slug,
+            kind=DeviceKind.TEMPERATURE_SENSOR,
+            driver=DeviceDriver.ESPHOME_TEMPERATURE,
+            room=room,
+        )
+        for slug, room in (
+            ('air-second-floor', f_bedroom_climate.room),
+            ('air-attic', None),
+            ('air-office', office),
+            ('air-kitchen', None),
+        )
+    }
+    ZoneFactory.create(slug='kitchen', air_sensor=sensors['air-kitchen'])
+    return sensors
+
+
+@pytest.fixture
+def f_placed_kitchen(request: pytest.FixtureRequest) -> Zone:
+    room = None if request.param == 'no_room' else RoomFactory.create(slug='open-space')
+    if request.param == 'room_climate':
+        RoomClimateFactory.create(room=room)
+    return ZoneFactory.create(slug='kitchen', room=room)
 
 
 @pytest.fixture
@@ -284,3 +344,133 @@ def test_zone_page_refuses_an_idle_floor_setpoint_not_below_the_floor_limit(
     form = f_zone_admin.get_form(f_request, f_kitchen, change=True)({**f_kitchen_posted, **posted}, instance=f_kitchen)
 
     assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.parametrize(
+    ('f_placed_kitchen', 'inlines'),
+    [('room_climate', []), ('room_without_climate', [ComfortPeriodInline]), ('no_room', [ComfortPeriodInline])],
+    indirect=['f_placed_kitchen'],
+)
+def test_zone_page_edits_the_comfort_windows_only_of_a_zone_that_holds_its_own_comfort(
+    f_zone_admin: ZoneAdmin,
+    f_request: HttpRequest,
+    f_placed_kitchen: Zone,
+    inlines: list[type[ComfortPeriodInline]],
+) -> None:
+    assert (
+        list(f_zone_admin.get_inlines(f_request, f_placed_kitchen)),
+        list(f_zone_admin.get_inlines(f_request, None)),
+    ) == (
+        inlines,
+        [ComfortPeriodInline],
+    )
+
+
+def test_climate_settings_page_leaves_out_the_second_floor_guard_fields(
+    f_climate_settings_admin: ClimateSettingsAdmin,
+    f_request: HttpRequest,
+) -> None:
+    form = f_climate_settings_admin.get_form(f_request)
+
+    assert (set(GUARD_FIELDS) & set(form.base_fields), f_climate_settings_admin.list_display) == (
+        set(),
+        ('__str__', 'outdoor_sensor'),
+    )
+
+
+def test_room_climate_admin_changes_the_rows_the_site_data_created_without_adding_or_deleting_any(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+    f_bedroom_climate: RoomClimate,
+) -> None:
+    assert (
+        f_room_climate_admin.has_add_permission(f_request),
+        f_room_climate_admin.has_change_permission(f_request, f_bedroom_climate),
+        f_room_climate_admin.has_delete_permission(f_request, f_bedroom_climate),
+        f_room_climate_admin.get_readonly_fields(f_request, f_bedroom_climate),
+    ) == (False, True, False, ('room',))
+
+
+@pytest.mark.parametrize(
+    ('sensor', 'errors'),
+    [
+        ('air-second-floor', {}),
+        ('air-attic', {}),
+        ('air-kitchen', {'air_sensor': [SENSOR_OF_A_ZONE]}),
+        ('air-office', {'air_sensor': [SENSOR_IN_ANOTHER_ROOM]}),
+    ],
+    ids=['placed_in_the_room', 'placed_nowhere', 'air_sensor_of_a_zone', 'placed_in_another_room'],
+)
+def test_room_climate_page_refuses_an_air_sensor_of_a_zone_or_of_another_room(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+    f_bedroom_climate: RoomClimate,
+    f_sensors: dict[str, Device],
+    sensor: str,
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_room_climate_admin.get_form(f_request, f_bedroom_climate, change=True)(
+        {
+            **BEDROOM_POSTED,
+            'backup_zone': str(f_bedroom_climate.backup_zone_id),
+            'air_sensor': str(f_sensors[sensor].pk),
+        },
+        instance=f_bedroom_climate,
+    )
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.parametrize(
+    ('posted', 'errors'),
+    [
+        ({}, {}),
+        ({'setback_target': '21.0', 'backup_below': '18.0'}, {'__all__': [SETBACK_ABOVE_COMFORT]}),
+        ({'backup_below': '19.1'}, {'__all__': [BACKUP_NOT_BELOW_SETBACK]}),
+        ({'backup_below': '19.1', 'backup_zone': ''}, {}),
+    ],
+    ids=['as_seeded', 'night_above_comfort', 'backup_heat_too_close', 'no_backup_zone'],
+)
+def test_room_climate_page_refuses_a_night_target_above_comfort_and_backup_heat_close_to_it(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+    f_bedroom_climate: RoomClimate,
+    posted: dict[str, str],
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_room_climate_admin.get_form(f_request, f_bedroom_climate, change=True)(
+        {**BEDROOM_POSTED, 'backup_zone': str(f_bedroom_climate.backup_zone_id), **posted},
+        instance=f_bedroom_climate,
+    )
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.usefixtures('russian')
+def test_room_climate_page_explains_its_refusals_in_the_page_language(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+    f_bedroom_climate: RoomClimate,
+    f_sensors: dict[str, Device],
+) -> None:
+    form_class = f_room_climate_admin.get_form(f_request, f_bedroom_climate, change=True)
+    zone_sensor = form_class(
+        {**BEDROOM_POSTED, 'air_sensor': str(f_sensors['air-kitchen'].pk)},
+        instance=f_bedroom_climate,
+    )
+    office_sensor = form_class(
+        {**BEDROOM_POSTED, 'air_sensor': str(f_sensors['air-office'].pk)},
+        instance=f_bedroom_climate,
+    )
+    backup_too_close = form_class(
+        {**BEDROOM_POSTED, 'backup_zone': str(f_bedroom_climate.backup_zone_id), 'backup_below': '19.5'},
+        instance=f_bedroom_climate,
+    )
+    night_above_comfort = form_class({**BEDROOM_POSTED, 'setback_target': '21.0'}, instance=f_bedroom_climate)
+
+    assert (zone_sensor.errors, office_sensor.errors, backup_too_close.errors, night_above_comfort.errors) == (
+        {'air_sensor': ['Это датчик воздуха зоны']},
+        {'air_sensor': ['Этот датчик стоит в другой комнате']},
+        {'__all__': ['Резервный обогрев должен включаться хотя бы на 0,5° ниже ночной цели, иначе он спорит с ней']},
+        {'__all__': ['Ночная цель не может быть выше комфортной']},
+    )

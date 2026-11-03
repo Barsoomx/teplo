@@ -4,8 +4,9 @@ import pytest
 
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.modes import ZoneKind
+from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
-from apps.climate.stubs import ClimateConfigStoreStub, ZoneConfigStoreStub
+from apps.climate.stubs import ClimateConfigStoreStub, RoomClimateConfigStoreStub, ZoneConfigStoreStub
 from apps.panel.usecases.get_settings_page import (
     GetSettingsPageInputDTO,
     GetSettingsPageOutputDTO,
@@ -34,6 +35,7 @@ KITCHEN_RECORD = ZoneConfigRecord(
     config=KITCHEN,
     live_control=True,
     air_control_live=False,
+    room='open-space',
 )
 BATHROOM_RECORD = ZoneConfigRecord(
     id=1,
@@ -62,10 +64,39 @@ CLIMATE = ClimateConfigRecord(
         air_min_band=Decimal('0.20'),
         learned_mornings_needed=3,
         preheat_lead_cap_minutes=240,
-        second_floor_guard_threshold=Decimal('19.0'),
-        second_floor_guard_hysteresis=Decimal('0.30'),
     ),
-    second_floor_guard_live=False,
+)
+OPEN_SPACE_RECORD = RoomClimateConfigRecord(
+    id=1,
+    slug='open-space',
+    name='Гостиная, кухня и прихожая',
+    floor_name='1 этаж',
+    config=RoomClimateConfig(
+        comfort_target=Decimal('22.0'),
+        setback_target=Decimal('19.5'),
+        backup_below=Decimal('19.0'),
+        backup_hysteresis=Decimal('0.30'),
+    ),
+    air_sensor_slug=None,
+    backup_zone_slug=None,
+    backup_zone_name=None,
+    backup_live=False,
+)
+BEDROOM_RECORD = RoomClimateConfigRecord(
+    id=2,
+    slug='bedroom',
+    name='Спальня',
+    floor_name='2 этаж',
+    config=RoomClimateConfig(
+        comfort_target=Decimal('20.5'),
+        setback_target=Decimal('19.5'),
+        backup_below=Decimal('19.0'),
+        backup_hysteresis=Decimal('0.30'),
+    ),
+    air_sensor_slug='air-second-floor',
+    backup_zone_slug='bathroom-2f',
+    backup_zone_name='Санузел 2 этаж',
+    backup_live=True,
 )
 LOAD_SETTINGS = LoadSettingsRecord(
     id=1,
@@ -102,6 +133,7 @@ KITCHEN_LOAD_RECORD = LoadConfigRecord(
 @pytest.fixture
 def f_use_case() -> GetSettingsPageUseCase:
     return GetSettingsPageUseCase(
+        rooms=RoomClimateConfigStoreStub(records=[OPEN_SPACE_RECORD, BEDROOM_RECORD]),
         zones=ZoneConfigStoreStub(records=[BATHROOM_RECORD, KITCHEN_RECORD]),
         climate_settings=ClimateConfigStoreStub(record=CLIMATE),
         load_settings=LoadSettingsConfigStoreStub(record=LOAD_SETTINGS),
@@ -110,13 +142,14 @@ def f_use_case() -> GetSettingsPageUseCase:
     )
 
 
-def test_settings_page_lists_zones_by_name_and_loads_by_priority_with_their_gates(
+def test_settings_page_lists_rooms_in_floor_order_zones_by_name_and_loads_by_priority_with_their_gates(
     f_use_case: GetSettingsPageUseCase,
 ) -> None:
     output = f_use_case.execute(GetSettingsPageInputDTO())
 
-    assert (output, output.zone('kitchen'), output.zone('attic')) == (
+    assert (output, output.zone('kitchen'), output.zone('attic'), output.room('bedroom'), output.room('office')) == (
         GetSettingsPageOutputDTO(
+            rooms=(OPEN_SPACE_RECORD, BEDROOM_RECORD),
             zones=(KITCHEN_RECORD, BATHROOM_RECORD),
             climate=CLIMATE,
             load_settings=LOAD_SETTINGS,
@@ -124,5 +157,7 @@ def test_settings_page_lists_zones_by_name_and_loads_by_priority_with_their_gate
             dry_run=True,
         ),
         KITCHEN_RECORD,
+        None,
+        BEDROOM_RECORD,
         None,
     )

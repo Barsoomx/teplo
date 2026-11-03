@@ -12,6 +12,7 @@ from django.utils import translation
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.comfort_windows import StoredWindow
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
+from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.climate.domain.week_plan import DayPeriod
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
@@ -27,7 +28,7 @@ from apps.panel.usecases.get_panel_overview import (
     ZoneRegime,
 )
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO, PhaseCurrent, PhaseMeterOverview
-from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO, ScheduleDay, ZoneSchedule
+from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO, RoomSchedule, ScheduleDay, ZoneWarmUp
 from apps.panel.usecases.get_settings_page import GetSettingsPageOutputDTO
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord, LoadSettingsConfig, LoadSettingsRecord
 from apps.power.domain.load_state import LoadState
@@ -270,12 +271,13 @@ def schedule_page() -> GetSchedulePageOutputDTO:
     )
     night = (DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=1440),)
     return GetSchedulePageOutputDTO(
-        zones=(
-            ZoneSchedule(
+        rooms=(
+            RoomSchedule(
                 slug='kitchen',
                 name='Кухня',
+                floor_name='1 этаж',
                 preheat_lead=timedelta(hours=3),
-                optimal_start=False,
+                zones=(ZoneWarmUp(slug='kitchen', name='Кухня', preheat_lead=timedelta(hours=3), optimal_start=False),),
                 days=(
                     ScheduleDay(
                         weekday=0,
@@ -285,11 +287,19 @@ def schedule_page() -> GetSchedulePageOutputDTO:
                     *(ScheduleDay(weekday=weekday, windows=(), periods=night) for weekday in range(1, 7)),
                 ),
             ),
-            ZoneSchedule(
+            RoomSchedule(
                 slug='living-room',
                 name='Гостиная',
+                floor_name='1 этаж',
                 preheat_lead=timedelta(hours=3),
-                optimal_start=True,
+                zones=(
+                    ZoneWarmUp(
+                        slug='living-room',
+                        name='Гостиная',
+                        preheat_lead=timedelta(hours=3),
+                        optimal_start=True,
+                    ),
+                ),
                 days=tuple(ScheduleDay(weekday=weekday, windows=(), periods=night) for weekday in range(7)),
             ),
         ),
@@ -313,6 +323,40 @@ def settings_page() -> GetSettingsPageOutputDTO:
         preheat_lead_minutes=180,
     )
     return GetSettingsPageOutputDTO(
+        rooms=(
+            RoomClimateConfigRecord(
+                id=5,
+                slug='bathroom-1f',
+                name='Санузел 1 этаж',
+                floor_name='1 этаж',
+                config=RoomClimateConfig(
+                    comfort_target=Decimal('22.0'),
+                    setback_target=Decimal('19.5'),
+                    backup_below=Decimal('19.0'),
+                    backup_hysteresis=Decimal('0.30'),
+                ),
+                air_sensor_slug=None,
+                backup_zone_slug=None,
+                backup_zone_name=None,
+                backup_live=False,
+            ),
+            RoomClimateConfigRecord(
+                id=6,
+                slug='bedroom',
+                name='Спальня',
+                floor_name='2 этаж',
+                config=RoomClimateConfig(
+                    comfort_target=Decimal('20.5'),
+                    setback_target=Decimal('19.5'),
+                    backup_below=Decimal('19.0'),
+                    backup_hysteresis=Decimal('0.30'),
+                ),
+                air_sensor_slug='air-second-floor',
+                backup_zone_slug='bathroom-2f',
+                backup_zone_name='Санузел 2 этаж',
+                backup_live=False,
+            ),
+        ),
         zones=(
             ZoneConfigRecord(
                 id=3,
@@ -340,6 +384,7 @@ def settings_page() -> GetSettingsPageOutputDTO:
                 ),
                 live_control=False,
                 air_control_live=False,
+                room='bathroom-1f',
             ),
         ),
         climate=ClimateConfigRecord(
@@ -350,10 +395,7 @@ def settings_page() -> GetSettingsPageOutputDTO:
                 air_min_band=Decimal('0.20'),
                 learned_mornings_needed=3,
                 preheat_lead_cap_minutes=240,
-                second_floor_guard_threshold=Decimal('19.0'),
-                second_floor_guard_hysteresis=Decimal('0.30'),
             ),
-            second_floor_guard_live=False,
         ),
         load_settings=LoadSettingsRecord(
             id=1,

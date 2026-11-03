@@ -10,7 +10,6 @@ from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.optimal_start import OptimalStartSettings
-from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.factories import ClimateSettingsFactory, ZoneFactory
 from apps.climate.models import ClimateSettings
@@ -27,8 +26,13 @@ DEFAULT_CONFIG = ClimateConfig(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
-    second_floor_guard_threshold=Decimal('19.0'),
-    second_floor_guard_hysteresis=Decimal('0.30'),
+)
+GUARD_FIELDS = (
+    'second_floor_sensor',
+    'second_floor_guard_zone',
+    'second_floor_guard_threshold',
+    'second_floor_guard_hysteresis',
+    'second_floor_guard_live',
 )
 
 
@@ -48,17 +52,6 @@ def f_sensors() -> list[Device]:
     ]
     ClimateSettingsFactory.create(outdoor_sensor=sensors[0], second_floor_sensor=sensors[1])
     return sensors
-
-
-@pytest.fixture
-def f_outdoor_sensor() -> Device:
-    sensor = DeviceFactory.create(
-        slug='outdoor',
-        kind=DeviceKind.TEMPERATURE_SENSOR,
-        driver=DeviceDriver.ESPHOME_TEMPERATURE,
-    )
-    ClimateSettingsFactory.create(outdoor_sensor=sensor)
-    return sensor
 
 
 @pytest.fixture
@@ -91,78 +84,53 @@ def f_guarded_settings() -> ClimateSettings:
     )
 
 
-def test_sensors_name_the_outdoor_and_second_floor_sensors(f_sensors: list[Device]) -> None:
-    assert ClimateSettingsRepository.sensors() == ClimateSensors(
-        outdoor_slug=f_sensors[0].slug,
-        second_floor_slug=f_sensors[1].slug,
-    )
-
-
-def test_sensor_left_empty_is_none(f_outdoor_sensor: Device) -> None:
-    assert ClimateSettingsRepository.sensors() == ClimateSensors(
-        outdoor_slug=f_outdoor_sensor.slug,
-        second_floor_slug=None,
-    )
+def test_sensors_name_the_outdoor_sensor_and_not_the_old_second_floor_sensor(f_sensors: list[Device]) -> None:
+    assert ClimateSettingsRepository.sensors() == ClimateSensors(outdoor_slug=f_sensors[0].slug)
 
 
 def test_without_climate_settings_no_sensor_is_named() -> None:
-    assert ClimateSettingsRepository.sensors() == ClimateSensors(outdoor_slug=None, second_floor_slug=None)
+    assert ClimateSettingsRepository.sensors() == ClimateSensors(outdoor_slug=None)
 
 
 @pytest.mark.usefixtures('tuned_settings')
-def test_control_reads_regulation_optimal_start_and_guard() -> None:
+def test_control_reads_regulation_and_optimal_start_and_no_longer_the_second_floor_guard() -> None:
     assert ClimateSettingsRepository.control() == ClimateControl(
-        sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug=None),
+        sensors=ClimateSensors(outdoor_slug='outdoor'),
         regulation=AirRegulationSettings(
             start_offset=Decimal('0.25'),
             initial_early_stop_offset=Decimal('0.40'),
             min_band=Decimal('0.15'),
         ),
         optimal_start=OptimalStartSettings(lead_cap=timedelta(minutes=210), mornings_needed=5),
-        second_floor_guard=SecondFloorGuardSettings(
-            zone_slug='bathroom-2f',
-            threshold=Decimal('18.5'),
-            hysteresis=Decimal('0.50'),
-            live=True,
-        ),
     )
 
 
 def test_control_without_climate_settings_takes_defaults() -> None:
     assert ClimateSettingsRepository.control() == ClimateControl(
-        sensors=ClimateSensors(outdoor_slug=None, second_floor_slug=None),
+        sensors=ClimateSensors(outdoor_slug=None),
         regulation=AirRegulationSettings(
             start_offset=Decimal('0.3'),
             initial_early_stop_offset=Decimal('0.3'),
             min_band=Decimal('0.2'),
         ),
         optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
-        second_floor_guard=SecondFloorGuardSettings(
-            zone_slug=None,
-            threshold=Decimal('19.0'),
-            hysteresis=Decimal('0.3'),
-            live=False,
-        ),
     )
 
 
 def test_config_record_without_climate_settings_takes_the_defaults() -> None:
-    assert ClimateSettingsRepository.config_record() == ClimateConfigRecord(
-        id=None,
-        config=DEFAULT_CONFIG,
-        second_floor_guard_live=False,
-    )
+    assert ClimateSettingsRepository.config_record() == ClimateConfigRecord(id=None, config=DEFAULT_CONFIG)
 
 
-def test_config_record_reads_the_stored_settings_and_the_guard_gate(f_guarded_settings: ClimateSettings) -> None:
+def test_config_record_reads_the_stored_settings(f_guarded_settings: ClimateSettings) -> None:
     assert ClimateSettingsRepository.config_record() == ClimateConfigRecord(
         id=f_guarded_settings.pk,
         config=replace(DEFAULT_CONFIG, learned_mornings_needed=5, air_min_band=Decimal('0.25')),
-        second_floor_guard_live=True,
     )
 
 
-def test_saved_config_writes_the_named_fields_and_keeps_the_guard(f_guarded_settings: ClimateSettings) -> None:
+def test_saved_config_writes_the_named_fields_and_leaves_the_old_guard_columns_alone(
+    f_guarded_settings: ClimateSettings,
+) -> None:
     config = replace(DEFAULT_CONFIG, air_start_offset=Decimal('0.40'), preheat_lead_cap_minutes=200)
 
     ClimateSettingsRepository.save_config(config, ('air_start_offset',))
@@ -191,7 +159,7 @@ def test_saved_config_writes_the_min_band(f_guarded_settings: ClimateSettings) -
     )
 
 
-def test_saved_config_without_stored_settings_creates_them_with_the_guard_off() -> None:
+def test_saved_config_without_stored_settings_creates_them_with_the_old_guard_off() -> None:
     ClimateSettingsRepository.save_config(
         replace(DEFAULT_CONFIG, learned_mornings_needed=4),
         ('learned_mornings_needed',),
@@ -205,9 +173,10 @@ def test_saved_config_without_stored_settings_creates_them_with_the_guard_off() 
     )
 
 
-def test_saved_config_refuses_to_write_the_guard_gate() -> None:
+@pytest.mark.parametrize('field', GUARD_FIELDS)
+def test_saved_config_refuses_to_write_an_old_guard_column(field: str) -> None:
     with pytest.raises(KeyError):
-        ClimateSettingsRepository.save_config(DEFAULT_CONFIG, ('second_floor_guard_live',))
+        ClimateSettingsRepository.save_config(DEFAULT_CONFIG, (field,))
 
 
 def test_config_record_for_update_takes_the_write_lock_before_it_reads_the_settings(

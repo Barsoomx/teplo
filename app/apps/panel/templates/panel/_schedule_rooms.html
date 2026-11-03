@@ -1,0 +1,5 @@
+{% load i18n %}{% for room in schedule.rooms %}
+{% include 'panel/_schedule_room.html' %}
+{% empty %}
+<p class="page-empty">{% translate 'No rooms yet. Rooms come from the site data.' %}</p>
+{% endfor %}

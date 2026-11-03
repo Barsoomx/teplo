@@ -6,11 +6,10 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
-from apps.climate.domain.errors import ZoneNotFoundError
+from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.zone import ComfortWindow
-from apps.climate.factories import ComfortPeriodFactory, ZoneFactory
-from apps.climate.models import ComfortPeriod, Zone
+from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory
+from apps.climate.models import ComfortPeriod, RoomClimate
 from apps.climate.stubs import ComfortWindowStoreStub
 from apps.climate.usecases.add_comfort_window import (
     AddComfortWindowInputDTO,
@@ -20,6 +19,8 @@ from apps.climate.usecases.add_comfort_window import (
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
 from apps.core.stubs import SettingsRecorderStub, TransactionStub
+from apps.house.domain.errors import RoomNotFoundError
+from apps.house.factories import RoomFactory
 from apps.telemetry.models import JournalEntry
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
@@ -31,7 +32,7 @@ EARLY_MONDAY = ComfortWindow(weekday=0, start=time(5, 0), end=time(6, 0))
 def f_windows() -> ComfortWindowStoreStub:
     return ComfortWindowStoreStub(
         weeks=[
-            ZoneWeek(
+            RoomWeek(
                 slug='kitchen',
                 name='Кухня',
                 windows=(StoredWindow(id=1, weekday=0, start=time(6, 30), end=time(23, 30)),),
@@ -72,10 +73,10 @@ def f_use_case_after_another_window_was_added_meanwhile(
 
 
 @pytest.fixture
-def f_stored_kitchen() -> Zone:
-    zone = ZoneFactory.create(slug='kitchen', name='Кухня')
-    ComfortPeriodFactory.create(zone=zone, weekday=0, start=time(6, 30), end=time(23, 30))
-    return zone
+def f_stored_kitchen() -> RoomClimate:
+    climate = RoomClimateFactory.create(room=RoomFactory.create(slug='kitchen', name='Кухня'))
+    ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=0, start=time(6, 30), end=time(23, 30))
+    return climate
 
 
 def test_added_window_joins_its_day_and_the_day_is_journaled(
@@ -84,7 +85,7 @@ def test_added_window_joins_its_day_and_the_day_is_journaled(
     f_recorder: SettingsRecorderStub,
 ) -> None:
     output = f_use_case.execute(
-        AddComfortWindowInputDTO(zone='kitchen', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW),
+        AddComfortWindowInputDTO(room='kitchen', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW),
     )
 
     change = SettingChange(
@@ -96,7 +97,7 @@ def test_added_window_joins_its_day_and_the_day_is_journaled(
         new=('05:00-06:00', '06:30-23:30'),
     )
     assert (output, f_windows.replaced, f_recorder.records) == (
-        AddComfortWindowOutputDTO(zone='kitchen', changes=(change,)),
+        AddComfortWindowOutputDTO(room='kitchen', changes=(change,)),
         [('kitchen', {0: (ComfortWindow(weekday=0, start=time(5, 0), end=time(6, 0)), MONDAY)})],
         [((change,), NOW)],
     )
@@ -106,7 +107,7 @@ def test_window_added_to_a_day_without_comfort_gives_it_one(
     f_use_case: AddComfortWindowUseCase,
     f_recorder: SettingsRecorderStub,
 ) -> None:
-    f_use_case.execute(AddComfortWindowInputDTO(zone='kitchen', weekday=6, start=time(9, 0), end=time(22, 0), now=NOW))
+    f_use_case.execute(AddComfortWindowInputDTO(room='kitchen', weekday=6, start=time(9, 0), end=time(22, 0), now=NOW))
 
     assert f_recorder.records == [
         (
@@ -143,14 +144,14 @@ def test_window_off_the_grid_backwards_or_overlapping_is_refused(
     problems: tuple[SettingProblem, ...],
 ) -> None:
     with pytest.raises(SettingsRejectedError) as raised:
-        f_use_case.execute(AddComfortWindowInputDTO(zone='kitchen', weekday=0, start=start, end=end, now=NOW))
+        f_use_case.execute(AddComfortWindowInputDTO(room='kitchen', weekday=0, start=start, end=end, now=NOW))
 
     assert (raised.value.problems, f_windows.replaced, f_recorder.records) == (problems, [], [])
 
 
-def test_window_for_an_unknown_zone_raises(f_use_case: AddComfortWindowUseCase) -> None:
-    with pytest.raises(ZoneNotFoundError):
-        f_use_case.execute(AddComfortWindowInputDTO(zone='attic', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW))
+def test_window_for_an_unknown_room_raises(f_use_case: AddComfortWindowUseCase) -> None:
+    with pytest.raises(RoomNotFoundError):
+        f_use_case.execute(AddComfortWindowInputDTO(room='attic', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW))
 
 
 @pytest.mark.parametrize(
@@ -165,7 +166,7 @@ def test_week_is_read_checked_written_and_journaled_in_one_transaction(
     outcomes: list[str],
 ) -> None:
     with suppress(SettingsRejectedError):
-        f_use_case.execute(AddComfortWindowInputDTO(zone='kitchen', weekday=0, start=time(5, 0), end=end, now=NOW))
+        f_use_case.execute(AddComfortWindowInputDTO(room='kitchen', weekday=0, start=time(5, 0), end=end, now=NOW))
 
     assert f_transaction.outcomes == outcomes
 
@@ -175,7 +176,7 @@ def test_window_added_after_another_add_to_its_day_keeps_the_window_that_add_sto
     f_windows: ComfortWindowStoreStub,
 ) -> None:
     output = f_use_case_after_another_window_was_added_meanwhile.execute(
-        AddComfortWindowInputDTO(zone='kitchen', weekday=0, start=time(4, 0), end=time(4, 45), now=NOW),
+        AddComfortWindowInputDTO(room='kitchen', weekday=0, start=time(4, 0), end=time(4, 45), now=NOW),
     )
 
     added = ComfortWindow(weekday=0, start=time(4, 0), end=time(4, 45))
@@ -195,19 +196,19 @@ def test_window_added_after_another_add_to_its_day_keeps_the_window_that_add_sto
 
 
 @pytest.mark.django_db
-def test_zone_is_locked_before_its_week_is_read_and_the_added_window_is_journaled_in_the_same_transaction(
-    f_stored_kitchen: Zone,
+def test_room_is_locked_before_its_week_is_read_and_the_added_window_is_journaled_in_the_same_transaction(
+    f_stored_kitchen: RoomClimate,
 ) -> None:
     with CaptureQueriesContext(connection) as queries:
         AddComfortWindowUseCase.init().execute(
-            AddComfortWindowInputDTO(zone='kitchen', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW),
+            AddComfortWindowInputDTO(room='kitchen', weekday=0, start=time(5, 0), end=time(6, 0), now=NOW),
         )
 
     statements = [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]
     assert (
         statements[:3],
         statements[-1],
-        list(ComfortPeriod.objects.filter(zone=f_stored_kitchen).order_by('start').values_list('start', 'end')),
+        list(ComfortPeriod.objects.filter(room_climate=f_stored_kitchen).order_by('start').values_list('start', 'end')),
         list(JournalEntry.objects.values_list('kind', 'subject')),
     ) == (
         ['SAVEPOINT', 'UPDATE', 'SELECT'],

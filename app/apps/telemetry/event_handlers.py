@@ -2,8 +2,8 @@ from dataclasses import asdict
 
 from apps.climate.domain.events import (
     AirControlDryRun,
+    BackupHeatDryRun,
     OptimalStartDryRun,
-    SecondFloorGuardDryRun,
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
@@ -98,10 +98,10 @@ def journal_optimal_start_dry_run(event: OptimalStartDryRun) -> None:
     )
 
 
-@domain_event_handler(SecondFloorGuardDryRun)
-def journal_second_floor_guard_dry_run(event: SecondFloorGuardDryRun) -> None:
+@domain_event_handler(BackupHeatDryRun)
+def journal_backup_heat_dry_run(event: BackupHeatDryRun) -> None:
     JournalRepository.add(
-        kind='second_floor_guard_dry_run',
+        kind='backup_heat_dry_run',
         subject=event.zone,
         payload=_payload(event),
         created_at=event.occurred_at,

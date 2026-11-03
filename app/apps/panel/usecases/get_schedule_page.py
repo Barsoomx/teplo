@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import timedelta
 
-from apps.climate.domain.comfort_windows import WEEKDAYS, StoredWindow, ZoneWeek
+from apps.climate.domain.comfort_windows import WEEKDAYS, RoomWeek, StoredWindow
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.ports import ClimateConfigStore, ComfortWindowStore, ZoneStore
 from apps.climate.domain.week_plan import DayPeriod, day_periods
@@ -10,6 +10,8 @@ from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.comfort_period import ComfortPeriodRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.house.domain.ports import HouseStore
+from apps.house.repositories.house import HouseRepository
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -25,35 +27,51 @@ class ScheduleDay:
 
 
 @dataclass(frozen=True, kw_only=True)
-class ZoneSchedule:
+class ZoneWarmUp:
     slug: str
     name: str
     preheat_lead: timedelta
     optimal_start: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoomSchedule:
+    slug: str
+    name: str
+    floor_name: str
+    preheat_lead: timedelta
+    zones: tuple[ZoneWarmUp, ...]
     days: tuple[ScheduleDay, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
 class GetSchedulePageOutputDTO:
-    zones: tuple[ZoneSchedule, ...]
+    rooms: tuple[RoomSchedule, ...]
     lead_cap: timedelta
     mornings_needed: int
 
-    def zone(self, slug: str) -> ZoneSchedule | None:
-        return next((zone for zone in self.zones if zone.slug == slug), None)
+    def room(self, slug: str) -> RoomSchedule | None:
+        return next((room for room in self.rooms if room.slug == slug), None)
 
-    def zone_of_window(self, window_id: int) -> ZoneSchedule | None:
+    def room_of_window(self, window_id: int) -> RoomSchedule | None:
         return next(
-            (zone for zone in self.zones for day in zone.days for window in day.windows if window.id == window_id),
+            (room for room in self.rooms for day in room.days for window in day.windows if window.id == window_id),
             None,
         )
 
 
 class GetSchedulePageUseCase(BaseUseCase[GetSchedulePageInputDTO, GetSchedulePageOutputDTO]):
-    def __init__(self, zones: ZoneStore, windows: ComfortWindowStore, climate_settings: ClimateConfigStore) -> None:
+    def __init__(
+        self,
+        zones: ZoneStore,
+        windows: ComfortWindowStore,
+        house: HouseStore,
+        climate_settings: ClimateConfigStore,
+    ) -> None:
         super().__init__()
         self._zones = zones
         self._windows = windows
+        self._house = house
         self._climate_settings = climate_settings
 
     @classmethod
@@ -61,32 +79,47 @@ class GetSchedulePageUseCase(BaseUseCase[GetSchedulePageInputDTO, GetSchedulePag
         return cls(
             zones=ZoneRepository(),
             windows=ComfortPeriodRepository(),
+            house=HouseRepository(),
             climate_settings=ClimateSettingsRepository(),
         )
 
     def _execute(self, input_dto: GetSchedulePageInputDTO) -> GetSchedulePageOutputDTO:  # noqa: ARG002
-        zones = {zone.slug: zone for zone in self._zones.all_settings()}
         climate = self._climate_settings.config_record().config
         lead_cap = timedelta(minutes=climate.preheat_lead_cap_minutes)
-        schedules = [
-            _schedule(week, zones[week.slug], lead_cap) for week in self._windows.weeks() if week.slug in zones
-        ]
+        floors = {room.slug: floor.name for floor in self._house.floors() for room in floor.rooms}
+        warm_ups: dict[str, list[ZoneWarmUp]] = {}
+        for zone in sorted(self._zones.all_settings(), key=lambda zone: zone.name):
+            if zone.room_slug is not None:
+                warm_ups.setdefault(zone.room_slug, []).append(_warm_up(zone, lead_cap))
         return GetSchedulePageOutputDTO(
-            zones=tuple(sorted(schedules, key=lambda schedule: schedule.name)),
+            rooms=tuple(
+                _schedule(week, floors.get(week.slug, ''), tuple(warm_ups.get(week.slug, ())))
+                for week in self._windows.weeks()
+            ),
             lead_cap=lead_cap,
             mornings_needed=climate.learned_mornings_needed,
         )
 
 
-def _schedule(week: ZoneWeek, zone: ZoneSettings, lead_cap: timedelta) -> ZoneSchedule:
-    windows = tuple(stored.window for stored in week.windows)
+def _warm_up(zone: ZoneSettings, lead_cap: timedelta) -> ZoneWarmUp:
     optimal_start = zone.kind is ZoneKind.AIR and zone.air_sensor_slug is not None and zone.air_control_live
-    lead = min(zone.preheat_lead, lead_cap) if optimal_start else zone.preheat_lead
-    return ZoneSchedule(
+    return ZoneWarmUp(
+        slug=zone.slug,
+        name=zone.name,
+        preheat_lead=min(zone.preheat_lead, lead_cap) if optimal_start else zone.preheat_lead,
+        optimal_start=optimal_start,
+    )
+
+
+def _schedule(week: RoomWeek, floor_name: str, zones: tuple[ZoneWarmUp, ...]) -> RoomSchedule:
+    windows = tuple(stored.window for stored in week.windows)
+    lead = max((zone.preheat_lead for zone in zones), default=timedelta(0))
+    return RoomSchedule(
         slug=week.slug,
         name=week.name,
+        floor_name=floor_name,
         preheat_lead=lead,
-        optimal_start=optimal_start,
+        zones=zones,
         days=tuple(
             ScheduleDay(
                 weekday=weekday,

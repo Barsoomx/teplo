@@ -28,8 +28,6 @@ DEFAULTS = ClimateConfig(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
-    second_floor_guard_threshold=Decimal('19.0'),
-    second_floor_guard_hysteresis=Decimal('0.30'),
 )
 EDIT = UpdateClimateSettingsInputDTO(
     air_start_offset=Decimal('0.30'),
@@ -37,15 +35,13 @@ EDIT = UpdateClimateSettingsInputDTO(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
-    second_floor_guard_threshold=Decimal('19.0'),
-    second_floor_guard_hysteresis=Decimal('0.30'),
     now=NOW,
 )
 
 
 @pytest.fixture
 def f_climate_settings() -> ClimateConfigStoreStub:
-    return ClimateConfigStoreStub(record=ClimateConfigRecord(id=1, config=DEFAULTS, second_floor_guard_live=True))
+    return ClimateConfigStoreStub(record=ClimateConfigRecord(id=1, config=DEFAULTS))
 
 
 @pytest.fixture
@@ -89,7 +85,7 @@ def test_changed_climate_settings_are_saved_and_journaled(
     f_recorder: SettingsRecorderStub,
 ) -> None:
     output = f_use_case.execute(
-        replace(EDIT, air_start_offset=Decimal('0.4'), second_floor_guard_threshold=Decimal('18.5')),
+        replace(EDIT, air_start_offset=Decimal('0.4'), preheat_lead_cap_minutes=180),
     )
 
     changes = (
@@ -105,17 +101,17 @@ def test_changed_climate_settings_are_saved_and_journaled(
             target='climate_settings',
             subject='',
             name='',
-            field='second_floor_guard_threshold',
-            old='19.0',
-            new='18.5',
+            field='preheat_lead_cap_minutes',
+            old=240,
+            new=180,
         ),
     )
     assert (output, f_climate_settings.saved, f_recorder.records) == (
         UpdateClimateSettingsOutputDTO(changes=changes),
         [
             (
-                replace(DEFAULTS, air_start_offset=Decimal('0.40'), second_floor_guard_threshold=Decimal('18.5')),
-                ('air_start_offset', 'second_floor_guard_threshold'),
+                replace(DEFAULTS, air_start_offset=Decimal('0.40'), preheat_lead_cap_minutes=180),
+                ('air_start_offset', 'preheat_lead_cap_minutes'),
             ),
         ],
         [(changes, NOW)],
@@ -197,8 +193,15 @@ def test_start_offset_below_the_min_band_is_refused_at_the_start_offset(
     )
 
 
-def test_input_carries_no_guard_gate() -> None:
-    assert 'second_floor_guard_live' not in {field.name for field in fields(UpdateClimateSettingsInputDTO)}
+def test_input_carries_no_backup_heat() -> None:
+    assert {field.name for field in fields(UpdateClimateSettingsInputDTO)} == {
+        'air_start_offset',
+        'initial_early_stop_offset',
+        'air_min_band',
+        'learned_mornings_needed',
+        'preheat_lead_cap_minutes',
+        'now',
+    }
 
 
 def test_band_saved_after_another_save_narrowed_the_start_offset_is_written_with_its_own_start_offset(

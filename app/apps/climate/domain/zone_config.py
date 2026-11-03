@@ -59,6 +59,7 @@ class ZoneConfigRecord:
     config: ZoneConfig
     live_control: bool
     air_control_live: bool
+    room: str | None = None
 
 
 def tenths(value: Decimal) -> Decimal:

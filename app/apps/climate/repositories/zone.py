@@ -6,7 +6,7 @@ from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
-from apps.climate.models import Zone
+from apps.climate.models import ComfortPeriod, RoomClimate, Zone
 from apps.core.repositories.write_lock import lock_for_update
 
 STAMPS = ('last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
@@ -16,8 +16,8 @@ class ZoneRepository:
     @staticmethod
     def all_settings() -> list[ZoneSettings]:
         zones = (
-            Zone.objects.select_related('thermostat', 'air_sensor', 'room')
-            .prefetch_related('comfort_periods')
+            Zone.objects.select_related('thermostat', 'air_sensor', 'room__climate')
+            .prefetch_related('comfort_periods', 'room__climate__comfort_periods')
             .order_by('slug')
         )
         return [_to_settings(zone) for zone in zones]
@@ -51,8 +51,9 @@ class ZoneRepository:
                 config=_to_config(zone),
                 live_control=zone.live_control,
                 air_control_live=zone.air_control_live,
+                room=_comfort_room(zone),
             )
-            for zone in Zone.objects.order_by('slug')
+            for zone in Zone.objects.select_related('room__climate').order_by('slug')
         ]
 
     @staticmethod
@@ -88,7 +89,34 @@ def _to_config(zone: Zone) -> ZoneConfig:
     )
 
 
+def _room_climate(zone: Zone) -> RoomClimate | None:
+    if zone.room is None:
+        return None
+
+    try:
+        return zone.room.climate
+    except RoomClimate.DoesNotExist:
+        return None
+
+
+def _comfort_room(zone: Zone) -> str | None:
+    climate = _room_climate(zone)
+    return None if climate is None else climate.room.slug
+
+
+def _air_targets(zone: Zone, climate: RoomClimate | None) -> AirTargets:
+    if climate is None:
+        return AirTargets(comfort=zone.comfort_air_target, night=zone.night_air_target)
+
+    return AirTargets(comfort=climate.comfort_target, night=climate.setback_target)
+
+
+def _periods(zone: Zone, climate: RoomClimate | None) -> list[ComfortPeriod]:
+    return list(zone.comfort_periods.all() if climate is None else climate.comfort_periods.all())
+
+
 def _to_settings(zone: Zone) -> ZoneSettings:
+    climate = _room_climate(zone)
     return ZoneSettings(
         slug=zone.slug,
         name=zone.name,
@@ -105,11 +133,11 @@ def _to_settings(zone: Zone) -> ZoneSettings:
             idle=zone.idle_floor_setpoint,
             limit=zone.floor_limit_setpoint,
         ),
-        air_targets=AirTargets(comfort=zone.comfort_air_target, night=zone.night_air_target),
+        air_targets=_air_targets(zone, climate),
         preheat_lead=timedelta(minutes=zone.preheat_lead_minutes),
         windows=tuple(
             ComfortWindow(weekday=period.weekday, start=period.start, end=period.end)
-            for period in zone.comfort_periods.all()
+            for period in _periods(zone, climate)
         ),
         boost_until=zone.boost_until,
         last_command_at=zone.last_command_at,

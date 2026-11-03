@@ -7,8 +7,8 @@ import pytest
 from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.events import (
     AirControlDryRun,
+    BackupHeatDryRun,
     OptimalStartDryRun,
-    SecondFloorGuardDryRun,
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
@@ -42,6 +42,7 @@ from apps.telemetry.event_handlers import (
     journal_air_control_dry_run,
     journal_alert_cleared,
     journal_alert_raised,
+    journal_backup_heat_dry_run,
     journal_device_availability,
     journal_ev_charging_started,
     journal_ev_charging_stopped,
@@ -55,7 +56,6 @@ from apps.telemetry.event_handlers import (
     journal_optimal_start_dry_run,
     journal_phase_calm,
     journal_phase_overload,
-    journal_second_floor_guard_dry_run,
     journal_start_would_wait_dry_run,
     journal_zone_boost,
     journal_zone_command,
@@ -211,9 +211,11 @@ def test_optimal_start_dry_run_is_journaled_with_both_starts() -> None:
     )
 
 
-def test_second_floor_guard_dry_run_is_journaled() -> None:
-    journal_second_floor_guard_dry_run(
-        SecondFloorGuardDryRun(
+def test_backup_heat_dry_run_is_journaled_with_its_zone_as_the_subject() -> None:
+    journal_backup_heat_dry_run(
+        BackupHeatDryRun(
+            room='bedroom',
+            room_name='Спальня',
             zone='bathroom-2f',
             active=True,
             air=Decimal('18.9'),
@@ -223,9 +225,16 @@ def test_second_floor_guard_dry_run_is_journaled() -> None:
     )
 
     assert _entry() == (
-        'second_floor_guard_dry_run',
+        'backup_heat_dry_run',
         'bathroom-2f',
-        {'zone': 'bathroom-2f', 'active': True, 'air': '18.9', 'setpoint': '30.0'},
+        {
+            'room': 'bedroom',
+            'room_name': 'Спальня',
+            'zone': 'bathroom-2f',
+            'active': True,
+            'air': '18.9',
+            'setpoint': '30.0',
+        },
         NOW,
     )
 

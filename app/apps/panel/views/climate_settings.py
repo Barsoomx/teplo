@@ -29,8 +29,6 @@ class ClimateSettingsView(LoginRequiredMixin, View):
                         air_min_band=data['air_min_band'],
                         learned_mornings_needed=data['learned_mornings_needed'],
                         preheat_lead_cap_minutes=data['preheat_lead_cap_minutes'],
-                        second_floor_guard_threshold=data['second_floor_guard_threshold'],
-                        second_floor_guard_hysteresis=data['second_floor_guard_hysteresis'],
                         now=timezone.now(),
                     ),
                 )

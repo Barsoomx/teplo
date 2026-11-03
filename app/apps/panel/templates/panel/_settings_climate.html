@@ -1,9 +1,5 @@
 {% load i18n panel_format %}<article class="settings-card" id="climate-settings">
   <form class="settings-form" hx-post="{% url 'panel:climate-settings' %}" hx-target="closest .settings-card" hx-swap="outerHTML" hx-disabled-elt="find button">
-    <div class="gates">
-      {% if climate.id %}{% url 'admin:climate_climatesettings_change' climate.id as admin_url %}{% else %}{% url 'admin:climate_climatesettings_changelist' as admin_url %}{% endif %}
-      {% translate 'Second-floor guard' as label %}{% include 'panel/_gate.html' with live=climate.second_floor_guard_live url=admin_url %}
-    </div>
     {% include 'panel/_form_errors.html' with form=climate_form %}
     <fieldset class="field-group">
       <legend class="field-group-title">{% translate 'Air mode, °C' %}</legend>
@@ -18,13 +14,6 @@
       <div class="field-grid">
         {% translate 'Learned mornings it needs' as label %}{% include 'panel/_field.html' with field=climate_form.learned_mornings_needed %}
         {% translate 'Longest warm-up, min' as label %}{% include 'panel/_field.html' with field=climate_form.preheat_lead_cap_minutes %}
-      </div>
-    </fieldset>
-    <fieldset class="field-group">
-      <legend class="field-group-title">{% translate 'Second-floor guard, °C' %}</legend>
-      <div class="field-grid">
-        {% translate 'Turns on below' as label %}{% include 'panel/_field.html' with field=climate_form.second_floor_guard_threshold %}
-        {% translate 'Releases above that by' as label %}{% include 'panel/_field.html' with field=climate_form.second_floor_guard_hysteresis %}
       </div>
     </fieldset>
     <div class="settings-foot">

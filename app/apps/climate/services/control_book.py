@@ -6,7 +6,7 @@ from apps.climate.domain.memory import ZoneMemory
 class ControlBook:
     def __init__(self) -> None:
         self._zones: dict[str, ZoneMemory] = {}
-        self._guard_active = False
+        self._backups: dict[str, bool] = {}
         self._lock = threading.Lock()
 
     def zone(self, slug: str) -> ZoneMemory:
@@ -17,13 +17,13 @@ class ControlBook:
         with self._lock:
             self._zones[slug] = memory
 
-    def guard_active(self) -> bool:
+    def backup_active(self, room: str) -> bool:
         with self._lock:
-            return self._guard_active
+            return self._backups.get(room, False)
 
-    def remember_guard(self, active: bool) -> None:
+    def remember_backup(self, room: str, active: bool) -> None:
         with self._lock:
-            self._guard_active = active
+            self._backups[room] = active
 
 
 control_book = ControlBook()

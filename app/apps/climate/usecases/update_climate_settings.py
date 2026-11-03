@@ -21,8 +21,6 @@ class UpdateClimateSettingsInputDTO:
     air_min_band: Decimal
     learned_mornings_needed: int
     preheat_lead_cap_minutes: int
-    second_floor_guard_threshold: Decimal
-    second_floor_guard_hysteresis: Decimal
     now: datetime
 
 
@@ -64,8 +62,6 @@ class UpdateClimateSettingsUseCase(BaseUseCase[UpdateClimateSettingsInputDTO, Up
             air_min_band=input_dto.air_min_band,
             learned_mornings_needed=input_dto.learned_mornings_needed,
             preheat_lead_cap_minutes=input_dto.preheat_lead_cap_minutes,
-            second_floor_guard_threshold=input_dto.second_floor_guard_threshold,
-            second_floor_guard_hysteresis=input_dto.second_floor_guard_hysteresis,
         ).normalized()
         problems = climate_config_problems(config)
         if problems:

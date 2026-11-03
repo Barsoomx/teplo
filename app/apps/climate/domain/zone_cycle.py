@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from apps.climate.domain.air_plan import AirPlan, plan_air
 from apps.climate.domain.air_policy import resolve_control_path
+from apps.climate.domain.backup_heat import apply_backup_heat
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.events import AirControlDryRun, OptimalStartDryRun
 from apps.climate.domain.floor_policy import ThermostatTarget, decide_floor_target
@@ -22,7 +23,6 @@ from apps.climate.domain.observation import (
     start_stop_watch,
 )
 from apps.climate.domain.schedule import resolve_mode
-from apps.climate.domain.second_floor_guard import apply_second_floor_guard
 from apps.climate.domain.write_guard import write_allowed
 from apps.climate.domain.zone import ZoneSettings
 
@@ -199,7 +199,7 @@ def _plan(
 
 
 def _guarded(zone: ZoneSettings, target: ThermostatTarget, conditions: ZoneConditions) -> ThermostatTarget:
-    return apply_second_floor_guard(target, zone.setpoints) if conditions.guarded else target
+    return apply_backup_heat(target, zone.setpoints) if conditions.guarded else target
 
 
 def _follow_air(

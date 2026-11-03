@@ -15,8 +15,8 @@ from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.drive import ZoneStart
 from apps.climate.domain.events import (
     AirControlDryRun,
+    BackupHeatDryRun,
     OptimalStartDryRun,
-    SecondFloorGuardDryRun,
     ZoneCommandFailed,
     ZoneCommandIssued,
 )
@@ -28,9 +28,16 @@ from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.ports import LoadGate, WriteGate, ZoneLearningStore, ZoneStore
 from apps.climate.domain.write_guard import write_allowed
 from apps.climate.domain.zone import ZoneSettings
-from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, ZoneFactory, ZoneLearningFactory
-from apps.climate.models import ClimateSettings, Zone, ZoneLearning
+from apps.climate.factories import (
+    ClimateSettingsFactory,
+    ComfortPeriodFactory,
+    RoomClimateFactory,
+    ZoneFactory,
+    ZoneLearningFactory,
+)
+from apps.climate.models import RoomClimate, Zone, ZoneLearning
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
@@ -54,6 +61,7 @@ from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
 from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
 from apps.devices.stubs import FloorThermostatStub, SwitchablePlugProviderStub, ThermostatProviderStub
+from apps.house.factories import RoomFactory
 from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardLoads, GuardState, SeenReading
@@ -370,6 +378,7 @@ def _use_case(
 ) -> RunHeatingCycleUseCase:
     return RunHeatingCycleUseCase(
         zones=ZoneRepository() if zones is None else zones,
+        rooms=RoomClimateRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository() if learning is None else learning,
         store=store,
@@ -444,7 +453,7 @@ def _air_zone(*, air_control_live: bool = False) -> Zone:
     return zone
 
 
-def _guard_zone() -> Zone:
+def _backup_zone() -> Zone:
     zone = ZoneFactory.create(
         slug='bathroom-2f',
         kind=ZoneKind.FLOOR,
@@ -471,12 +480,13 @@ def _issued(zone: str, setpoint: str, at: datetime) -> ZoneCommandIssued:
     )
 
 
-def _house_settings(*, guard_live: bool = False) -> ClimateSettings:
-    return ClimateSettingsFactory.create(
-        outdoor_sensor=_sensor('outdoor'),
-        second_floor_sensor=_sensor('air-second-floor'),
-        second_floor_guard_zone=_guard_zone(),
-        second_floor_guard_live=guard_live,
+def _house_settings(*, backup_live: bool = False) -> RoomClimate:
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor'))
+    return RoomClimateFactory.create(
+        room=RoomFactory.create(slug='bedroom', name='Спальня'),
+        air_sensor=_sensor('air-second-floor'),
+        backup_zone=_backup_zone(),
+        backup_live=backup_live,
     )
 
 
@@ -530,8 +540,8 @@ def _shed_boosted_zone(store: ThermostatStateStore, _temperatures: TemperatureSt
     store.record_state(KITCHEN, _state('22.0', power=False))
 
 
-def _shed_guarded_zone(store: ThermostatStateStore, temperatures: TemperatureStateStore) -> None:
-    _house_settings(guard_live=True)
+def _shed_backed_up_zone(store: ThermostatStateStore, temperatures: TemperatureStateStore) -> None:
+    _house_settings(backup_live=True)
     Zone.objects.filter(slug='bathroom-2f').update(last_command_at=NIGHT - HALF_HOUR)
     store.record_state(BATHROOM, _state('22.0', power=False))
     temperatures.record_state('air-second-floor', _reading('18.9'))
@@ -633,7 +643,7 @@ def f_thermostat() -> FloorThermostatStub:
 
 
 @pytest.fixture
-def f_guard_thermostat() -> FloorThermostatStub:
+def f_backup_thermostat() -> FloorThermostatStub:
     return FloorThermostatStub(state=None)
 
 
@@ -650,7 +660,7 @@ def dispatcher(f_events: list[DomainEvent]) -> EventDispatcher:
         ZoneCommandFailed,
         AirControlDryRun,
         OptimalStartDryRun,
-        SecondFloorGuardDryRun,
+        BackupHeatDryRun,
         StartWouldWaitDryRun,
     ):
         event_dispatcher.register(event_type, f_events.append)
@@ -998,7 +1008,7 @@ def f_flags_off_cycle(
     temperatures: TemperatureStateStore,
     book: ControlBook,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     kitchen_setpoint, bathroom_setpoint = request.param
@@ -1007,7 +1017,7 @@ def f_flags_off_cycle(
     store.record_state(KITCHEN, _state(kitchen_setpoint))
     store.record_state(BATHROOM, _state(bathroom_setpoint))
     _read(temperatures, HOUSE_AIR)
-    return _use_case(store, temperatures, {KITCHEN: f_thermostat, BATHROOM: f_guard_thermostat}, book, dispatcher)
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat, BATHROOM: f_backup_thermostat}, book, dispatcher)
 
 
 @pytest.fixture
@@ -1015,14 +1025,14 @@ def observed_thermostats(
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
 ) -> dict[str, FloorThermostat]:
     _learned(_air_zone())
     _house_settings()
     store.record_state(KITCHEN, _state('28.0'))
     store.record_state(BATHROOM, _state('30.0'))
     _read(temperatures, HOUSE_AIR)
-    return {KITCHEN: f_thermostat, BATHROOM: f_guard_thermostat}
+    return {KITCHEN: f_thermostat, BATHROOM: f_backup_thermostat}
 
 
 @pytest.fixture
@@ -1298,21 +1308,53 @@ def f_heating_air_dry_run_cycle(
 
 
 @pytest.fixture
-def f_guard_cycle(
+def f_backup_cycle(
     request: pytest.FixtureRequest,
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
     book: ControlBook,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     live, active, air, setpoint = request.param
-    _house_settings(guard_live=live)
+    _house_settings(backup_live=live)
     store.record_state(BATHROOM, _state(setpoint))
     if air is not None:
         temperatures.record_state('air-second-floor', _reading(air))
-    book.remember_guard(active)
-    return _use_case(store, temperatures, {BATHROOM: f_guard_thermostat}, book, dispatcher)
+    book.remember_backup('bedroom', active)
+    return _use_case(store, temperatures, {BATHROOM: f_backup_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
+def f_bathroom_1f_thermostat() -> FloorThermostatStub:
+    return FloorThermostatStub(state=None)
+
+
+@pytest.fixture
+def f_two_backup_rooms_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_backup_thermostat: FloorThermostatStub,
+    f_bathroom_1f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _house_settings(backup_live=True)
+    RoomClimateFactory.create(
+        room=RoomFactory.create(slug='office', name='Кабинет'),
+        air_sensor=_sensor('air-office'),
+        backup_zone=_floor_zone('bathroom-1f', 'thermostat-bathroom-1f', kind=ZoneKind.FLOOR),
+        backup_live=True,
+    )
+    store.record_state(BATHROOM, _state('22.0'))
+    store.record_state('thermostat-bathroom-1f', _state('22.0'))
+    _read(temperatures, {'air-second-floor': '19.2', 'air-office': '19.2'})
+    book.remember_backup('bedroom', True)
+    thermostats: dict[str, FloorThermostat] = {
+        BATHROOM: f_backup_thermostat,
+        'thermostat-bathroom-1f': f_bathroom_1f_thermostat,
+    }
+    return _use_case(store, temperatures, thermostats, book, dispatcher)
 
 
 @pytest.fixture
@@ -1464,27 +1506,27 @@ def f_dry_run_stop_cycle(
     ids=['night', 'preheat_on_fixed_lead_before_optimal_start', 'comfort'],
     indirect=['f_flags_off_cycle'],
 )
-def test_cycle_with_air_control_and_guard_off_writes_floor_mode_setpoints(
+def test_cycle_with_air_control_and_backup_heat_off_writes_floor_mode_setpoints(
     f_flags_off_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     now: datetime,
     kitchen: Decimal,
     bathroom: Decimal,
 ) -> None:
     output = f_flags_off_cycle.execute(_at(now))
 
-    assert (output.outcomes, f_thermostat.commands, f_guard_thermostat.commands) == (
+    assert (output.outcomes, f_thermostat.commands, f_backup_thermostat.commands) == (
         {'bathroom-2f': ZoneCycleOutcome.APPLIED, 'kitchen': ZoneCycleOutcome.APPLIED},
         [('setpoint', kitchen)],
         [('setpoint', bathroom)],
     )
 
 
-def test_cycle_with_air_control_off_journals_would_be_air_state_and_guard(
+def test_cycle_with_air_control_off_journals_would_be_air_state_and_backup_heat(
     f_observed_air_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     f_events: list[DomainEvent],
 ) -> None:
     output = f_observed_air_cycle.execute(_at(MORNING))
@@ -1492,7 +1534,7 @@ def test_cycle_with_air_control_off_journals_would_be_air_state_and_guard(
     assert (
         output.outcomes,
         f_thermostat.commands,
-        f_guard_thermostat.commands,
+        f_backup_thermostat.commands,
         f_events,
         Zone.objects.get(slug='kitchen').last_air_dry_run_at,
     ) == (
@@ -1500,7 +1542,9 @@ def test_cycle_with_air_control_off_journals_would_be_air_state_and_guard(
         [],
         [],
         [
-            SecondFloorGuardDryRun(
+            BackupHeatDryRun(
+                room='bedroom',
+                room_name='Спальня',
                 zone='bathroom-2f',
                 active=True,
                 air=Decimal('18.5'),
@@ -1892,7 +1936,7 @@ def test_live_air_zone_keeps_preheat_started_through_a_minute_of_doubted_clock(
 
 
 @pytest.mark.parametrize(
-    ('f_guard_cycle', 'commands'),
+    ('f_backup_cycle', 'commands'),
     [
         ((True, False, '18.9', '22.0'), [('setpoint', Decimal('30.0'))]),
         ((True, True, '19.2', '30.0'), []),
@@ -1900,17 +1944,17 @@ def test_live_air_zone_keeps_preheat_started_through_a_minute_of_doubted_clock(
         ((True, True, None, '30.0'), [('setpoint', Decimal('22.0'))]),
     ],
     ids=['turns_on_below_threshold', 'holds_within_hysteresis', 'releases_above_hysteresis', 'releases_on_lost_sensor'],
-    indirect=['f_guard_cycle'],
+    indirect=['f_backup_cycle'],
 )
-def test_live_guard_raises_its_zone_to_comfort_floor_setpoint_with_hysteresis(
-    f_guard_cycle: RunHeatingCycleUseCase,
-    f_guard_thermostat: FloorThermostatStub,
+def test_live_backup_heat_raises_its_zone_to_comfort_floor_setpoint_with_hysteresis(
+    f_backup_cycle: RunHeatingCycleUseCase,
+    f_backup_thermostat: FloorThermostatStub,
     f_events: list[DomainEvent],
     commands: list[tuple[str, Decimal]],
 ) -> None:
-    f_guard_cycle.execute(_at(NIGHT))
+    f_backup_cycle.execute(_at(NIGHT))
 
-    assert (f_guard_thermostat.commands, f_events) == (
+    assert (f_backup_thermostat.commands, f_events) == (
         commands,
         [
             ZoneCommandIssued(
@@ -1925,12 +1969,14 @@ def test_live_guard_raises_its_zone_to_comfort_floor_setpoint_with_hysteresis(
 
 
 @pytest.mark.parametrize(
-    ('f_guard_cycle', 'events'),
+    ('f_backup_cycle', 'events'),
     [
         (
             (False, False, '18.9', '22.0'),
             [
-                SecondFloorGuardDryRun(
+                BackupHeatDryRun(
+                    room='bedroom',
+                    room_name='Спальня',
                     zone='bathroom-2f',
                     active=True,
                     air=Decimal('18.9'),
@@ -1943,7 +1989,9 @@ def test_live_guard_raises_its_zone_to_comfort_floor_setpoint_with_hysteresis(
         (
             (False, True, '19.3', '22.0'),
             [
-                SecondFloorGuardDryRun(
+                BackupHeatDryRun(
+                    room='bedroom',
+                    room_name='Спальня',
                     zone='bathroom-2f',
                     active=False,
                     air=Decimal('19.3'),
@@ -1955,7 +2003,9 @@ def test_live_guard_raises_its_zone_to_comfort_floor_setpoint_with_hysteresis(
         (
             (False, True, None, '22.0'),
             [
-                SecondFloorGuardDryRun(
+                BackupHeatDryRun(
+                    room='bedroom',
+                    room_name='Спальня',
                     zone='bathroom-2f',
                     active=False,
                     air=None,
@@ -1966,17 +2016,38 @@ def test_live_guard_raises_its_zone_to_comfort_floor_setpoint_with_hysteresis(
         ),
     ],
     ids=['would_turn_on', 'would_hold_within_hysteresis', 'would_release', 'would_release_on_lost_sensor'],
-    indirect=['f_guard_cycle'],
+    indirect=['f_backup_cycle'],
 )
-def test_guard_in_dry_run_journals_when_it_would_turn_on_or_off(
-    f_guard_cycle: RunHeatingCycleUseCase,
-    f_guard_thermostat: FloorThermostatStub,
+def test_backup_heat_with_its_gate_off_journals_what_it_would_do(
+    f_backup_cycle: RunHeatingCycleUseCase,
+    f_backup_thermostat: FloorThermostatStub,
     f_events: list[DomainEvent],
     events: list[DomainEvent],
 ) -> None:
-    f_guard_cycle.execute(_at(NIGHT))
+    f_backup_cycle.execute(_at(NIGHT))
 
-    assert (f_guard_thermostat.commands, f_events) == ([], events)
+    assert (f_backup_thermostat.commands, f_events) == ([], events)
+
+
+def test_two_rooms_keep_their_backup_heat_apart(
+    f_two_backup_rooms_cycle: RunHeatingCycleUseCase,
+    f_backup_thermostat: FloorThermostatStub,
+    f_bathroom_1f_thermostat: FloorThermostatStub,
+    book: ControlBook,
+) -> None:
+    output = f_two_backup_rooms_cycle.execute(_at(NIGHT))
+
+    assert (
+        output.outcomes,
+        f_backup_thermostat.commands,
+        f_bathroom_1f_thermostat.commands,
+        (book.backup_active('bedroom'), book.backup_active('office')),
+    ) == (
+        {'bathroom-1f': ZoneCycleOutcome.UNCHANGED, 'bathroom-2f': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('30.0'))],
+        [],
+        (True, False),
+    )
 
 
 def test_floor_mode_preheat_teaches_air_zone_its_morning(f_morning_cycle: RunHeatingCycleUseCase) -> None:
@@ -2049,7 +2120,7 @@ def f_book() -> ControlBook:
 
 @pytest.fixture
 def house_zones() -> list[ZoneSettings]:
-    _guard_zone()
+    _backup_zone()
     _air_zone()
     _living_room()
     return ZoneRepository.all_settings()
@@ -2060,12 +2131,12 @@ def house_thermostats(
     house_zones: list[ZoneSettings],
     store: ThermostatStateStore,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     f_living_room_thermostat: FloorThermostatStub,
 ) -> dict[str, FloorThermostat]:
     for zone in house_zones:
         store.record_state(zone.thermostat_slug, _state('22.0'))
-    return {BATHROOM: f_guard_thermostat, KITCHEN: f_thermostat, LIVING_ROOM: f_living_room_thermostat}
+    return {BATHROOM: f_backup_thermostat, KITCHEN: f_thermostat, LIVING_ROOM: f_living_room_thermostat}
 
 
 @pytest.fixture
@@ -2413,33 +2484,35 @@ def test_zone_whose_write_stamp_fails_reports_failed_while_the_cycle_goes_on(
 
 
 @pytest.fixture
-def f_guard_after_unread_learning_cycle(
+def f_backup_after_unread_learning_cycle(
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
     book: ControlBook,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     _house_settings()
     store.record_state(BATHROOM, _state('22.0'))
     temperatures.record_state('air-second-floor', _reading('18.8'))
-    thermostats: dict[str, FloorThermostat] = {BATHROOM: f_guard_thermostat}
+    thermostats: dict[str, FloorThermostat] = {BATHROOM: f_backup_thermostat}
     learning = ZoneLearningStoreStub(records={}, errors={}, read_errors=(OperationalError(LOCKED),))
     with pytest.raises(OperationalError):
         _use_case(store, temperatures, thermostats, book, EventDispatcher(), learning=learning).execute(_at(NIGHT))
     return _use_case(store, temperatures, thermostats, book, dispatcher, learning=learning)
 
 
-def test_guard_change_of_a_cycle_that_fails_to_read_learning_is_journaled_by_the_next_one(
-    f_guard_after_unread_learning_cycle: RunHeatingCycleUseCase,
+def test_backup_heat_change_of_a_cycle_that_fails_to_read_learning_is_journaled_by_the_next_one(
+    f_backup_after_unread_learning_cycle: RunHeatingCycleUseCase,
     f_events: list[DomainEvent],
 ) -> None:
     now = NIGHT + MINUTE
 
-    f_guard_after_unread_learning_cycle.execute(_at(now))
+    f_backup_after_unread_learning_cycle.execute(_at(now))
 
     assert f_events == [
-        SecondFloorGuardDryRun(
+        BackupHeatDryRun(
+            room='bedroom',
+            room_name='Спальня',
             zone='bathroom-2f',
             active=True,
             air=Decimal('18.8'),
@@ -2689,13 +2762,13 @@ def f_held_cycle(
     temperatures: TemperatureStateStore,
     book: ControlBook,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     f_held_gate: LoadGateStub,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     house: House = request.param
     house(store, temperatures)
-    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat, BATHROOM: f_guard_thermostat}
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat, BATHROOM: f_backup_thermostat}
     return _use_case(store, temperatures, thermostats, book, dispatcher, gate=f_held_gate)
 
 
@@ -2789,23 +2862,23 @@ def f_two_starts_after_a_restart_that_took_back_the_hold_of_the_living_room(
         (_shed_floor_zone, MORNING, 'kitchen', [('power', True), ('setpoint', Decimal('28.0'))]),
         (_shed_air_zone, MORNING, 'kitchen', [('power', True), ('setpoint', Decimal('30.0'))]),
         (_shed_boosted_zone, MORNING, 'kitchen', [('power', True), ('setpoint', Decimal('30.0'))]),
-        (_shed_guarded_zone, NIGHT, 'bathroom-2f', [('power', True), ('setpoint', Decimal('30.0'))]),
+        (_shed_backed_up_zone, NIGHT, 'bathroom-2f', [('power', True), ('setpoint', Decimal('30.0'))]),
     ],
-    ids=['floor_mode', 'air_mode', 'boost', 'second_floor_guard'],
+    ids=['floor_mode', 'air_mode', 'boost', 'backup_heat'],
     indirect=['f_held_cycle'],
 )
 def test_shed_zone_is_held_on_every_path_and_gets_its_target_once_restored(
     f_held_cycle: RunHeatingCycleUseCase,
     f_held_gate: LoadGateStub,
     f_thermostat: FloorThermostatStub,
-    f_guard_thermostat: FloorThermostatStub,
+    f_backup_thermostat: FloorThermostatStub,
     f_events: list[DomainEvent],
     now: datetime,
     zone: str,
     commands: list[tuple[str, object]],
 ) -> None:
     held = f_held_cycle.execute(_at(now))
-    held_writes = (f_thermostat.commands + f_guard_thermostat.commands, list(f_events))
+    held_writes = (f_thermostat.commands + f_backup_thermostat.commands, list(f_events))
     held_stamp = Zone.objects.get(slug=zone).last_command_at
     f_held_gate.release(zone)
     restored = f_held_cycle.execute(_at(now))
@@ -2815,7 +2888,7 @@ def test_shed_zone_is_held_on_every_path_and_gets_its_target_once_restored(
         held_writes,
         held_stamp,
         restored.outcomes,
-        f_thermostat.commands + f_guard_thermostat.commands,
+        f_thermostat.commands + f_backup_thermostat.commands,
         Zone.objects.get(slug=zone).last_command_at,
         f_held_gate.asked,
     ) == (

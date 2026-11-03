@@ -23,7 +23,7 @@ NOT_SAVED = 'Не сохранено: база данных не приняла 
 @pytest.fixture
 def m_change_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.change_comfort_window.ChangeComfortWindowUseCase') as use_case:
-        use_case.init.return_value.execute.return_value = ChangeComfortWindowOutputDTO(zone='kitchen', changes=())
+        use_case.init.return_value.execute.return_value = ChangeComfortWindowOutputDTO(room='kitchen', changes=())
         yield use_case
 
 
@@ -57,7 +57,7 @@ def m_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[Mag
         yield use_case
 
 
-def test_changed_window_goes_to_the_use_case_and_its_zone_is_drawn_again(
+def test_changed_window_goes_to_the_use_case_and_its_room_is_drawn_again(
     f_client: Client,
     m_change_use_case: MagicMock,
     m_schedule_use_case: MagicMock,
