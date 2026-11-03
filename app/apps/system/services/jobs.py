@@ -5,6 +5,7 @@ from django.utils import timezone
 
 from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
 from apps.core.runtime.periodic import PeriodicJob
+from apps.devices.services.mqtt_listener import mqtt_listener
 from apps.devices.usecases.check_sensors import CheckSensorsInputDTO, CheckSensorsUseCase
 from apps.devices.usecases.poll_plugs import PollPlugsInputDTO, PollPlugsUseCase
 from apps.devices.usecases.poll_thermostats import PollThermostatsInputDTO, PollThermostatsUseCase
@@ -12,6 +13,7 @@ from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, De
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
 from apps.notifications.usecases.note_startup import NoteStartupInputDTO, NoteStartupUseCase
 from apps.notifications.usecases.report_outages import ReportOutagesInputDTO, ReportOutagesUseCase
+from apps.power.usecases.recover_write_holds import RecoverWriteHoldsInputDTO, RecoverWriteHoldsUseCase
 from apps.power.usecases.shed_phase_loads import ShedPhaseLoadsInputDTO, ShedPhaseLoadsUseCase
 from apps.power.usecases.watch_phases import WatchPhasesInputDTO, WatchPhasesUseCase
 from apps.system.services.boot_id import BootIdReader
@@ -20,6 +22,16 @@ from apps.system.services.uptime import UptimeReader
 from apps.telemetry.usecases.capture_samples import CaptureSamplesInputDTO, CaptureSamplesUseCase
 from apps.telemetry.usecases.flush_samples import FlushSamplesInputDTO, FlushSamplesUseCase
 from apps.telemetry.usecases.journal_startup import JournalStartupInputDTO, JournalStartupUseCase
+
+ONCE = timedelta(0)
+
+
+def startup_jobs() -> tuple[PeriodicJob, ...]:
+    return (
+        PeriodicJob(name='journal_startup', interval=ONCE, action=journal_startup),
+        PeriodicJob(name='recover_write_holds', interval=ONCE, action=recover_write_holds),
+        PeriodicJob(name='start_mqtt_listener', interval=ONCE, action=mqtt_listener.start),
+    )
 
 
 def teplo_jobs() -> tuple[PeriodicJob, ...]:
@@ -56,6 +68,10 @@ def journal_startup() -> object:
             boot=started.boot,
         ),
     )
+
+
+def recover_write_holds() -> object:
+    return RecoverWriteHoldsUseCase.init().execute(RecoverWriteHoldsInputDTO(now=timezone.now()))
 
 
 def poll_thermostats() -> object:

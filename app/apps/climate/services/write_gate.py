@@ -4,7 +4,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apps.climate.domain.write_guard import WriteReservation, WriteSlot, override_holds, slot_free
 
@@ -73,6 +73,20 @@ class ZoneWriteGate:
     def send(self, reservation: WriteReservation, command: Callable[[], None]) -> None:
         with self._locked(reservation.zone):
             command()
+
+    def resume(self, zone: str, at: datetime, *, elapsed: timedelta) -> None:
+        with self._lock:
+            if zone in self._slots:
+                return
+
+            moment = self._clock()
+            self._slots[zone] = WriteSlot(
+                generation=next(self._generations),
+                at=at,
+                moment=moment - elapsed.total_seconds(),
+                override=True,
+                stored_at=moment,
+            )
 
     def clear(self, zone: str) -> bool:
         with self._lock:

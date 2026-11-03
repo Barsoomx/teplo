@@ -70,6 +70,7 @@ from apps.power.services.guard_load_gate import GuardLoadGate
 from apps.power.services.load_switcher import LoadSwitcher
 from apps.power.services.zone_switch import ThermostatZoneSwitch
 from apps.power.stubs import ZoneWriteStampsStub
+from apps.power.usecases.recover_write_holds import RecoverWriteHoldsInputDTO, RecoverWriteHoldsUseCase
 from apps.power.usecases.shed_phase_loads import (
     ShedPhaseLoadsInputDTO,
     ShedPhaseLoadsOutputDTO,
@@ -4215,4 +4216,84 @@ def test_cycle_that_took_its_time_before_a_guard_release_it_then_read_writes_not
         [('power', True)],
         MORNING + timedelta(seconds=61),
         [],
+    )
+
+
+@pytest.fixture
+def f_kitchen_handed_back_five_minutes_before_a_restart(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> GatedHouse:
+    write_clock = MonotonicClockStub(now=0.0)
+    writes = _write_gate(write_clock)
+    ZoneLoadFactory.create(
+        slug='kitchen',
+        zone=_floor_zone('kitchen', KITCHEN, last_command_at=MORNING - timedelta(minutes=5)),
+        priority=5,
+        phase=LoadPhase.L2,
+        nominal_amps=Decimal('8.0'),
+        live=True,
+        shed_at=MORNING - timedelta(minutes=5),
+        shed_reason=ShedReason.OVERLOAD,
+        shed_phase=LoadPhase.L2,
+        shed_device=KITCHEN,
+        shed_handed_back=True,
+    )
+    store.record_state(KITCHEN, _state('22.0', power=False))
+    RecoverWriteHoldsUseCase(loads=LoadRepository(), writes=writes, dry_run=False).execute(
+        RecoverWriteHoldsInputDTO(now=MORNING),
+    )
+
+    def cycle(zones: ZoneStore | None) -> RunHeatingCycleUseCase:
+        return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, zones=zones, writes=writes)
+
+    return _gated_house(write_clock, writes, cycle)
+
+
+def test_boost_pressed_after_a_restart_keeps_the_write_budget_of_a_floor_handed_back_before_it(
+    f_kitchen_handed_back_five_minutes_before_a_restart: GatedHouse,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    f_kitchen_handed_back_five_minutes_before_a_restart.boost.execute(BoostZoneInputDTO(zone='kitchen', now=MORNING))
+    f_kitchen_handed_back_five_minutes_before_a_restart.clock.advance(60)
+    held = f_kitchen_handed_back_five_minutes_before_a_restart.cycle().execute(
+        _at(MORNING + MINUTE, monotonic=f_kitchen_handed_back_five_minutes_before_a_restart.clock()),
+    )
+    stamped_at = Zone.objects.get(slug='kitchen').last_command_at
+    f_kitchen_handed_back_five_minutes_before_a_restart.clock.advance(1440)
+    boosted = f_kitchen_handed_back_five_minutes_before_a_restart.cycle().execute(
+        _at(MORNING + timedelta(minutes=25), monotonic=f_kitchen_handed_back_five_minutes_before_a_restart.clock()),
+    )
+
+    assert (held.outcomes, stamped_at, boosted.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.THROTTLED},
+        MORNING - timedelta(minutes=5),
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('power', True), ('setpoint', Decimal('30.0'))],
+    )
+
+
+def test_floor_handed_back_before_a_restart_waits_thirty_minutes_after_its_shed_on_a_clock_stepped_forward(
+    f_kitchen_handed_back_five_minutes_before_a_restart: GatedHouse,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    f_kitchen_handed_back_five_minutes_before_a_restart.clock.advance(60)
+    held = f_kitchen_handed_back_five_minutes_before_a_restart.cycle().execute(
+        _at(STEPPED_FORWARD, monotonic=f_kitchen_handed_back_five_minutes_before_a_restart.clock()),
+    )
+    f_kitchen_handed_back_five_minutes_before_a_restart.clock.advance(1440)
+    written = f_kitchen_handed_back_five_minutes_before_a_restart.cycle().execute(
+        _at(
+            STEPPED_FORWARD + timedelta(minutes=24),
+            monotonic=f_kitchen_handed_back_five_minutes_before_a_restart.clock(),
+        ),
+    )
+
+    assert (held.outcomes, written.outcomes, f_thermostat.commands) == (
+        {'kitchen': ZoneCycleOutcome.THROTTLED},
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('power', True), ('setpoint', Decimal('28.0'))],
     )

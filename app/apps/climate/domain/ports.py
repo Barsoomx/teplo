@@ -1,6 +1,6 @@
 from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractContextManager
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Protocol
 
@@ -62,6 +62,8 @@ class WriteGate(Protocol):
     def write(self, reservation: WriteReservation, command: Callable[[], None]) -> bool: ...
 
     def send(self, reservation: WriteReservation, command: Callable[[], None]) -> None: ...
+
+    def resume(self, zone: str, at: datetime, *, elapsed: timedelta) -> None: ...
 
     def clear(self, zone: str) -> bool: ...
 

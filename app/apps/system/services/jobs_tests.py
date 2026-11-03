@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from apps.system.services.jobs import teplo_jobs
+from apps.system.services.jobs import startup_jobs, teplo_jobs
 
 
 def test_teplo_jobs_schedule() -> None:
@@ -15,4 +15,12 @@ def test_teplo_jobs_schedule() -> None:
         ('evaluate_alerts', timedelta(minutes=1), timedelta(0)),
         ('report_outages', timedelta(minutes=1), timedelta(0)),
         ('deliver_alerts', timedelta(minutes=1), timedelta(0)),
+    ]
+
+
+def test_startup_recovers_the_write_holds_of_live_sheds_before_any_job_or_the_panel_runs() -> None:
+    assert [(job.name, job.interval) for job in startup_jobs()] == [
+        ('journal_startup', timedelta(0)),
+        ('recover_write_holds', timedelta(0)),
+        ('start_mqtt_listener', timedelta(0)),
     ]

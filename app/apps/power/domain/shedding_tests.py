@@ -10,6 +10,7 @@ from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, S
 from apps.power.domain.shedding import (
     SETTLED,
     Shed,
+    ShedWriteHold,
     UnconfirmedShed,
     can_hand_back,
     choose_restore,
@@ -21,6 +22,7 @@ from apps.power.domain.shedding import (
     relief,
     resumed_hand_back,
     resumed_shed,
+    resumed_write_hold,
     shed_confirmed,
     stored_shed,
     switched_back_on,
@@ -389,6 +391,41 @@ def test_floor_handed_back_before_a_restart_resumes_as_a_hand_back_and_not_as_a_
             settled_at=SETTLED,
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ('record', 'now', 'expected'),
+    [
+        (
+            SHED_KITCHEN_RECORD,
+            NOW + timedelta(minutes=10),
+            ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(minutes=10)),
+        ),
+        (
+            replace(SHED_KITCHEN_RECORD, shed=stored_shed(KITCHEN_SHED, handed_back=True)),
+            NOW + timedelta(minutes=10),
+            ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(minutes=10)),
+        ),
+        (SHED_KITCHEN_RECORD, NOW - timedelta(hours=1), ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(0))),
+        (SHED_KITCHEN_RECORD, NOW + WRITE_INTERVAL, None),
+        (replace(SHED_KITCHEN_RECORD, shed=None), NOW, None),
+        (SHED_BOILER_RECORD, NOW, None),
+    ],
+    ids=[
+        'zone_still_shed',
+        'floor_handed_back',
+        'clock_reading_earlier_than_the_shed',
+        'shed_a_write_interval_ago',
+        'zone_not_shed',
+        'plug',
+    ],
+)
+def test_live_shed_of_a_zone_stored_before_a_restart_holds_its_writes_for_the_rest_of_the_write_interval(
+    record: LoadRecord,
+    now: datetime,
+    expected: ShedWriteHold | None,
+) -> None:
+    assert resumed_write_hold(record, now=now, write_interval=WRITE_INTERVAL) == expected
 
 
 def test_shed_not_handed_back_resumes_no_hand_back() -> None:

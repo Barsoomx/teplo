@@ -37,6 +37,13 @@ class Shed:
 
 
 @dataclass(frozen=True, kw_only=True)
+class ShedWriteHold:
+    zone: str
+    at: datetime
+    elapsed: timedelta
+
+
+@dataclass(frozen=True, kw_only=True)
 class UnconfirmedShed:
     shed: Shed
     amps: Decimal | None
@@ -130,6 +137,18 @@ def resumed_hand_back(record: LoadRecord, *, at: float, now: datetime, default_a
         return None
 
     return _resumed(record, stored, at=at, now=now, default_amps=default_amps)
+
+
+def resumed_write_hold(record: LoadRecord, *, now: datetime, write_interval: timedelta) -> ShedWriteHold | None:
+    stored = record.shed
+    if stored is None or record.zone_slug is None:
+        return None
+
+    elapsed = max(now - stored.at, timedelta(0))
+    if elapsed >= write_interval:
+        return None
+
+    return ShedWriteHold(zone=record.zone_slug, at=stored.at, elapsed=elapsed)
 
 
 def in_view(shed: Shed, *, live: bool) -> bool:
