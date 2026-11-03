@@ -141,7 +141,7 @@ def resumed_hand_back(record: LoadRecord, *, at: float, now: datetime, default_a
 
 def resumed_write_hold(record: LoadRecord, *, now: datetime, write_interval: timedelta) -> ShedWriteHold | None:
     stored = record.shed
-    if stored is None or record.zone_slug is None:
+    if stored is None or record.zone_slug is None or _written_after_its_hold(record, stored, write_interval):
         return None
 
     elapsed = max(now - stored.at, timedelta(0))
@@ -233,6 +233,10 @@ def _resumed(record: LoadRecord, stored: LiveShed, *, at: float, now: datetime, 
         occurred_at=stored.at,
         settled_at=SETTLED,
     )
+
+
+def _written_after_its_hold(record: LoadRecord, stored: LiveShed, write_interval: timedelta) -> bool:
+    return record.last_command_at is not None and record.last_command_at - stored.at >= write_interval
 
 
 def _calm_for(phase: LoadPhase, calm: frozenset[LoadPhase]) -> bool:

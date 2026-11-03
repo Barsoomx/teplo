@@ -56,6 +56,23 @@ LIVING_ROOM_SHED_AN_HOUR_AGO = replace(
     ),
     last_command_at=NOW - timedelta(hours=1),
 )
+HALLWAY_WRITTEN_HALF_AN_HOUR_AFTER_ITS_SHED = replace(
+    HANDED_BACK_KITCHEN,
+    slug='hallway',
+    name='Прихожая',
+    zone_slug='hallway',
+    device_slug='thermostat-hallway',
+    priority=4,
+    shed=LiveShed(
+        at=NOW - timedelta(minutes=30),
+        reason=ShedReason.OVERLOAD,
+        phase=LoadPhase.L2,
+        was_on=None,
+        device='thermostat-hallway',
+        handed_back=True,
+    ),
+    last_command_at=NOW,
+)
 SHED_BOILER = replace(
     HANDED_BACK_KITCHEN,
     slug='boiler-1f',
@@ -89,8 +106,13 @@ def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
 @pytest.fixture
 def loads() -> LoadStoreStub:
     return LoadStoreStub(
-        records=[SHED_BOILER, HANDED_BACK_KITCHEN, LIVING_ROOM_SHED_AN_HOUR_AGO],
-        live_zones=frozenset({'kitchen', 'living-room'}),
+        records=[
+            SHED_BOILER,
+            HANDED_BACK_KITCHEN,
+            LIVING_ROOM_SHED_AN_HOUR_AGO,
+            HALLWAY_WRITTEN_HALF_AN_HOUR_AFTER_ITS_SHED,
+        ],
+        live_zones=frozenset({'kitchen', 'living-room', 'hallway'}),
     )
 
 
@@ -178,6 +200,19 @@ def test_hold_recovered_on_a_clock_reading_earlier_than_the_shed_counts_thirty_m
     f_clock.advance(seconds)
 
     assert f_writes_recovered_on_a_clock_behind_the_shed.clear('kitchen') is freed
+
+
+def test_recovery_on_a_clock_reading_earlier_than_the_sheds_holds_no_floor_written_half_an_hour_after_its_shed(
+    f_use_case: RecoverWriteHoldsUseCase,
+    f_writes: ZoneWriteGate,
+) -> None:
+    output = f_use_case.execute(RecoverWriteHoldsInputDTO(now=SHED_AT - timedelta(hours=1)))
+
+    assert (output, f_writes.clear('hallway'), f_writes.clear('kitchen')) == (
+        RecoverWriteHoldsOutputDTO(zones=('kitchen', 'living-room')),
+        True,
+        False,
+    )
 
 
 def test_teplo_in_dry_run_recovers_no_hold(
