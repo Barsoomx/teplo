@@ -3164,6 +3164,7 @@ def f_living_room_released_while_the_cycle_writes_the_kitchen(
         shed_at=MORNING - timedelta(minutes=40),
         shed_reason=ShedReason.OVERLOAD,
         shed_phase=LoadPhase.L2,
+        shed_device=LIVING_ROOM,
     )
     LoadSettingsFactory.create(load_management_live=True)
     store.record_state(LIVING_ROOM, _state('22.0', power=False))

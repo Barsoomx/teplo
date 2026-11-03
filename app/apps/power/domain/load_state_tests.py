@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -7,6 +8,7 @@ from apps.power.domain.loads import LoadPhase, ShedReason
 from apps.power.domain.shedding import Shed
 
 AT = 1000.0
+SHED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 LIVE_SHED = Shed(
     load='boiler-1f',
     phase=LoadPhase.L2,
@@ -14,7 +16,9 @@ LIVE_SHED = Shed(
     live=True,
     reason=ShedReason.OVERLOAD,
     was_on=True,
+    device='plug-boiler-1f',
     at=AT,
+    occurred_at=SHED_AT,
     settled_at=AT + 5,
 )
 DRY_RUN_SHED = Shed(
@@ -24,7 +28,9 @@ DRY_RUN_SHED = Shed(
     live=False,
     reason=ShedReason.OVERLOAD,
     was_on=True,
+    device='plug-boiler-1f',
     at=AT,
+    occurred_at=SHED_AT,
     settled_at=AT + 5,
 )
 

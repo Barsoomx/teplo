@@ -69,7 +69,9 @@ BOILER_SHED = Shed(
     live=False,
     reason=ShedReason.OVERLOAD,
     was_on=True,
+    device='plug-boiler-1f',
     at=GUARD_AT,
+    occurred_at=NIGHT_CUT,
     settled_at=GUARD_AT + 5,
 )
 

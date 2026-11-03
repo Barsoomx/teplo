@@ -74,10 +74,19 @@ SHED = Shed(
     live=True,
     reason=ShedReason.OVERLOAD,
     was_on=None,
+    device='thermostat-kitchen',
     at=AT - 2,
+    occurred_at=POLLED_AT,
     settled_at=AT + 3,
 )
-BOILER_DRY_RUN_SHED = replace(SHED, load='boiler-1f', amps=Decimal('6.0'), live=False, was_on=True)
+BOILER_DRY_RUN_SHED = replace(
+    SHED,
+    load='boiler-1f',
+    amps=Decimal('6.0'),
+    live=False,
+    was_on=True,
+    device='plug-boiler-1f',
+)
 BOILER_ON = SeenReading(polled_at=POLLED_AT, reading=plug_reading(on=True, current=Decimal('6.1'), read_at=AT - 20))
 KITCHEN_HEATING = SeenReading(
     polled_at=POLLED_AT,

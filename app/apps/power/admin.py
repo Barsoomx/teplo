@@ -40,6 +40,7 @@ class LoadAdmin(admin.ModelAdmin):
         'shed_reason',
         'shed_phase',
         'shed_was_on',
+        'shed_device',
     )
 
     def get_readonly_fields(self, request: HttpRequest, obj: Load | None = None) -> tuple[str, ...]:

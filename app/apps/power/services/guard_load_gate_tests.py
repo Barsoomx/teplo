@@ -201,7 +201,9 @@ def f_handed_back_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate
         live=True,
         reason=ShedReason.OVERLOAD,
         was_on=None,
+        device='thermostat-kitchen',
         at=AT - 600,
+        occurred_at=NOW,
         settled_at=AT - 595,
     )
     _remember(
@@ -230,7 +232,9 @@ def f_dry_run_shed_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGa
         live=False,
         reason=ShedReason.OVERLOAD,
         was_on=None,
+        device='thermostat-hallway',
         at=AT - 600,
+        occurred_at=NOW,
         settled_at=AT - 595,
     )
     _remember(f_book, management_live=True, l2='18.0', shedding=ShedState(sheds={'hallway': shed}))
@@ -246,7 +250,9 @@ def f_settling_shed_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_ga
         live=True,
         reason=ShedReason.OVERLOAD,
         was_on=True,
+        device='plug-boiler-1f',
         at=AT - 1,
+        occurred_at=NOW,
         settled_at=AT + 4,
     )
     _remember(f_book, management_live=True, l2=request.param, shedding=ShedState(sheds={'boiler-1f': shed}))
@@ -262,7 +268,9 @@ def f_shed_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
         live=True,
         reason=ShedReason.OVERLOAD,
         was_on=None,
+        device='thermostat-kitchen',
         at=AT - 30,
+        occurred_at=NOW,
         settled_at=AT - 25,
     )
     _remember(f_book, management_live=True, shedding=ShedState(sheds={'kitchen': shed}))

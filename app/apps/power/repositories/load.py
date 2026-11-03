@@ -19,11 +19,18 @@ class LoadRepository:
             shed_reason=shed.reason,
             shed_phase=shed.phase,
             shed_was_on=shed.was_on,
+            shed_device=shed.device,
         )
 
     @staticmethod
     def clear_shed(slug: str) -> None:
-        Load.objects.filter(slug=slug).update(shed_at=None, shed_reason='', shed_phase='', shed_was_on=None)
+        Load.objects.filter(slug=slug).update(
+            shed_at=None,
+            shed_reason='',
+            shed_phase='',
+            shed_was_on=None,
+            shed_device='',
+        )
 
     @staticmethod
     def save_learned(slug: str, learned: LearnedPhase) -> None:
@@ -71,4 +78,5 @@ def _shed(load: Load) -> LiveShed | None:
         reason=ShedReason(load.shed_reason),
         phase=LoadPhase(load.shed_phase),
         was_on=load.shed_was_on,
+        device=load.shed_device,
     )

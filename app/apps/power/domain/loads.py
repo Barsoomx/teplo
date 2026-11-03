@@ -53,6 +53,7 @@ class LiveShed:
     reason: ShedReason
     phase: LoadPhase
     was_on: bool | None
+    device: str
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -16,10 +16,12 @@ from apps.power.domain.shedding import (
     choose_shed,
     drawing_since,
     in_view,
+    moved,
     new_shed,
     relief,
     resumed_shed,
     shed_confirmed,
+    stored_shed,
     switched_back_on,
     unconfirmed_shed,
 )
@@ -61,18 +63,28 @@ BOILER_SHED = Shed(
     live=True,
     reason=ShedReason.OVERLOAD,
     was_on=True,
+    device='plug-boiler-1f',
     at=AT - 65,
+    occurred_at=NOW,
     settled_at=AT - 60,
 )
 DRY_RUN_SHED = replace(BOILER_SHED, live=False)
-LIVING_ROOM_SHED = replace(BOILER_SHED, load='living-room', amps=Decimal('8.0'), was_on=None)
-KITCHEN_SHED = replace(LIVING_ROOM_SHED, load='kitchen', phase=LoadPhase.L2)
-BATHROOM_SHED = replace(LIVING_ROOM_SHED, load='bathroom-1f', phase=LoadPhase.UNKNOWN, reason=ShedReason.METER_LOST)
-UNCONFIRMED_BOILER_SHED = UnconfirmedShed(
-    shed=replace(BOILER_SHED, at=AT, settled_at=SETTLED),
-    amps=Decimal('26.0'),
-    at=NOW,
+LIVING_ROOM_SHED = replace(
+    BOILER_SHED,
+    load='living-room',
+    amps=Decimal('8.0'),
+    was_on=None,
+    device='thermostat-living-room',
 )
+KITCHEN_SHED = replace(LIVING_ROOM_SHED, load='kitchen', phase=LoadPhase.L2, device='thermostat-kitchen')
+BATHROOM_SHED = replace(
+    LIVING_ROOM_SHED,
+    load='bathroom-1f',
+    phase=LoadPhase.UNKNOWN,
+    reason=ShedReason.METER_LOST,
+    device='thermostat-bathroom-1f',
+)
+UNCONFIRMED_BOILER_SHED = UnconfirmedShed(shed=replace(BOILER_SHED, at=AT, settled_at=SETTLED), amps=Decimal('26.0'))
 SHED_BOILER_RECORD = LoadRecord(
     slug='boiler-1f',
     name='Бойлер 1 этаж',
@@ -89,6 +101,7 @@ SHED_BOILER_RECORD = LoadRecord(
         reason=ShedReason.OVERLOAD,
         phase=LoadPhase.L2,
         was_on=True,
+        device='plug-boiler-1f',
     ),
 )
 
@@ -102,14 +115,20 @@ SHED_KITCHEN_RECORD = replace(
     device_slug='thermostat-kitchen',
     priority=5,
     nominal_amps=Decimal('8.0'),
-    shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+    shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None, device='thermostat-kitchen'),
 )
 
 
 def _kitchen_shed_ago(shed: timedelta, stamped: timedelta | None) -> LoadRecord:
     return replace(
         SHED_KITCHEN_RECORD,
-        shed=LiveShed(at=NOW - shed, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+        shed=LiveShed(
+            at=NOW - shed,
+            reason=ShedReason.OVERLOAD,
+            phase=LoadPhase.L2,
+            was_on=None,
+            device='thermostat-kitchen',
+        ),
         last_command_at=None if stamped is None else NOW - stamped,
     )
 
@@ -163,15 +182,28 @@ def test_live_view_sees_only_live_sheds_and_the_dry_run_view_every_shed(shed: Sh
     assert in_view(shed, live=live) is expected
 
 
-def test_new_shed_relieves_its_phase_while_it_settles() -> None:
-    assert new_shed(KITCHEN, phase=LoadPhase.L2, live=True, reason=ShedReason.OVERLOAD, was_on=None, at=AT) == Shed(
+def test_new_shed_relieves_its_phase_while_it_settles_and_names_the_device_it_switched_off() -> None:
+    shed = new_shed(
+        KITCHEN,
+        phase=LoadPhase.L2,
+        live=True,
+        reason=ShedReason.OVERLOAD,
+        was_on=None,
+        device='thermostat-kitchen',
+        at=AT,
+        now=NOW,
+    )
+
+    assert shed == Shed(
         load='kitchen',
         phase=LoadPhase.L2,
         amps=Decimal('8.0'),
         live=True,
         reason=ShedReason.OVERLOAD,
         was_on=None,
+        device='thermostat-kitchen',
         at=AT,
+        occurred_at=NOW,
         settled_at=AT + 5,
     )
 
@@ -182,11 +214,41 @@ def test_unconfirmed_shed_holds_a_settled_live_shed_of_a_plug_that_was_on() -> N
         phase=LoadPhase.L1,
         reason=ShedReason.OVERLOAD,
         amps=Decimal('26.0'),
+        device='plug-boiler-1f',
         at=AT,
         now=NOW,
     )
 
     assert unconfirmed == UNCONFIRMED_BOILER_SHED
+
+
+def test_stored_shed_keeps_when_and_why_a_load_was_shed_and_the_device_switched_off() -> None:
+    assert stored_shed(BOILER_SHED) == LiveShed(
+        at=NOW,
+        reason=ShedReason.OVERLOAD,
+        phase=LoadPhase.L1,
+        was_on=True,
+        device='plug-boiler-1f',
+    )
+
+
+@pytest.mark.parametrize(
+    ('shed', 'device', 'expected'),
+    [
+        (BOILER_SHED, 'plug-boiler-1f', False),
+        (BOILER_SHED, 'plug-boiler-2f', True),
+        (DRY_RUN_SHED, 'plug-boiler-2f', False),
+    ],
+    ids=['same_device', 'load_points_at_another_device', 'dry_run_shed'],
+)
+def test_live_shed_moved_once_its_load_points_at_another_device_than_the_one_switched_off(
+    shed: Shed,
+    device: str,
+    expected: bool,
+) -> None:
+    record = replace(SHED_BOILER_RECORD, device_slug=device)
+
+    assert moved(shed, record) is expected
 
 
 @pytest.mark.parametrize(
@@ -225,7 +287,9 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_date
             live=True,
             reason=ShedReason.OVERLOAD,
             was_on=True,
+            device='plug-boiler-1f',
             at=resumed_at,
+            occurred_at=NOW,
             settled_at=SETTLED,
         ),
         Decimal(0),
@@ -242,7 +306,9 @@ def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
         live=True,
         reason=ShedReason.OVERLOAD,
         was_on=None,
+        device='thermostat-kitchen',
         at=AT,
+        occurred_at=NOW,
         settled_at=SETTLED,
         unstamped_write_at=AT,
     )

@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
@@ -44,10 +45,20 @@ BOILER_SHED = Shed(
     live=True,
     reason=ShedReason.OVERLOAD,
     was_on=True,
+    device='plug-boiler-2f',
     at=2000.0,
+    occurred_at=datetime(2026, 11, 2, 18, 40, tzinfo=UTC),
     settled_at=2005.0,
 )
-KITCHEN_SHED = replace(BOILER_SHED, load='kitchen', amps=Decimal('8.0'), was_on=None, at=2000.5, settled_at=2005.5)
+KITCHEN_SHED = replace(
+    BOILER_SHED,
+    load='kitchen',
+    amps=Decimal('8.0'),
+    was_on=None,
+    device='thermostat-kitchen',
+    at=2000.5,
+    settled_at=2005.5,
+)
 
 
 def _samples(first: int, last: int, levels: dict[int, str]) -> list[PhaseSample]:

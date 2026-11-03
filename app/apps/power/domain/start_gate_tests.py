@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -59,7 +59,9 @@ KITCHEN_SHED = Shed(
     live=True,
     reason=ShedReason.OVERLOAD,
     was_on=None,
+    device='thermostat-kitchen',
     at=AT - 600,
+    occurred_at=datetime(2026, 11, 2, 18, 30, tzinfo=UTC),
     settled_at=AT - 595,
 )
 NOT_CALM = StartDecision(load='kitchen', refusal=StartRefusal.PHASE_NOT_CALM, overrun=None)

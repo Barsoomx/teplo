@@ -15,7 +15,13 @@ from apps.power.repositories.load import LoadRepository
 pytestmark = pytest.mark.django_db
 
 SHED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
-OVERLOAD_SHED = LiveShed(at=SHED_AT, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True)
+OVERLOAD_SHED = LiveShed(
+    at=SHED_AT,
+    reason=ShedReason.OVERLOAD,
+    phase=LoadPhase.L2,
+    was_on=True,
+    device='plug-boiler-1f',
+)
 LEARNED = LearnedPhase(phase=LoadPhase.L3, amps=Decimal('8.4'), samples=4)
 BOILER = LoadRecord(
     slug='boiler-1f',
@@ -75,6 +81,7 @@ def kitchen_shed_while_the_meter_was_lost(f_kitchen: Load) -> Load:
         shed_at=SHED_AT,
         shed_reason=ShedReason.METER_LOST,
         shed_phase=LoadPhase.UNKNOWN,
+        shed_device='thermostat-kitchen',
     )
     return f_kitchen
 
@@ -125,7 +132,16 @@ def test_marked_shed_is_read_back() -> None:
 @pytest.mark.usefixtures('kitchen_shed_while_the_meter_was_lost')
 def test_stored_shed_of_a_zone_is_read_back_without_a_plug_state() -> None:
     assert LoadRepository.all_records() == [
-        replace(KITCHEN, shed=LiveShed(at=SHED_AT, reason=ShedReason.METER_LOST, phase=LoadPhase.UNKNOWN, was_on=None)),
+        replace(
+            KITCHEN,
+            shed=LiveShed(
+                at=SHED_AT,
+                reason=ShedReason.METER_LOST,
+                phase=LoadPhase.UNKNOWN,
+                was_on=None,
+                device='thermostat-kitchen',
+            ),
+        ),
     ]
 
 
@@ -133,8 +149,8 @@ def test_stored_shed_of_a_zone_is_read_back_without_a_plug_state() -> None:
 def test_cleared_shed_leaves_no_trace() -> None:
     LoadRepository.clear_shed('kitchen')
 
-    assert list(Load.objects.values_list('shed_at', 'shed_reason', 'shed_phase', 'shed_was_on')) == [
-        (None, '', '', None),
+    assert list(Load.objects.values_list('shed_at', 'shed_reason', 'shed_phase', 'shed_was_on', 'shed_device')) == [
+        (None, '', '', None, ''),
     ]
 
 

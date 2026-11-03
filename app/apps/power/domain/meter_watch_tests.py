@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -58,12 +58,21 @@ KITCHEN_SHED = Shed(
     live=True,
     reason=ShedReason.OVERLOAD,
     was_on=None,
+    device='thermostat-kitchen',
     at=STARTED_AT,
+    occurred_at=datetime(2026, 11, 2, 18, 40, tzinfo=UTC),
     settled_at=STARTED_AT + 5,
 )
-HALLWAY_SHED = replace(KITCHEN_SHED, load='hallway', phase=LoadPhase.L1)
-BATHROOM_1F_SHED = replace(KITCHEN_SHED, load='bathroom-1f', amps=Decimal('6.0'))
-BOILER_SHED = replace(KITCHEN_SHED, load='boiler-1f', phase=LoadPhase.L1, amps=Decimal('6.0'), was_on=True)
+HALLWAY_SHED = replace(KITCHEN_SHED, load='hallway', phase=LoadPhase.L1, device='thermostat-hallway')
+BATHROOM_1F_SHED = replace(KITCHEN_SHED, load='bathroom-1f', amps=Decimal('6.0'), device='thermostat-bathroom-1f')
+BOILER_SHED = replace(
+    KITCHEN_SHED,
+    load='boiler-1f',
+    phase=LoadPhase.L1,
+    amps=Decimal('6.0'),
+    was_on=True,
+    device='plug-boiler-1f',
+)
 LIMP_KITCHEN_SHED = replace(KITCHEN_SHED, reason=ShedReason.METER_LOST)
 EVERY_PHASE = frozenset({LoadPhase.L1, LoadPhase.L2, LoadPhase.L3})
 

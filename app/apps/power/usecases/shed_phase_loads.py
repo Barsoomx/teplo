@@ -39,9 +39,11 @@ from apps.power.domain.shedding import (
     choose_restore,
     choose_shed,
     drawing_since,
+    moved,
     new_shed,
     resumed_shed,
     shed_confirmed,
+    stored_shed,
     switched_back_on,
     unconfirmed_shed,
 )
@@ -150,15 +152,15 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             shed = unconfirmed.shed
             logger.info('load_shed_confirmed', load=slug)
             self._event_store.add_event(_shed_event(LoadShed, record, shed, amps=unconfirmed.amps, now=now))
-            shedding = _stored(
-                replace(shedding, sheds={**shedding.sheds, slug: shed}),
-                slug,
-                LiveShed(at=unconfirmed.at, reason=shed.reason, phase=shed.phase, was_on=shed.was_on),
-            )
+            shedding = _stored(replace(shedding, sheds={**shedding.sheds, slug: shed}), slug, stored_shed(shed))
         return shedding
 
     def _overridden(self, state: GuardState, shedding: ShedState, now: datetime) -> ShedState:
-        taken = [shed for shed in shedding.sheds.values() if switched_back_on(shed, _reading(state, shed.load))]
+        taken = [
+            shed
+            for shed in shedding.sheds.values()
+            if not _moved(state, shed) and switched_back_on(shed, _reading(state, shed.load))
+        ]
         for shed in taken:
             logger.info('load_shed_overridden', load=shed.load)
             self._event_store.add_event(
@@ -184,7 +186,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 shedding = _without(shedding, {shed.load})
                 continue
 
-            if shed.live != self._live(state.loads, record):
+            if shed.live != self._live(state.loads, record) or moved(shed, record):
                 shedding = self._release(state, shedding, record, shed, at, now)
         return shedding
 
@@ -205,8 +207,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             try:
                 handed = self._switcher.release(
                     record,
+                    device=shed.device,
                     was_on=shed.was_on,
-                    zone_writes_live=self._zone_writes_live(state.loads, record),
+                    cycle_writes=self._cycle_writes(state.loads, record, shed),
                     at=now,
                 )
             except DomainError as error:
@@ -324,7 +327,16 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
             logger.info('load_shed', load=record.slug, stamp_lost=stamp_lost)
 
-        shed = new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at)
+        shed = new_shed(
+            load,
+            phase=phase,
+            live=live,
+            reason=reason,
+            was_on=was_on,
+            device=record.device_slug,
+            at=self._clock() if live else at,
+            now=now,
+        )
         if stamp_lost:
             shed = replace(shed, unstamped_write_at=shed.at)
         self._event_store.add_event(
@@ -334,7 +346,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if not live:
             return shedding
 
-        return _stored(shedding, record.slug, LiveShed(at=now, reason=reason, phase=phase, was_on=was_on))
+        return _stored(shedding, record.slug, stored_shed(shed))
 
     def _restored(self, state: GuardState, shedding: ShedState, *, live: bool, at: float, now: datetime) -> ShedState:
         thresholds = state.loads.control.thresholds
@@ -359,6 +371,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             try:
                 if not self._switcher.restore(
                     record,
+                    device=shed.device,
                     was_on=shed.was_on,
                     permit=lambda: self._permitted(load, start, at, thresholds),
                 ):
@@ -401,6 +414,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             for shed in shedding.sheds.values()
             if shed.live == live
             and self._live_load(state.loads, shed.load) == live
+            and not _moved(state, shed)
             and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
         )
         calm = calm_phases(state.phases.watches, at, thresholds, live=live)
@@ -480,7 +494,15 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if record.kind is not LoadKind.PLUG:
             return failed
 
-        unconfirmed = unconfirmed_shed(load, phase=phase, reason=reason, amps=amps, at=failed_at, now=now)
+        unconfirmed = unconfirmed_shed(
+            load,
+            phase=phase,
+            reason=reason,
+            amps=amps,
+            device=record.device_slug,
+            at=failed_at,
+            now=now,
+        )
         return replace(failed, unconfirmed={**failed.unconfirmed, record.slug: unconfirmed})
 
     def _restore_failed(
@@ -579,8 +601,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         record = loads.record(slug)
         return record is not None and self._live(loads, record)
 
-    def _zone_writes_live(self, loads: GuardLoads, record: LoadRecord) -> bool:
-        return not self._dry_run and record.zone_slug in loads.live_zones
+    def _cycle_writes(self, loads: GuardLoads, record: LoadRecord, shed: Shed) -> bool:
+        return not self._dry_run and record.zone_slug in loads.live_zones and not moved(shed, record)
 
     def _release_due(self, state: GuardState, shedding: ShedState, record: LoadRecord, shed: Shed, at: float) -> bool:
         if awaits_reading(state, shedding, record.slug):
@@ -589,7 +611,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if record.kind is LoadKind.PLUG:
             return True
 
-        if self._zone_writes_live(state.loads, record):
+        if self._cycle_writes(state.loads, record, shed):
             return can_hand_back(shed, at, MIN_WRITE_INTERVAL)
 
         failed_at = shedding.failed.get(record.slug)
@@ -599,6 +621,11 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 def _reading(state: GuardState, slug: str) -> LoadReading | None:
     seen = state.readings.get(slug)
     return None if seen is None else seen.reading
+
+
+def _moved(state: GuardState, shed: Shed) -> bool:
+    record = state.loads.record(shed.load)
+    return record is not None and moved(shed, record)
 
 
 def _overloaded(state: GuardState, phase: LoadPhase) -> bool:

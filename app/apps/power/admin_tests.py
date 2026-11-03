@@ -24,6 +24,7 @@ GUARD_FIELDS = {
     'shed_reason',
     'shed_phase',
     'shed_was_on',
+    'shed_device',
 }
 
 

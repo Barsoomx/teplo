@@ -25,29 +25,37 @@ class LoadSwitcher:
 
         return self._zones.switch_off(load.zone_slug, load.device_slug, at)
 
-    def restore(self, load: LoadRecord, *, was_on: bool | None, permit: Callable[[], bool]) -> bool:
+    def restore(self, load: LoadRecord, *, device: str, was_on: bool | None, permit: Callable[[], bool]) -> bool:
         if load.zone_slug is not None or was_on is not True:
             return True
 
-        plug = self._plugs.switchable_plug(load.device_slug)
+        plug = self._plugs.switchable_plug(device)
         if not permit():
             return False
 
         plug.set_on(True)
         return True
 
-    def release(self, load: LoadRecord, *, was_on: bool | None, zone_writes_live: bool, at: datetime) -> HandBack:
+    def release(
+        self,
+        load: LoadRecord,
+        *,
+        device: str,
+        was_on: bool | None,
+        cycle_writes: bool,
+        at: datetime,
+    ) -> HandBack:
         if load.zone_slug is None:
             if was_on is not True:
                 return HandBack.UNTOUCHED
 
-            self._plugs.switchable_plug(load.device_slug).set_on(True)
+            self._plugs.switchable_plug(device).set_on(True)
             return HandBack.SWITCHED_ON
 
-        if zone_writes_live:
+        if cycle_writes:
             return HandBack.UNTOUCHED
 
-        if not self._zones.switch_on(load.zone_slug, load.device_slug, at, stamped_at=load.last_command_at):
+        if not self._zones.switch_on(load.zone_slug, device, at, stamped_at=load.last_command_at):
             return HandBack.WAITING
 
         return HandBack.SWITCHED_ON

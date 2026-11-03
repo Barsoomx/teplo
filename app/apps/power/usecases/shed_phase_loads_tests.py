@@ -135,7 +135,10 @@ STORED_SHED = LiveShed(
     reason=ShedReason.OVERLOAD,
     phase=LoadPhase.L2,
     was_on=True,
+    device='plug-boiler-1f',
 )
+STORED_2F_SHED = replace(STORED_SHED, device='plug-boiler-2f')
+STORED_ZONE_SHED = replace(STORED_SHED, was_on=None, device='thermostat-kitchen')
 POWER_EVENTS = (
     PhaseOverloaded,
     PhaseCalmed,
@@ -384,6 +387,13 @@ def _zone_live_control_on(house: House) -> None:
     house.loads.edit(house.loads.records, LIVE_ZONES)
 
 
+def _pointed_at(house: House, slug: str, device: str) -> None:
+    house.loads.edit(
+        [replace(record, device_slug=device) if record.slug == slug else record for record in house.loads.records],
+        house.loads.live_zone_slugs(),
+    )
+
+
 def _zone_load_off(house: House) -> None:
     house.loads.edit([replace(record, live=False) for record in house.loads.records], LIVE_ZONES)
 
@@ -515,7 +525,7 @@ def f_restarted_house_after_a_zone_start(f_restarted_house: House) -> House:
 @pytest.fixture
 def f_restarted_house_with_a_zone_shed_twenty_minutes_ago() -> House:
     return _house(
-        [replace(KITCHEN, live=True, shed=replace(STORED_SHED, at=NOW - timedelta(minutes=20), was_on=None))],
+        [replace(KITCHEN, live=True, shed=replace(STORED_ZONE_SHED, at=NOW - timedelta(minutes=20)))],
         LIVE_CONTROL,
         frozenset(),
     )
@@ -524,7 +534,7 @@ def f_restarted_house_with_a_zone_shed_twenty_minutes_ago() -> House:
 @pytest.fixture
 def f_restarted_house_with_a_live_zone_shed_ten_minutes_ago() -> House:
     return _house(
-        [replace(KITCHEN, live=True, shed=replace(STORED_SHED, at=NOW - timedelta(minutes=10), was_on=None))],
+        [replace(KITCHEN, live=True, shed=replace(STORED_ZONE_SHED, at=NOW - timedelta(minutes=10)))],
         LIVE_CONTROL,
         LIVE_ZONES,
     )
@@ -592,7 +602,7 @@ def f_restarted_house_with_a_zone_shed_and_stamped_thirty_one_minutes_ago() -> H
             replace(
                 KITCHEN,
                 live=True,
-                shed=replace(STORED_SHED, at=NOW - timedelta(minutes=31), was_on=None),
+                shed=replace(STORED_ZONE_SHED, at=NOW - timedelta(minutes=31)),
                 last_command_at=NOW - timedelta(minutes=31),
             ),
         ],
@@ -608,7 +618,7 @@ def f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago() -> House:
             replace(
                 KITCHEN,
                 live=True,
-                shed=replace(STORED_SHED, at=NOW - timedelta(minutes=40), was_on=None),
+                shed=replace(STORED_ZONE_SHED, at=NOW - timedelta(minutes=40)),
                 last_command_at=NOW - timedelta(minutes=10),
             ),
         ],
@@ -691,7 +701,7 @@ def f_floors_of_known_and_unknown_phase_house() -> House:
 @pytest.fixture
 def f_house_with_an_unswitchable_shed_plug() -> House:
     return _house(
-        [replace(BOILER, live=True, shed=STORED_SHED), replace(BOILER_2F, live=True, shed=STORED_SHED)],
+        [replace(BOILER, live=True, shed=STORED_SHED), replace(BOILER_2F, live=True, shed=STORED_2F_SHED)],
         LIVE_CONTROL,
         frozenset(),
         boiler_on=False,
@@ -711,7 +721,7 @@ def f_house_with_an_unreachable_shed_plug() -> House:
 
 @pytest.fixture
 def unswitchable_shed_plug_house() -> House:
-    return _house([replace(BOILER_2F, live=True, shed=STORED_SHED)], LIVE_CONTROL, frozenset(), boiler_on=False)
+    return _house([replace(BOILER_2F, live=True, shed=STORED_2F_SHED)], LIVE_CONTROL, frozenset(), boiler_on=False)
 
 
 @pytest.fixture
@@ -754,6 +764,19 @@ def f_locked_lookup_restarted_house() -> House:
 @pytest.fixture
 def house_whose_database_fails_once() -> House:
     return _house(_live(BOILER), LIVE_CONTROL, frozenset(), write_errors=(OperationalError('database is locked'),))
+
+
+@pytest.fixture
+def f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug(house_whose_database_fails_once: House) -> House:
+    _seconds(house_whose_database_fails_once.guard, 4, '26.0')
+    _pointed_at(house_whose_database_fails_once, 'boiler-1f', 'plug-boiler-2f')
+    return house_whose_database_fails_once
+
+
+@pytest.fixture
+def f_zone_shed_whose_zone_was_pointed_at_another_thermostat(f_live_floors_house_after_a_shed: House) -> House:
+    _pointed_at(f_live_floors_house_after_a_shed, 'kitchen', 'thermostat-kitchen-new')
+    return f_live_floors_house_after_a_shed
 
 
 @pytest.fixture
@@ -896,7 +919,13 @@ def test_live_overload_switches_the_plug_off_and_stores_the_shed(f_live_house: H
             (
                 'mark_shed',
                 'boiler-1f',
-                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True),
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=True,
+                    device='plug-boiler-1f',
+                ),
             ),
         ],
         [
@@ -1052,7 +1081,9 @@ def test_zone_restored_after_an_overload_keeps_the_phase_it_was_shed_for_until_i
                 live=True,
                 reason=ShedReason.OVERLOAD,
                 was_on=None,
+                device='thermostat-kitchen',
                 at=START + 4,
+                occurred_at=_moment(4),
                 settled_at=START + 9,
             ),
         },
@@ -1349,12 +1380,24 @@ def test_plug_shed_whose_write_failed_is_taken_as_shed_once_the_plug_reads_off(
             (
                 'mark_shed',
                 'kitchen',
-                LiveShed(at=_moment(5), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+                LiveShed(
+                    at=_moment(5),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=None,
+                    device='thermostat-kitchen',
+                ),
             ),
             (
                 'mark_shed',
                 'boiler-1f',
-                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True),
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=True,
+                    device='plug-boiler-1f',
+                ),
             ),
         ],
         [
@@ -1404,7 +1447,13 @@ def test_live_house_without_a_meter_keeps_one_floor_a_phase_a_minute_after_the_s
             (
                 'mark_shed',
                 'kitchen',
-                LiveShed(at=_moment(61), reason=ShedReason.METER_LOST, phase=LoadPhase.L2, was_on=None),
+                LiveShed(
+                    at=_moment(61),
+                    reason=ShedReason.METER_LOST,
+                    phase=LoadPhase.L2,
+                    was_on=None,
+                    device='thermostat-kitchen',
+                ),
             ),
         ],
         [
@@ -1944,7 +1993,13 @@ def test_zone_release_whose_stamp_a_locked_database_refuses_writes_nothing_and_k
             (
                 'mark_shed',
                 'kitchen',
-                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=None,
+                    device='thermostat-kitchen',
+                ),
             ),
         ],
         [PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('15.0'), occurred_at=_moment(1802))],
@@ -2161,7 +2216,13 @@ def test_live_shed_the_database_fails_to_store_is_kept_and_stored_a_minute_later
             (
                 'mark_shed',
                 'boiler-1f',
-                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True),
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=True,
+                    device='plug-boiler-1f',
+                ),
             ),
         ],
     )
@@ -2187,7 +2248,13 @@ def test_plug_the_database_cannot_find_leaves_the_sheds_already_made_and_the_nex
             (
                 'mark_shed',
                 'boiler-1f',
-                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L1, was_on=True),
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L1,
+                    was_on=True,
+                    device='plug-boiler-1f',
+                ),
             ),
         ],
         [
@@ -2241,3 +2308,75 @@ def test_ordinary_second_neither_reads_nor_writes_the_database(
         outputs = _seconds(f_guard_after_its_first_second, 1, '12.0')
 
     assert outputs == [NOTHING]
+
+
+def test_plug_shed_still_unsaved_is_released_to_the_plug_it_switched_off_once_its_load_points_at_another(
+    f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug: House,
+) -> None:
+    outputs = _seconds(f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug.guard, 60, '15.0')
+
+    assert (
+        _restored_at(outputs, 5),
+        f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug.boiler.switches,
+        f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug.plug_provider.asked,
+        f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug.loads.writes,
+        f_unsaved_plug_shed_whose_load_was_pointed_at_another_plug.events[2:],
+    ) == (
+        [(61, ('boiler-1f',))],
+        [False, True],
+        ['plug-boiler-1f', 'plug-boiler-1f'],
+        [('clear_shed', 'boiler-1f', None)],
+        [
+            LoadRestored(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('15.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.RELEASED,
+                switched_on=True,
+                occurred_at=_moment(61),
+            ),
+        ],
+    )
+
+
+def test_zone_shed_whose_zone_points_at_another_thermostat_switches_the_one_it_shed_back_on_at_its_next_write(
+    f_zone_shed_whose_zone_was_pointed_at_another_thermostat: House,
+) -> None:
+    calm = _seconds(f_zone_shed_whose_zone_was_pointed_at_another_thermostat.guard, 300, '10.0')
+    held = f_zone_shed_whose_zone_was_pointed_at_another_thermostat.book.held_zones()
+    _pause(f_zone_shed_whose_zone_was_pointed_at_another_thermostat.guard, 1499)
+    late = _seconds(f_zone_shed_whose_zone_was_pointed_at_another_thermostat.guard, 3, '10.0')
+
+    assert (
+        _restored_at(calm, 5),
+        held,
+        _restored_at(late, 1804),
+        f_zone_shed_whose_zone_was_pointed_at_another_thermostat.zones.switched_on,
+        f_zone_shed_whose_zone_was_pointed_at_another_thermostat.book.held_zones(),
+        f_zone_shed_whose_zone_was_pointed_at_another_thermostat.events[2:],
+    ) == (
+        [],
+        frozenset({'kitchen'}),
+        [(1804, ('kitchen',))],
+        [('kitchen', 'thermostat-kitchen', _moment(1804))],
+        frozenset(),
+        [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('10.0'), occurred_at=_moment(125)),
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('10.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.RELEASED,
+                switched_on=True,
+                occurred_at=_moment(1804),
+            ),
+        ],
+    )
