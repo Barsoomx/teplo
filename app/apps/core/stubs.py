@@ -41,6 +41,29 @@ class SleepStub:
         self._wakeups -= 1
 
 
+class YieldingThreadStub:
+    async def __call__(self, action: Callable[[], object]) -> object:
+        await asyncio.sleep(0)
+        return action()
+
+
+class IdleSleepStub:
+    async def __call__(self, seconds: float) -> None:
+        if seconds > 0:
+            await asyncio.Event().wait()
+
+
+class ServerStub:
+    def __init__(self, timeline: list[str], turns: int) -> None:
+        self._timeline = timeline
+        self._turns = turns
+
+    async def __call__(self, host: str, port: int) -> None:
+        self._timeline.append(f'serve {host}:{port}')
+        for _ in range(self._turns):
+            await asyncio.sleep(0)
+
+
 class SettingsRecorderStub:
     def __init__(self, error: Exception | None) -> None:
         self._error = error

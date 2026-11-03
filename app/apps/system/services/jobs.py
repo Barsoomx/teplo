@@ -34,6 +34,13 @@ def startup_jobs() -> tuple[PeriodicJob, ...]:
     )
 
 
+def shutdown_jobs() -> tuple[PeriodicJob, ...]:
+    return (
+        PeriodicJob(name='flush_samples', interval=ONCE, action=flush_samples),
+        PeriodicJob(name='stop_mqtt_listener', interval=ONCE, action=mqtt_listener.stop),
+    )
+
+
 def teplo_jobs() -> tuple[PeriodicJob, ...]:
     return (
         PeriodicJob(name='poll_thermostats', interval=timedelta(seconds=30), action=poll_thermostats),
