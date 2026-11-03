@@ -10,8 +10,9 @@ from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardLoads, GuardState, SeenReading, ShedState
 from apps.power.domain.load_status import thermostat_reading
-from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord, ShedReason
+from apps.power.domain.loads import MEASURED_PHASES, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterWatch
+from apps.power.domain.phase_watch import OverloadWatch, PhaseWatch
 from apps.power.domain.shedding import Shed
 from apps.power.domain.start_gate import StartRefusal
 from apps.power.services.guard_book import GuardBook
@@ -73,6 +74,7 @@ BOILER = LoadRecord(
     shed=None,
 )
 FRESH = MeterWatch(seen=True, stale_since=None)
+LOST = MeterWatch(seen=True, stale_since=AT - 60)
 KITCHEN_START = ZoneStart(zone='kitchen', writes_live=True)
 GRANTED = StartAnswer(granted=True, note=None)
 WAITS = StartAnswer(granted=False, note=None)
@@ -96,6 +98,8 @@ def _remember(
     l2: str = '10.0',
     readings: dict[str, SeenReading] | None = None,
     shedding: ShedState | None = None,
+    silent: frozenset[LoadPhase] | None = None,
+    overloaded: frozenset[LoadPhase] = frozenset(),
 ) -> None:
     loads = GuardLoads(
         records=(BOILER, HALLWAY, KITCHEN, LIVING_ROOM),
@@ -105,19 +109,33 @@ def _remember(
         read_at=AT,
     )
     started = GuardState.started(loads, AT)
-    currents = (
-        {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal(l2), LoadPhase.L3: Decimal('4.0')}
-        if meter.stale_since is None
-        else {}
-    )
+    measured = {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal(l2), LoadPhase.L3: Decimal('4.0')}
+    unread = _unread(meter) if silent is None else silent
+    currents = {phase: amps for phase, amps in measured.items() if phase not in unread}
     book.remember(
         replace(
             started,
-            phases=replace(started.phases, meter=meter, currents=currents, read_at=dict.fromkeys(currents, AT)),
+            phases=replace(
+                started.phases,
+                meter=meter,
+                currents=currents,
+                read_at=dict.fromkeys(currents, AT),
+                watches={
+                    phase: PhaseWatch(
+                        live=OverloadWatch(overloaded=phase in overloaded),
+                        dry_run=OverloadWatch(overloaded=phase in overloaded),
+                    )
+                    for phase in MEASURED_PHASES
+                },
+            ),
             readings={} if readings is None else readings,
             shedding=ShedState() if shedding is None else shedding,
         ),
     )
+
+
+def _unread(meter: MeterWatch) -> frozenset[LoadPhase]:
+    return frozenset() if meter.stale_since is None else frozenset(MEASURED_PHASES)
 
 
 def _would_wait(phase: LoadPhase, amps: str | None, reason: StartRefusal) -> StartWouldWaitDryRun:
@@ -164,6 +182,13 @@ def f_unseen_meter_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gat
 def f_lost_meter_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     readings = {'hallway': HALLWAY_HEATING} if request.param else {}
     _remember(f_book, management_live=True, meter=MeterWatch(seen=True, stale_since=AT - 60), readings=readings)
+    return f_gate
+
+
+@pytest.fixture
+def f_partly_lost_meter_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
+    management_live, silent, overloaded = request.param
+    _remember(f_book, management_live=management_live, meter=LOST, l2='13.0', silent=silent, overloaded=overloaded)
     return f_gate
 
 
@@ -332,6 +357,37 @@ def test_lost_meter_starts_a_floor_within_one_drawing_floor_a_phase(
     answer: StartAnswer,
 ) -> None:
     assert f_lost_meter_gate.ask_starts([KITCHEN_START], NOW) == {'kitchen': answer}
+
+
+@pytest.mark.parametrize(
+    ('f_partly_lost_meter_gate', 'answer'),
+    [
+        ((True, frozenset({LoadPhase.L2}), frozenset({LoadPhase.L2})), WAITS),
+        ((True, frozenset({LoadPhase.L2}), frozenset({LoadPhase.L1})), GRANTED),
+        ((True, frozenset({LoadPhase.L3}), frozenset()), WAITS),
+        (
+            (False, frozenset({LoadPhase.L2}), frozenset({LoadPhase.L2})),
+            StartAnswer(granted=True, note=_would_wait(LoadPhase.L2, None, StartRefusal.PHASE_OVERLOADED)),
+        ),
+        (
+            (False, frozenset({LoadPhase.L3}), frozenset()),
+            StartAnswer(granted=True, note=_would_wait(LoadPhase.L2, '21.0', StartRefusal.NO_HEADROOM)),
+        ),
+    ],
+    ids=[
+        'live_on_a_phase_that_went_silent_overloaded',
+        'live_on_a_phase_that_went_silent_while_another_is_overloaded',
+        'live_on_a_phase_that_reports_without_room',
+        'dry_run_on_a_phase_that_went_silent_overloaded',
+        'dry_run_on_a_phase_that_reports_without_room',
+    ],
+    indirect=['f_partly_lost_meter_gate'],
+)
+def test_lost_meter_starts_a_floor_only_where_its_phase_allows_it(
+    f_partly_lost_meter_gate: GuardLoadGate,
+    answer: StartAnswer,
+) -> None:
+    assert f_partly_lost_meter_gate.ask_starts([KITCHEN_START], NOW) == {'kitchen': answer}
 
 
 def test_dry_run_shed_makes_no_room_for_a_live_start(f_dry_run_shed_gate: GuardLoadGate, f_book: GuardBook) -> None:

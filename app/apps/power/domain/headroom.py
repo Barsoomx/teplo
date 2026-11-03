@@ -13,13 +13,16 @@ class PhaseOverrun:
     amps: Decimal
 
 
+def phases_of(phase: LoadPhase) -> tuple[LoadPhase, ...]:
+    return MEASURED_PHASES if phase is LoadPhase.UNKNOWN else (phase,)
+
+
 def overrun(phase: LoadPhase, amps: Decimal, currents: Currents, ceiling: Decimal) -> PhaseOverrun | None:
-    phases = MEASURED_PHASES if phase is LoadPhase.UNKNOWN else (phase,)
     return next(
         (
             PhaseOverrun(phase=measured, amps=currents[measured] + amps)
-            for measured in phases
-            if currents[measured] + amps > ceiling
+            for measured in phases_of(phase)
+            if measured in currents and currents[measured] + amps > ceiling
         ),
         None,
     )

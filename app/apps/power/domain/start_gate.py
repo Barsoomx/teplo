@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from apps.power.domain.control import PhaseThresholds
-from apps.power.domain.headroom import PhaseOverrun, overrun
+from apps.power.domain.headroom import PhaseOverrun, overrun, phases_of
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind
 from apps.power.domain.meter_watch import MeterCondition, drawing_floors
@@ -16,6 +16,7 @@ class StartRefusal(StrEnum):
     PHASE_TAKEN = 'phase_taken'
     TOO_SOON = 'too_soon'
     NO_HEADROOM = 'no_headroom'
+    PHASE_OVERLOADED = 'phase_overloaded'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -51,15 +52,14 @@ def decide_start(
     thresholds: PhaseThresholds,
 ) -> StartDecision:
     refusal = _refusal(load, meter, view.loads, last_permit_at, at, thresholds)
-    if refusal is not None or meter is not MeterCondition.FRESH:
+    if refusal is not None:
         return StartDecision(load=load.slug, refusal=refusal, overrun=None)
 
     excess = overrun(load.phase, load.amps, view.currents, thresholds.start_ceiling)
-    return StartDecision(
-        load=load.slug,
-        refusal=None if excess is None else StartRefusal.NO_HEADROOM,
-        overrun=excess,
-    )
+    if excess is not None:
+        return StartDecision(load=load.slug, refusal=StartRefusal.NO_HEADROOM, overrun=excess)
+
+    return StartDecision(load=load.slug, refusal=_silent_refusal(load, view), overrun=None)
 
 
 def decide_starts(
@@ -115,6 +115,13 @@ def _refusal(
 
     if not elapsed(last_permit_at, at, thresholds.start_interval):
         return StartRefusal.TOO_SOON
+
+    return None
+
+
+def _silent_refusal(load: LoadStatus, view: GuardView) -> StartRefusal | None:
+    if any(phase not in view.currents and phase in view.overloaded for phase in phases_of(load.phase)):
+        return StartRefusal.PHASE_OVERLOADED
 
     return None
 

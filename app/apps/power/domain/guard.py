@@ -10,7 +10,7 @@ from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LiveShed, Loa
 from apps.power.domain.meter_watch import MeterWatch
 from apps.power.domain.phase_learning import LearningState
 from apps.power.domain.phase_samples import SAMPLE_SPAN, PhaseSample
-from apps.power.domain.phase_watch import PhaseAmps, PhaseWatch
+from apps.power.domain.phase_watch import PhaseAmps, PhaseWatch, overloaded_phases
 from apps.power.domain.shedding import Shed, UnconfirmedShed, in_view, relief
 from apps.power.domain.view import GuardView
 
@@ -175,6 +175,7 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
             (shed for shed in shedding.sheds.values() if in_view(shed, live=live)),
         ),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
+        overloaded=overloaded_phases(state.phases.watches, live=live),
     )
 
 
@@ -186,6 +187,7 @@ def start_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
             (shed for shed in shedding.sheds.values() if not shed.live and not live),
         ),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
+        overloaded=overloaded_phases(state.phases.watches, live=live),
     )
 
 

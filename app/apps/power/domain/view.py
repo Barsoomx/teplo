@@ -10,3 +10,4 @@ from apps.power.domain.loads import LoadPhase
 class GuardView:
     currents: Mapping[LoadPhase, Decimal]
     loads: tuple[LoadStatus, ...]
+    overloaded: frozenset[LoadPhase] = frozenset()

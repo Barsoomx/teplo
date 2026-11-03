@@ -130,6 +130,7 @@ START_REFUSALS = {
     'too_soon': gettext_lazy('Another load has just started'),
     'meter_stale': gettext_lazy('No fresh readings from the phase meter'),
     'phase_taken': gettext_lazy('The phase meter is silent and another floor already heats on this phase'),
+    'phase_overloaded': gettext_lazy('The phase meter is silent and the phase was overloaded when it went silent'),
 }
 LOAD_PHASE_LEARNED = gettext_lazy('%(name)s: learned phase %(phase)s, %(amps)s A')
 OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut: %(amps)s A')

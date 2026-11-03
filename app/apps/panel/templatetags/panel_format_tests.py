@@ -692,9 +692,13 @@ def test_load_command_text_names_the_device_teplo_could_not_switch(
             {'phase': 'unknown', 'amps': None, 'reason': 'phase_taken'},
             'Фазометр молчит, а на этой фазе уже греет другой пол',
         ),
+        (
+            {'phase': 'l2', 'amps': None, 'reason': 'phase_overloaded'},
+            'Фазометр молчит, а фаза замолчала перегруженной',
+        ),
         ({}, ''),
     ],
-    ids=['no_headroom', 'too_soon', 'meter_stale', 'phase_taken', 'empty'],
+    ids=['no_headroom', 'too_soon', 'meter_stale', 'phase_taken', 'phase_overloaded', 'empty'],
 )
 def test_start_wait_says_why_a_start_would_wait(payload: dict[str, object], expected: str) -> None:
     entry = _load_entry('start_would_wait_dry_run', payload, subject='kitchen', name='Кухня')

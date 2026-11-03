@@ -30,14 +30,7 @@ from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition, choose_limp_restore, limp_sheds, meter_condition
 from apps.power.domain.moments import elapsed
-from apps.power.domain.phase_watch import (
-    PhaseWatch,
-    calm_phases,
-    calming_phases,
-    overloaded_phases,
-    shed_due,
-    with_shed,
-)
+from apps.power.domain.phase_watch import PhaseWatch, calm_phases, calming_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
 from apps.power.domain.shedding import (
     Shed,
@@ -415,7 +408,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 view.loads,
                 calm=calm,
                 calming=calming_phases(state.phases.watches, live=live),
-                overloaded=overloaded_phases(state.phases.watches, live=live),
+                overloaded=view.overloaded,
                 currents=view.currents,
                 last_restore_at=last_restore_at,
                 at=at,

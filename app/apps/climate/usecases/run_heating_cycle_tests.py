@@ -1,5 +1,5 @@
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -30,26 +30,44 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.stubs import LoadGateStub, ZoneLearningStoreStub, ZoneStoreStub
-from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
+from apps.climate.usecases.run_heating_cycle import (
+    RunHeatingCycleInputDTO,
+    RunHeatingCycleOutputDTO,
+    RunHeatingCycleUseCase,
+)
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.capabilities import FloorThermostat
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
-from apps.devices.domain.readings import TemperatureReading, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import Phase, TemperatureReading, ThermostatMode, ThermostatState
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
-from apps.devices.services.state_store import TemperatureStateStore, ThermostatStateStore
-from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
+from apps.devices.repositories.device import DeviceRepository
+from apps.devices.services.phase_meter_store import PhaseMeterStore
+from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
+from apps.devices.stubs import FloorThermostatStub, SwitchablePlugProviderStub, ThermostatProviderStub
 from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardLoads, GuardState, SeenReading
 from apps.power.domain.load_status import thermostat_reading
-from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord
+from apps.power.domain.loads import MEASURED_PHASES, LoadKind, LoadPhase, LoadRecord
 from apps.power.domain.meter_watch import MeterWatch
+from apps.power.domain.phase_watch import OverloadWatch, PhaseWatch
 from apps.power.domain.start_gate import StartRefusal
+from apps.power.factories import LoadSettingsFactory, ZoneLoadFactory
+from apps.power.repositories.load import LoadRepository
+from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.services.guard_book import GuardBook
 from apps.power.services.guard_load_gate import GuardLoadGate
+from apps.power.services.load_switcher import LoadSwitcher
+from apps.power.services.zone_switch import ThermostatZoneSwitch
+from apps.power.usecases.shed_phase_loads import (
+    ShedPhaseLoadsInputDTO,
+    ShedPhaseLoadsOutputDTO,
+    ShedPhaseLoadsUseCase,
+)
+from apps.power.usecases.watch_phases import WatchPhasesInputDTO, WatchPhasesUseCase
 
 pytestmark = pytest.mark.django_db
 
@@ -134,6 +152,8 @@ HALLWAY_LOAD = replace(
 )
 FRESH_METER = MeterWatch(seen=True, stale_since=None)
 UNSEEN_METER = MeterWatch(seen=False, stale_since=0.0)
+LOST_METER = MeterWatch(seen=True, stale_since=-60.0)
+GUARD_METER = 'phase-meter'
 HALLWAY_HEATING = SeenReading(
     polled_at=MORNING,
     reading=thermostat_reading(
@@ -146,6 +166,16 @@ HALLWAY_HEATING = SeenReading(
 )
 
 House = Callable[[ThermostatStateStore, TemperatureStateStore], None]
+
+
+@dataclass(frozen=True, kw_only=True)
+class GuardedHouse:
+    clock: MonotonicClockStub
+    meter: PhaseMeterStore
+    store: ThermostatStateStore
+    watch: WatchPhasesUseCase
+    shed: ShedPhaseLoadsUseCase
+    cycle: RunHeatingCycleUseCase
 
 
 class ConcurrentWriteThermostatStub(FloorThermostatStub):
@@ -365,6 +395,7 @@ def _watch(
     meter: MeterWatch = FRESH_METER,
     l2: str = '10.0',
     readings: dict[str, SeenReading] | None = None,
+    overloaded: frozenset[LoadPhase] = frozenset(),
 ) -> None:
     loads = GuardLoads(
         records=tuple(replace(record, live=load_live) for record in (HALLWAY_LOAD, KITCHEN_LOAD, LIVING_ROOM_LOAD)),
@@ -382,10 +413,45 @@ def _watch(
     book.remember(
         replace(
             started,
-            phases=replace(started.phases, meter=meter, currents=currents, read_at=dict.fromkeys(currents, 0.0)),
+            phases=replace(
+                started.phases,
+                meter=meter,
+                currents=currents,
+                read_at=dict.fromkeys(currents, 0.0),
+                watches={phase: _overloaded_watch(phase in overloaded) for phase in MEASURED_PHASES},
+            ),
             readings={} if readings is None else readings,
         ),
     )
+
+
+def _overloaded_watch(overloaded: bool) -> PhaseWatch:
+    return PhaseWatch(live=OverloadWatch(overloaded=overloaded), dry_run=OverloadWatch(overloaded=overloaded))
+
+
+def _guarded_moment(clock: MonotonicClockStub) -> datetime:
+    return MORNING + timedelta(seconds=clock())
+
+
+def _guard_seconds(house: GuardedHouse, count: int, l2: str | None) -> list[ShedPhaseLoadsOutputDTO]:
+    outputs: list[ShedPhaseLoadsOutputDTO] = []
+    for _ in range(count):
+        house.clock.advance(1)
+        now = _guarded_moment(house.clock)
+        if l2 is not None:
+            house.meter.record_current(GUARD_METER, Phase.A, Decimal('8.0'), now)
+            house.meter.record_current(GUARD_METER, Phase.B, Decimal(l2), now)
+        house.watch.execute(WatchPhasesInputDTO(now=now))
+        outputs.append(house.shed.execute(ShedPhaseLoadsInputDTO(now=now)))
+    return outputs
+
+
+def _poll_kitchen_off(house: GuardedHouse) -> None:
+    house.store.record_state(KITCHEN, _state('28.0', power=False, heating=False, read_at=_guarded_moment(house.clock)))
+
+
+def _guarded_cycle(house: GuardedHouse) -> RunHeatingCycleOutputDTO:
+    return house.cycle.execute(_at(_guarded_moment(house.clock)))
 
 
 @pytest.fixture
@@ -2579,6 +2645,93 @@ def test_live_start_on_a_stale_meter_waits_a_minute_then_keeps_one_drawing_floor
 
 
 @pytest.fixture
+def f_load_management_off_on_a_silent_overloaded_phase_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    load_gate: GuardLoadGate,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    house: House = request.param
+    house(store, temperatures)
+    _watch(
+        f_guard_book,
+        management_live=False,
+        load_live=False,
+        meter=LOST_METER,
+        overloaded=frozenset({LoadPhase.L2}),
+    )
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, gate=load_gate)
+
+
+@pytest.fixture
+def f_kitchen_shed_while_the_third_clamp_is_silent(
+    clock: MonotonicClockStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    dispatcher: EventDispatcher,
+) -> GuardedHouse:
+    ZoneLoadFactory.create(
+        slug='kitchen',
+        zone=_floor_zone('kitchen', KITCHEN),
+        priority=5,
+        phase=LoadPhase.L2,
+        nominal_amps=Decimal('8.0'),
+        live=True,
+    )
+    LoadSettingsFactory.create(load_management_live=True)
+    DeviceFactory.create(slug=GUARD_METER, kind=DeviceKind.PHASE_METER, driver=DeviceDriver.ESPHOME_PHASE_METER)
+    store.record_state(KITCHEN, _state('28.0', heating=True))
+    meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=UNAVAILABLE_AFTER, clock=clock)
+    zone_switch = ThermostatZoneSwitch(
+        stamps=ZoneRepository(),
+        thermostats=ThermostatProviderStub(thermostats={KITCHEN: f_thermostat}),
+    )
+    house = GuardedHouse(
+        clock=clock,
+        meter=meter,
+        store=store,
+        watch=WatchPhasesUseCase(
+            loads=LoadRepository(),
+            load_settings=LoadSettingsRepository(),
+            devices=DeviceRepository(),
+            meter=meter,
+            thermostats=store,
+            plugs=PlugStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock),
+            book=f_guard_book,
+            clock=clock,
+            dispatcher=EventDispatcher(),
+        ),
+        shed=ShedPhaseLoadsUseCase(
+            loads=LoadRepository(),
+            switcher=LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=zone_switch),
+            book=f_guard_book,
+            clock=clock,
+            dry_run=False,
+            dispatcher=EventDispatcher(),
+        ),
+        cycle=_use_case(
+            store,
+            temperatures,
+            {KITCHEN: f_thermostat},
+            book,
+            dispatcher,
+            gate=GuardLoadGate(book=f_guard_book, clock=clock),
+        ),
+    )
+    _guard_seconds(house, 65, '10.0')
+    _guard_seconds(house, 4, '33.0')
+    _poll_kitchen_off(house)
+    return house
+
+
+@pytest.fixture
 def f_locked_start_zones(store: ThermostatStateStore, temperatures: TemperatureStateStore) -> ZoneStoreStub:
     _idle_floor_zone(store, temperatures)
     _floor_zone('living-room', LIVING_ROOM)
@@ -2612,6 +2765,87 @@ def f_unstamped_start_cycle(
         zones=f_locked_start_zones,
         gate=load_gate,
     )
+
+
+@pytest.mark.parametrize(
+    ('f_load_management_off_on_a_silent_overloaded_phase_cycle', 'setpoint'),
+    [(_idle_floor_zone, Decimal('28.0')), (_idle_air_zone, Decimal('30.0')), (_idle_boosted_zone, Decimal('30.0'))],
+    ids=['floor_mode', 'air_mode', 'boost'],
+    indirect=['f_load_management_off_on_a_silent_overloaded_phase_cycle'],
+)
+def test_start_on_a_phase_that_went_silent_overloaded_with_load_management_off_is_written_as_before_and_journaled(
+    f_load_management_off_on_a_silent_overloaded_phase_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    f_events: list[DomainEvent],
+    setpoint: Decimal,
+) -> None:
+    output = f_load_management_off_on_a_silent_overloaded_phase_cycle.execute(_at(MORNING))
+
+    zone = Zone.objects.get(slug='kitchen')
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        zone.last_command_at,
+        zone.last_dry_run_at,
+        f_events,
+        f_guard_book.last_permit_at(),
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', setpoint)],
+        MORNING,
+        None,
+        [
+            StartWouldWaitDryRun(
+                load='kitchen',
+                name='Кухня',
+                phase=LoadPhase.L2,
+                amps=None,
+                load_amps=Decimal('8.0'),
+                reason=StartRefusal.PHASE_OVERLOADED,
+                occurred_at=MORNING,
+            ),
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(setpoint=setpoint),
+                dry_run=False,
+                occurred_at=MORNING,
+            ),
+        ],
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    ('l2', 'outcome', 'commands'),
+    [
+        ('30.0', ZoneCycleOutcome.WAITING, [('power', False)]),
+        ('15.0', ZoneCycleOutcome.APPLIED, [('power', False), ('power', True)]),
+    ],
+    ids=['phase_overloaded_again_when_it_went_silent', 'phase_calm_when_it_went_silent'],
+)
+def test_floor_restored_on_a_lost_meter_is_started_by_the_cycle_only_if_its_phase_allows_it_by_then(
+    f_kitchen_shed_while_the_third_clamp_is_silent: GuardedHouse,
+    f_thermostat: FloorThermostatStub,
+    l2: str,
+    outcome: ZoneCycleOutcome,
+    commands: list[tuple[str, object]],
+) -> None:
+    calm = _guard_seconds(f_kitchen_shed_while_the_third_clamp_is_silent, 125, '12.0')
+    throttled = _guarded_cycle(f_kitchen_shed_while_the_third_clamp_is_silent)
+    _guard_seconds(f_kitchen_shed_while_the_third_clamp_is_silent, 10, l2)
+    _guard_seconds(f_kitchen_shed_while_the_third_clamp_is_silent, 15, None)
+    f_kitchen_shed_while_the_third_clamp_is_silent.clock.advance(1700)
+    _poll_kitchen_off(f_kitchen_shed_while_the_third_clamp_is_silent)
+    _guard_seconds(f_kitchen_shed_while_the_third_clamp_is_silent, 1, None)
+    started = _guarded_cycle(f_kitchen_shed_while_the_third_clamp_is_silent)
+
+    assert (
+        [output.restored for output in calm if output.restored],
+        throttled.outcomes,
+        started.outcomes,
+        f_thermostat.commands,
+    ) == ([('kitchen',)], {'kitchen': ZoneCycleOutcome.THROTTLED}, {'kitchen': outcome}, commands)
 
 
 def test_start_that_would_wait_is_journaled_when_its_zone_then_fails_on_the_database(

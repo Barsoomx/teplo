@@ -49,6 +49,7 @@ GRANTED = StartDecision(load='kitchen', refusal=None, overrun=None)
 LIVING_ROOM = replace(KITCHEN, slug='living-room', priority=7, phase=LoadPhase.L3)
 GRANTED_LIVING_ROOM = StartDecision(load='living-room', refusal=None, overrun=None)
 UNKNOWN_KITCHEN = replace(KITCHEN, phase=LoadPhase.UNKNOWN)
+L3_SILENT = {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: Decimal('15.0')}
 
 
 def _decide(
@@ -57,18 +58,25 @@ def _decide(
     *,
     loads: list[LoadStatus] | None = None,
     last_permit_at: float | None = None,
+    currents: dict[LoadPhase, Decimal] | None = None,
+    overloaded: frozenset[LoadPhase] = frozenset(),
 ) -> StartDecision:
     return decide_start(
         load,
         meter=meter,
         view=GuardView(
-            currents=CURRENTS if meter is MeterCondition.FRESH else {},
+            currents=_currents(meter) if currents is None else currents,
             loads=(load,) if loads is None else tuple(loads),
+            overloaded=overloaded,
         ),
         last_permit_at=last_permit_at,
         at=AT,
         thresholds=THRESHOLDS,
     )
+
+
+def _currents(meter: MeterCondition) -> dict[LoadPhase, Decimal]:
+    return CURRENTS if meter is MeterCondition.FRESH else {}
 
 
 @pytest.mark.parametrize(
@@ -175,6 +183,67 @@ def test_lost_meter_counts_floors_of_unknown_phase_as_one_more_phase(
     expected: StartDecision,
 ) -> None:
     assert _decide(UNKNOWN_KITCHEN, MeterCondition.LOST, loads=[UNKNOWN_KITCHEN, *others]) == expected
+
+
+@pytest.mark.parametrize(
+    ('load', 'expected'),
+    [
+        (replace(KITCHEN, amps=Decimal('8.0')), GRANTED),
+        (
+            replace(KITCHEN, amps=Decimal('8.5')),
+            StartDecision(
+                load='kitchen',
+                refusal=StartRefusal.NO_HEADROOM,
+                overrun=PhaseOverrun(phase=LoadPhase.L1, amps=Decimal('20.5')),
+            ),
+        ),
+        (
+            replace(UNKNOWN_KITCHEN, amps=Decimal('5.5')),
+            StartDecision(
+                load='kitchen',
+                refusal=StartRefusal.NO_HEADROOM,
+                overrun=PhaseOverrun(phase=LoadPhase.L2, amps=Decimal('20.5')),
+            ),
+        ),
+    ],
+    ids=['room_on_its_phase', 'no_room_on_its_phase', 'unknown_phase_without_room_on_a_phase_that_reports'],
+)
+def test_lost_meter_starts_a_floor_on_a_phase_that_still_reports_only_with_room_as_a_fresh_meter_would(
+    load: LoadStatus,
+    expected: StartDecision,
+) -> None:
+    assert _decide(load, MeterCondition.LOST, currents=L3_SILENT) == expected
+
+
+@pytest.mark.parametrize(
+    ('load', 'overloaded', 'expected'),
+    [
+        (
+            replace(KITCHEN, phase=LoadPhase.L3),
+            frozenset({LoadPhase.L3}),
+            StartDecision(load='kitchen', refusal=StartRefusal.PHASE_OVERLOADED, overrun=None),
+        ),
+        (replace(KITCHEN, phase=LoadPhase.L3), frozenset({LoadPhase.L2}), GRANTED),
+        (replace(KITCHEN, phase=LoadPhase.L3), frozenset(), GRANTED),
+        (
+            replace(UNKNOWN_KITCHEN, amps=Decimal('5.0')),
+            frozenset({LoadPhase.L3}),
+            StartDecision(load='kitchen', refusal=StartRefusal.PHASE_OVERLOADED, overrun=None),
+        ),
+    ],
+    ids=[
+        'its_phase_went_silent_overloaded',
+        'a_phase_that_reports_is_overloaded',
+        'its_phase_went_silent_without_an_overload',
+        'unknown_phase_beside_a_phase_that_went_silent_overloaded',
+    ],
+)
+def test_lost_meter_starts_no_floor_on_a_phase_that_went_silent_overloaded(
+    load: LoadStatus,
+    overloaded: frozenset[LoadPhase],
+    expected: StartDecision,
+) -> None:
+    assert _decide(load, MeterCondition.LOST, currents=L3_SILENT, overloaded=overloaded) == expected
 
 
 def test_lost_meter_starts_floors_thirty_seconds_apart() -> None:
