@@ -3,9 +3,11 @@
 substitutions:
   node_name: teplo-phase-meter
   friendly_name: Phase meter
-  l1_pin: GPIO4
+  # Which clamp went on which pin was found by switching each floor on: teplo had learned the living room on L1 and
+  # the second-floor bathroom on L3, and their steps showed up on GPIO6 and GPIO4.
+  l1_pin: GPIO6
   l2_pin: GPIO5
-  l3_pin: GPIO6
+  l3_pin: GPIO4
 
 packages:
   node: !include common/node.yaml

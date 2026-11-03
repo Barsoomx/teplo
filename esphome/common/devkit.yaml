@@ -1,0 +1,8 @@
+# ESP32 DevKit (ESP32-WROOM-32): its PCB antenna reaches further than the SuperMini's chip antenna, so the
+# transmit power stays at its maximum. GPIO21 and GPIO22 are the board's usual I2C pins.
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    sdkconfig_options:
+      CONFIG_BT_ENABLED: n

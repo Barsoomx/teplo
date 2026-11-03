@@ -1,10 +1,10 @@
 substitutions:
   node_name: teplo-air-second-floor
   friendly_name: Second floor air
-  i2c_sda: GPIO8
-  i2c_scl: GPIO9
+  i2c_sda: GPIO21
+  i2c_scl: GPIO22
 
 packages:
   node: !include common/node.yaml
-  s3: !include common/s3.yaml
+  devkit: !include common/devkit.yaml
   air: !include common/air.yaml

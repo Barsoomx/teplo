@@ -110,7 +110,7 @@ A Tuya device's local key comes from the cloud once, via the Smart Life QR login
 ESPHome firmware publishes readings to the Mosquitto broker on the router. Configurations live in `esphome/`.
 
 - **Phase meter:** ESP32-S3 with a U.FL antenna led outside the shed's metal door, and three SCT-013-050 clamps (1 V at 50 A) on the input phase conductors, before the stabilizers. Each clamp sits on a single conductor. The clamps share a 1.65 V bias (two 10 kΩ resistors, 10 µF to ground) and feed ADC1 pins. Reports RMS current per phase every second.
-- **Air sensors:** ESP32-C3 with SHT3x over I2C, the sensor 5–10 cm away from the board; the second floor, out of reach of the SuperMini's chip antenna, runs on an ESP32-S3 with a U.FL antenna. Reports every 30 seconds.
+- **Air sensors:** ESP32-C3 with SHT3x over I2C, the sensor 5–10 cm away from the board; the second floor, out of reach of the SuperMini's chip antenna, runs on an ESP32 DevKit, whose PCB antenna reaches further. Reports every 30 seconds.
 - **Outdoor sensor:** DS18B20 on a 3 m cable with a 4.7 kΩ pull-up, the board indoors.
 - **Link:** the air and outdoor nodes are ESP32-C3 SuperMini boards, whose crystal sits next to the antenna. At full transmit power their link fails, and at 8.5 dB the router barely hears a node a room or two away, so they transmit at 10 dB; a node may set its own power. Every node keeps its radio awake (no Wi-Fi power save) and Bluetooth off, pings the broker every 60 seconds, and restarts after 5 minutes without it, as a SuperMini can hang with its Wi-Fi associated and nothing passing.
 
