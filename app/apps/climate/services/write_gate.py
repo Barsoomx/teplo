@@ -33,7 +33,7 @@ class ZoneWriteGate:
 
     def override(self, zone: str, at: datetime) -> None:
         with self._lock:
-            self._slots[zone] = WriteSlot(at=at, moment=self._clock())
+            self._slots[zone] = WriteSlot(at=at, moment=self._clock(), override=True)
 
     def holds(self, reservation: WriteReservation) -> bool:
         with self._lock:

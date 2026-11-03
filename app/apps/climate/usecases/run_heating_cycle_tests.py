@@ -83,6 +83,7 @@ FIXED_START = datetime(2026, 10, 29, 3, 30, tzinfo=MOSCOW)
 OPTIMAL_START = datetime(2026, 10, 29, 3, 50, tzinfo=MOSCOW)
 CAPPED_START = COMFORT_AT - timedelta(hours=4)
 BOOST_END = MORNING + timedelta(hours=2)
+STEPPED_FORWARD = MORNING + timedelta(hours=2)
 FRESH = timedelta(0)
 MINUTE = timedelta(minutes=1)
 UNAVAILABLE_AFTER = timedelta(minutes=10)
@@ -183,6 +184,7 @@ class GuardedHouse:
 
 @dataclass(frozen=True, kw_only=True)
 class GatedHouse:
+    clock: MonotonicClockStub
     cycle: Callable[[], RunHeatingCycleUseCase]
     locked_cycle: Callable[[], RunHeatingCycleUseCase]
     boost: BoostZoneUseCase
@@ -263,6 +265,24 @@ def _use_case(
 
 def _write_gate(clock: MonotonicClockStub) -> ZoneWriteGate:
     return ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=MORNING))
+
+
+def _gated_house(
+    clock: MonotonicClockStub,
+    writes: ZoneWriteGate,
+    cycle: Callable[[ZoneStore | None], RunHeatingCycleUseCase],
+) -> GatedHouse:
+    return GatedHouse(
+        clock=clock,
+        cycle=lambda: cycle(None),
+        locked_cycle=lambda: cycle(
+            ZoneStoreStub(
+                zones=ZoneRepository.all_settings(),
+                errors={('last_command_at', 'kitchen'): OperationalError(LOCKED)},
+            ),
+        ),
+        boost=BoostZoneUseCase(zones=ZoneRepository(), writes=writes, dispatcher=EventDispatcher()),
+    )
 
 
 def _cycle(
@@ -3371,23 +3391,47 @@ def f_gated_house(
     _floor_zone('kitchen', KITCHEN)
     store.record_state(KITCHEN, _state('22.0'))
 
-    def cycle(zones: ZoneStore | None = None) -> RunHeatingCycleUseCase:
+    def cycle(zones: ZoneStore | None) -> RunHeatingCycleUseCase:
         writes = write_gate if one_gate else _write_gate(clock)
         return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, zones=zones, writes=writes)
 
-    def locked_cycle() -> RunHeatingCycleUseCase:
-        return cycle(
-            ZoneStoreStub(
-                zones=ZoneRepository.all_settings(),
-                errors={('last_command_at', 'kitchen'): OperationalError(LOCKED)},
-            ),
+    return _gated_house(clock, write_gate, cycle)
+
+
+@pytest.fixture
+def f_kitchen_shed_live(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_held_gate: LoadGateStub,
+    dispatcher: EventDispatcher,
+) -> GatedHouse:
+    write_clock = MonotonicClockStub(now=0.0)
+    writes = _write_gate(write_clock)
+    _floor_zone('kitchen', KITCHEN, last_command_at=MORNING)
+    store.record_state(KITCHEN, _state('22.0', power=False))
+    writes.override('kitchen', MORNING)
+
+    def cycle(zones: ZoneStore | None) -> RunHeatingCycleUseCase:
+        return _use_case(
+            store,
+            temperatures,
+            {KITCHEN: f_thermostat},
+            book,
+            dispatcher,
+            zones=zones,
+            gate=f_held_gate,
+            writes=writes,
         )
 
-    return GatedHouse(
-        cycle=cycle,
-        locked_cycle=locked_cycle,
-        boost=BoostZoneUseCase(zones=ZoneRepository(), writes=write_gate, dispatcher=EventDispatcher()),
-    )
+    return _gated_house(write_clock, writes, cycle)
+
+
+@pytest.fixture
+def f_kitchen_restored_after_a_live_shed(f_kitchen_shed_live: GatedHouse, f_held_gate: LoadGateStub) -> GatedHouse:
+    f_held_gate.release('kitchen')
+    return f_kitchen_shed_live
 
 
 @pytest.fixture
@@ -3555,6 +3599,36 @@ def test_write_gate_gives_a_refused_stamp_its_slot_back_so_the_next_cycle_writes
         [('setpoint', Decimal('28.0'))],
         MORNING + MINUTE,
         [_issued('kitchen', '28.0', MORNING + MINUTE)],
+    )
+
+
+def test_restored_zone_waits_thirty_minutes_after_its_live_shed_on_a_clock_stepped_forward(
+    f_kitchen_restored_after_a_live_shed: GatedHouse,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    f_kitchen_restored_after_a_live_shed.clock.advance(180)
+    held = f_kitchen_restored_after_a_live_shed.cycle().execute(_at(STEPPED_FORWARD))
+    f_kitchen_restored_after_a_live_shed.clock.advance(1620)
+    written = f_kitchen_restored_after_a_live_shed.cycle().execute(_at(STEPPED_FORWARD + timedelta(minutes=27)))
+
+    assert (
+        [output.outcomes['kitchen'] for output in (held, written)],
+        f_thermostat.commands,
+        Zone.objects.get(slug='kitchen').last_command_at,
+        f_events,
+    ) == (
+        [ZoneCycleOutcome.THROTTLED, ZoneCycleOutcome.APPLIED],
+        [('power', True), ('setpoint', Decimal('28.0'))],
+        STEPPED_FORWARD + timedelta(minutes=27),
+        [
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(power=True, setpoint=Decimal('28.0')),
+                dry_run=False,
+                occurred_at=STEPPED_FORWARD + timedelta(minutes=27),
+            ),
+        ],
     )
 
 

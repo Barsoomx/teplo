@@ -60,6 +60,28 @@ def test_slot_whose_stamp_the_caller_read_follows_that_stamp_as_before(slot: Wri
 
 
 @pytest.mark.parametrize(
+    ('slot', 'expected'),
+    [
+        (WriteSlot(at=NOW - timedelta(hours=2), moment=MOMENT - 180, override=True), False),
+        (WriteSlot(at=NOW + timedelta(hours=1), moment=MOMENT - 180, override=True), False),
+        (WriteSlot(at=NOW - timedelta(minutes=29), moment=MOMENT - 1800, override=True), False),
+        (WriteSlot(at=NOW - timedelta(minutes=30), moment=MOMENT - 1800, override=True), True),
+    ],
+    ids=[
+        'stamped_hours_ago_by_a_clock_stepped_forward_since',
+        'stamped_later_than_the_clock_reads_since_it_was_set_back',
+        'within_thirty_minutes_of_the_stamp',
+        'thirty_minutes_after_the_shed_on_both_clocks',
+    ],
+)
+def test_shed_slot_whose_stamp_the_caller_read_holds_thirty_minutes_on_the_monotonic_clock_as_well(
+    slot: WriteSlot,
+    expected: bool,
+) -> None:
+    assert slot_free(slot, stamped_at=slot.at, now=NOW, current=CURRENT, moment=MOMENT) is expected
+
+
+@pytest.mark.parametrize(
     ('slot', 'stamped_at', 'expected'),
     [
         (WriteSlot(at=NOW - timedelta(minutes=2), moment=MOMENT - 120), NOW - timedelta(hours=1), False),

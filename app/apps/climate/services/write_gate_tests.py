@@ -11,7 +11,7 @@ NOW = datetime(2026, 11, 3, 7, 0, tzinfo=UTC)
 START = 1000.0
 HALF_HOUR = timedelta(minutes=30)
 WRITTEN = WriteSlot(at=NOW, moment=START)
-OVERRIDDEN = WriteSlot(at=NOW + timedelta(seconds=10), moment=START + 10)
+OVERRIDDEN = WriteSlot(at=NOW + timedelta(seconds=10), moment=START + 10, override=True)
 
 
 def _living_room_written(gate: ZoneWriteGate) -> None:
@@ -179,6 +179,25 @@ def test_override_takes_the_slot_within_thirty_minutes_and_holds_every_later_wri
             previous=OVERRIDDEN,
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'allowed'),
+    [(1799, False), (1800, True)],
+    ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
+)
+@pytest.mark.usefixtures('f_reservation_overridden_by_a_shed')
+def test_writer_that_read_the_stamp_of_a_shed_waits_thirty_minutes_on_the_monotonic_clock_whatever_the_clock_reads(
+    f_gate: ZoneWriteGate,
+    f_clock: MonotonicClockStub,
+    seconds: int,
+    allowed: bool,
+) -> None:
+    f_clock.advance(seconds)
+
+    reservation = f_gate.reserve('kitchen', NOW + timedelta(hours=2), stamped_at=OVERRIDDEN.at)
+
+    assert (reservation is not None) is allowed
 
 
 def test_cancelled_reservation_hands_the_slot_back_to_the_write_before_it(

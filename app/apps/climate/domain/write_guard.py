@@ -8,6 +8,7 @@ MIN_WRITE_INTERVAL = timedelta(minutes=30)
 class WriteSlot:
     at: datetime
     moment: float
+    override: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -33,7 +34,18 @@ def slot_free(
     current: datetime,
     moment: float,
 ) -> bool:
-    if slot is None or (slot.at == stamped_at and not now < slot.at <= current):
+    if slot is None:
         return write_allowed(stamped_at, now)
 
+    if slot.at != stamped_at or now < slot.at <= current:
+        return _waited(slot, moment)
+
+    return write_allowed(stamped_at, now) and not override_holds(slot, moment)
+
+
+def override_holds(slot: WriteSlot | None, moment: float) -> bool:
+    return slot is not None and slot.override and not _waited(slot, moment)
+
+
+def _waited(slot: WriteSlot, moment: float) -> bool:
     return moment - slot.moment >= MIN_WRITE_INTERVAL.total_seconds()
