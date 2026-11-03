@@ -215,6 +215,7 @@ def _house(
     write_errors: tuple[Exception, ...] = (),
     zone_stamped: bool = True,
     zone_on_error: DomainError | None = None,
+    zone_on_stamp_errors: tuple[Exception, ...] = (),
 ) -> House:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
@@ -233,7 +234,12 @@ def _house(
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
-    zones = ZoneSwitchStub(error=None, stamped=zone_stamped, on_error=zone_on_error)
+    zones = ZoneSwitchStub(
+        error=None,
+        stamped=zone_stamped,
+        on_error=zone_on_error,
+        on_stamp_errors=zone_on_stamp_errors,
+    )
     book = GuardBook()
     return House(
         guard=Guard(
@@ -533,6 +539,37 @@ def f_zone_release_that_failed() -> House:
     _pause(house.guard, 1740)
     _seconds(house.guard, 3, '15.0')
     return house
+
+
+@pytest.fixture
+def f_zone_release_coming_due_on_a_locked_database() -> House:
+    house = _house(
+        _live(KITCHEN, LIVING_ROOM),
+        LIVE_CONTROL,
+        LIVE_ZONES,
+        zone_on_stamp_errors=(OperationalError('database is locked'),),
+    )
+    _seconds(house.guard, 4, '26.0')
+    _zone_live_control_off(house)
+    _seconds(house.guard, 57, '15.0')
+    _pause(house.guard, 1740)
+    return house
+
+
+@pytest.fixture
+def f_zone_release_a_locked_database_refused(f_zone_release_coming_due_on_a_locked_database: House) -> House:
+    _seconds(f_zone_release_coming_due_on_a_locked_database.guard, 3, '15.0')
+    return f_zone_release_coming_due_on_a_locked_database
+
+
+@pytest.fixture
+def f_zone_release_a_locked_database_refused_with_its_live_control_back_on(
+    f_zone_release_a_locked_database_refused: House,
+) -> House:
+    _zone_live_control_on(f_zone_release_a_locked_database_refused)
+    _pause(f_zone_release_a_locked_database_refused.guard, 1)
+    _thermostat_read_off(f_zone_release_a_locked_database_refused, 'thermostat-kitchen', 1805)
+    return f_zone_release_a_locked_database_refused
 
 
 @pytest.fixture
@@ -1871,6 +1908,115 @@ def test_zone_release_that_failed_is_tried_again_only_thirty_minutes_after_the_a
                 error='timed out',
                 error_code='device_unavailable',
                 occurred_at=_moment(1804),
+            ),
+        ],
+    )
+
+
+def test_zone_release_whose_stamp_a_locked_database_refuses_writes_nothing_and_keeps_the_zone_shed_and_held(
+    f_zone_release_coming_due_on_a_locked_database: House,
+) -> None:
+    with capture_logs() as logs:
+        outputs = _seconds(f_zone_release_coming_due_on_a_locked_database.guard, 3, '15.0')
+
+    assert (
+        _restored_at(outputs, 1802),
+        f_zone_release_coming_due_on_a_locked_database.zones.switched_on,
+        f_zone_release_coming_due_on_a_locked_database.book.held_zones(),
+        _failed_commands(f_zone_release_coming_due_on_a_locked_database),
+        f_zone_release_coming_due_on_a_locked_database.loads.writes,
+        f_zone_release_coming_due_on_a_locked_database.events[2:],
+        [log for log in logs if log['event'] == 'load_command_failed'],
+    ) == (
+        [],
+        [],
+        frozenset({'kitchen'}),
+        {'kitchen': START + 1804},
+        [
+            (
+                'mark_shed',
+                'kitchen',
+                LiveShed(at=_moment(4), reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+            ),
+        ],
+        [PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('15.0'), occurred_at=_moment(1802))],
+        [
+            {
+                'event': 'load_command_failed',
+                'log_level': 'warning',
+                'load': 'kitchen',
+                'device': 'thermostat-kitchen',
+                'command': LoadCommand.RESTORE,
+                'error': 'database is locked',
+            },
+        ],
+    )
+
+
+def test_zone_release_a_locked_database_refused_is_tried_again_thirty_minutes_after_the_attempt(
+    f_zone_release_a_locked_database_refused: House,
+) -> None:
+    _pause(f_zone_release_a_locked_database_refused.guard, 29)
+    _thermostat_read_off(f_zone_release_a_locked_database_refused, 'thermostat-kitchen', 1833)
+    soon = _seconds(f_zone_release_a_locked_database_refused.guard, 60, '15.0')
+    _pause(f_zone_release_a_locked_database_refused.guard, 1700)
+    _thermostat_read_off(f_zone_release_a_locked_database_refused, 'thermostat-kitchen', 3593)
+    late = _seconds(f_zone_release_a_locked_database_refused.guard, 15, '15.0')
+
+    assert (
+        _restored_at(soon, 1834),
+        _restored_at(late, 3594),
+        f_zone_release_a_locked_database_refused.zones.switched_on,
+        f_zone_release_a_locked_database_refused.book.held_zones(),
+        f_zone_release_a_locked_database_refused.events[3:],
+    ) == (
+        [],
+        [(3604, ('kitchen',))],
+        [('kitchen', 'thermostat-kitchen', _moment(3604))],
+        frozenset(),
+        [
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('15.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.RELEASED,
+                switched_on=True,
+                occurred_at=_moment(3604),
+            ),
+        ],
+    )
+
+
+def test_zone_whose_release_a_locked_database_refused_is_handed_back_unwritten_once_its_live_control_is_back_on(
+    f_zone_release_a_locked_database_refused_with_its_live_control_back_on: House,
+) -> None:
+    outputs = _seconds(f_zone_release_a_locked_database_refused_with_its_live_control_back_on.guard, 60, '10.0')
+
+    assert (
+        _restored_at(outputs, 1806),
+        f_zone_release_a_locked_database_refused_with_its_live_control_back_on.zones.switched_on,
+        f_zone_release_a_locked_database_refused_with_its_live_control_back_on.book.held_zones(),
+        f_zone_release_a_locked_database_refused_with_its_live_control_back_on.events[3:],
+    ) == (
+        [(1862, ('kitchen',))],
+        [],
+        frozenset(),
+        [
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('10.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                switched_on=False,
+                occurred_at=_moment(1862),
             ),
         ],
     )

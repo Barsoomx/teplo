@@ -21,18 +21,17 @@ class ThermostatZoneSwitch:
         return cls(stamps=ZoneRepository(), thermostats=driver_registry)
 
     def switch_off(self, zone: str, thermostat: str, at: datetime) -> bool:
-        return self._switch(zone, thermostat, power=False, at=at)
-
-    def switch_on(self, zone: str, thermostat: str, at: datetime) -> bool:
-        return self._switch(zone, thermostat, power=True, at=at)
-
-    def _switch(self, zone: str, thermostat: str, *, power: bool, at: datetime) -> bool:
         device = self._thermostats.thermostat(thermostat)
         try:
-            device.set_power(power)
+            device.set_power(False)
         finally:
             stamped = self._stamped(zone, at)
         return stamped
+
+    def switch_on(self, zone: str, thermostat: str, at: datetime) -> None:
+        device = self._thermostats.thermostat(thermostat)
+        self._stamps.mark_commanded(zone, at)
+        device.set_power(True)
 
     def _stamped(self, zone: str, at: datetime) -> bool:
         try:

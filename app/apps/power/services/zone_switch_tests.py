@@ -74,47 +74,55 @@ def f_unreachable_switch_without_a_database(unreachable_thermostat: FloorThermos
     )
 
 
-@pytest.mark.parametrize(
-    ('switch', 'commands'),
-    [(ThermostatZoneSwitch.switch_off, [('power', False)]), (ThermostatZoneSwitch.switch_on, [('power', True)])],
-    ids=['off', 'on'],
-)
-def test_switch_powers_the_thermostat_within_the_write_budget_and_stamps_the_write(
+def test_switch_off_powers_the_thermostat_off_stamps_the_write_and_says_it_did(
     f_switch: ThermostatZoneSwitch,
     f_kitchen: Zone,
     f_thermostat: FloorThermostatStub,
-    switch: Callable[[ThermostatZoneSwitch, str, str, datetime], bool],
-    commands: list[tuple[str, object]],
 ) -> None:
-    stamped = switch(f_switch, 'kitchen', 'thermostat-kitchen', NOW)
+    stamped = f_switch.switch_off('kitchen', 'thermostat-kitchen', NOW)
 
     f_kitchen.refresh_from_db()
-    assert (stamped, f_thermostat.commands, f_kitchen.last_command_at) == (True, commands, NOW)
+    assert (stamped, f_thermostat.commands, f_kitchen.last_command_at) == (True, [('power', False)], NOW)
 
 
+def test_switch_on_powers_the_thermostat_on_and_stamps_the_write(
+    f_switch: ThermostatZoneSwitch,
+    f_kitchen: Zone,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    f_switch.switch_on('kitchen', 'thermostat-kitchen', NOW)
+
+    f_kitchen.refresh_from_db()
+    assert (f_thermostat.commands, f_kitchen.last_command_at) == ([('power', True)], NOW)
+
+
+@pytest.mark.parametrize('switch', [ThermostatZoneSwitch.switch_off, ThermostatZoneSwitch.switch_on], ids=['off', 'on'])
 def test_failed_switch_still_spends_the_write_budget(
     f_unreachable_switch: ThermostatZoneSwitch,
     f_kitchen: Zone,
+    switch: Callable[[ThermostatZoneSwitch, str, str, datetime], object],
 ) -> None:
     with pytest.raises(DeviceUnavailableError):
-        f_unreachable_switch.switch_off('kitchen', 'thermostat-kitchen', NOW)
+        switch(f_unreachable_switch, 'kitchen', 'thermostat-kitchen', NOW)
 
     f_kitchen.refresh_from_db()
     assert f_kitchen.last_command_at == NOW
 
 
+@pytest.mark.parametrize('switch', [ThermostatZoneSwitch.switch_off, ThermostatZoneSwitch.switch_on], ids=['off', 'on'])
 def test_switch_that_cannot_find_its_thermostat_writes_nothing_and_spends_no_write_budget(
     f_switch_without_the_thermostat: ThermostatZoneSwitch,
     f_kitchen: Zone,
+    switch: Callable[[ThermostatZoneSwitch, str, str, datetime], object],
 ) -> None:
     with pytest.raises(DriverNotImplementedError):
-        f_switch_without_the_thermostat.switch_off('kitchen', 'thermostat-kitchen', NOW)
+        switch(f_switch_without_the_thermostat, 'kitchen', 'thermostat-kitchen', NOW)
 
     f_kitchen.refresh_from_db()
     assert f_kitchen.last_command_at == NOW - timedelta(minutes=5)
 
 
-def test_switch_reaches_the_thermostat_and_says_so_when_the_database_cannot_stamp_the_write(
+def test_switch_off_reaches_the_thermostat_and_says_so_when_the_database_cannot_stamp_the_write(
     f_switch_without_a_database: ThermostatZoneSwitch,
     f_thermostat: FloorThermostatStub,
 ) -> None:
@@ -123,11 +131,21 @@ def test_switch_reaches_the_thermostat_and_says_so_when_the_database_cannot_stam
     assert (stamped, f_thermostat.commands) == (False, [('power', False)])
 
 
-def test_failed_switch_whose_stamp_the_database_refuses_raises_the_device_error_and_logs_the_lost_stamp(
+def test_switch_on_writes_nothing_when_the_database_cannot_stamp_the_write(
+    f_switch_without_a_database: ThermostatZoneSwitch,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    with pytest.raises(OperationalError):
+        f_switch_without_a_database.switch_on('kitchen', 'thermostat-kitchen', NOW)
+
+    assert f_thermostat.commands == []
+
+
+def test_failed_switch_off_whose_stamp_the_database_refuses_raises_the_device_error_and_logs_the_lost_stamp(
     f_unreachable_switch_without_a_database: ThermostatZoneSwitch,
 ) -> None:
     with capture_logs() as logs, pytest.raises(DeviceUnavailableError):
-        f_unreachable_switch_without_a_database.switch_on('kitchen', 'thermostat-kitchen', NOW)
+        f_unreachable_switch_without_a_database.switch_off('kitchen', 'thermostat-kitchen', NOW)
 
     assert logs == [
         {
