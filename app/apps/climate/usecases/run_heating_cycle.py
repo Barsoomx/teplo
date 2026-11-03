@@ -232,14 +232,15 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         return outcome
 
     def _drive(self, run: ZoneRun, permits: StartPermits, now: datetime) -> ZoneCycleOutcome:
-        note = permits.note(run.zone.slug)
-        if note is not None:
-            self._event_store.add_event(note)
         if run.drive.outcome is not None:
             return run.drive.outcome
 
-        if run.drive.starts and not permits.granted(run.zone.slug, writes_live=run.conditions.writes_live):
-            return ZoneCycleOutcome.WAITING
+        if run.drive.starts:
+            note = permits.note(run.zone.slug)
+            if note is not None:
+                self._event_store.add_event(note)
+            if not permits.granted(run.zone.slug, writes_live=run.conditions.writes_live):
+                return ZoneCycleOutcome.WAITING
 
         if not run.conditions.writes_live:
             return self._journal_dry_run(run.zone, run.drive.change, now)

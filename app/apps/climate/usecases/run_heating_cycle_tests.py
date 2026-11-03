@@ -2682,12 +2682,12 @@ def f_poll_between_writes_cycle(
     load_gate: GuardLoadGate,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
-    management_live, cached = request.param
+    management_live, cached, l2 = request.param
     _floor_zone('kitchen', KITCHEN)
     _floor_zone('living-room', LIVING_ROOM)
     store.record_state(KITCHEN, _state('22.0'))
     store.record_state(LIVING_ROOM, cached)
-    _watch(f_guard_book, management_live=management_live, load_live=management_live)
+    _watch(f_guard_book, management_live=management_live, load_live=management_live, l2=l2)
     thermostats: dict[str, FloorThermostat] = {
         KITCHEN: f_kitchen_written_while_living_room_is_polled,
         LIVING_ROOM: f_living_room_thermostat,
@@ -2731,7 +2731,7 @@ def f_shed_between_writes_cycle(
     ),
     [
         (
-            (False, _state('22.0', heating=False)),
+            (False, _state('22.0', heating=False), '10.0'),
             _state('28.0', heating=False),
             ZoneCycleOutcome.UNCHANGED,
             [],
@@ -2739,15 +2739,36 @@ def f_shed_between_writes_cycle(
             [_issued('kitchen', '28.0', MORNING)],
         ),
         (
-            (False, _state('28.0')),
+            (False, _state('28.0'), '10.0'),
             _state('25.0', heating=False),
             ZoneCycleOutcome.APPLIED,
             [('setpoint', Decimal('28.0'))],
             MORNING,
             [_issued('kitchen', '28.0', MORNING), _issued('living-room', '28.0', MORNING)],
         ),
+        (
+            (False, _state('22.0', heating=False), '13.0'),
+            _state('28.0', heating=False),
+            ZoneCycleOutcome.UNCHANGED,
+            [],
+            None,
+            [_issued('kitchen', '28.0', MORNING)],
+        ),
+        (
+            (False, _state('22.0', heating=False), '13.0'),
+            _state('22.0', heating=True),
+            ZoneCycleOutcome.APPLIED,
+            [('setpoint', Decimal('28.0'))],
+            MORNING,
+            [_issued('kitchen', '28.0', MORNING), _issued('living-room', '28.0', MORNING)],
+        ),
     ],
-    ids=['poll_finds_the_target_already_set', 'poll_finds_the_setpoint_moved_by_hand'],
+    ids=[
+        'poll_finds_the_target_already_set',
+        'poll_finds_the_setpoint_moved_by_hand',
+        'poll_finds_a_start_that_would_wait_at_its_target',
+        'poll_finds_a_start_that_would_wait_heating',
+    ],
     indirect=['f_poll_between_writes_cycle', 'f_kitchen_written_while_living_room_is_polled'],
 )
 def test_cycle_with_load_management_off_drives_each_zone_on_its_thermostat_as_polled_by_its_turn(
@@ -2782,7 +2803,7 @@ def test_cycle_with_load_management_off_drives_each_zone_on_its_thermostat_as_po
 
 @pytest.mark.parametrize(
     ('f_poll_between_writes_cycle', 'f_kitchen_written_while_living_room_is_polled'),
-    [((True, _state('28.0')), _state('25.0', heating=False))],
+    [((True, _state('28.0'), '10.0'), _state('25.0', heating=False))],
     indirect=True,
 )
 def test_live_start_a_poll_reveals_by_its_turn_waits_for_a_permit_it_did_not_ask_for(
