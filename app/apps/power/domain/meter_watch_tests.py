@@ -137,10 +137,21 @@ def test_limp_house_counts_only_floors_that_draw_and_are_not_shed() -> None:
     assert limp_sheds(loads, EVERY_FLOOR) == ()
 
 
-def _limp_restore(sheds: list[Shed], loads: list[LoadStatus], last_restore_at: float | None = None) -> Shed | None:
+def _limp_restore(
+    sheds: list[Shed],
+    loads: list[LoadStatus],
+    last_restore_at: float | None = None,
+    *,
+    calm: frozenset[LoadPhase] = frozenset(),
+    overloaded: frozenset[LoadPhase] = frozenset(),
+    currents: dict[LoadPhase, Decimal] | None = None,
+) -> Shed | None:
     return choose_limp_restore(
         sheds,
         loads,
+        calm=calm,
+        overloaded=overloaded,
+        currents={} if currents is None else currents,
         last_restore_at=last_restore_at,
         at=RESTORED_AT,
         thresholds=THRESHOLDS,
@@ -185,3 +196,51 @@ def test_lost_meter_brings_a_shed_floor_back_once_no_other_floor_draws_on_its_ph
 )
 def test_lost_meter_brings_shed_floors_back_one_a_minute(last_restore_at: float, expected: Shed | None) -> None:
     assert _limp_restore([KITCHEN_SHED], [KITCHEN_OFF], last_restore_at) == expected
+
+
+@pytest.mark.parametrize(
+    ('sheds', 'overloaded', 'expected'),
+    [
+        ([KITCHEN_SHED], frozenset({LoadPhase.L2}), None),
+        ([KITCHEN_SHED], frozenset({LoadPhase.L1}), KITCHEN_SHED),
+        ([KITCHEN_SHED, HALLWAY_SHED], frozenset({LoadPhase.L2}), HALLWAY_SHED),
+    ],
+    ids=['its_overload_still_on', 'another_phase_overloaded', 'a_floor_shed_for_a_phase_that_calmed'],
+)
+def test_lost_meter_keeps_a_floor_off_while_the_phase_it_was_shed_for_went_silent_overloaded(
+    sheds: list[Shed],
+    overloaded: frozenset[LoadPhase],
+    expected: Shed | None,
+) -> None:
+    assert _limp_restore(sheds, [KITCHEN_OFF, HALLWAY_OFF], overloaded=overloaded) == expected
+
+
+@pytest.mark.parametrize(
+    ('loads', 'currents', 'calm', 'expected'),
+    [
+        ([KITCHEN_OFF], {LoadPhase.L2: Decimal('12.0')}, frozenset({LoadPhase.L2}), KITCHEN_SHED),
+        ([KITCHEN_OFF], {LoadPhase.L2: Decimal('12.5')}, frozenset({LoadPhase.L2}), None),
+        ([KITCHEN_OFF], {LoadPhase.L2: Decimal('12.0')}, frozenset({LoadPhase.L1}), None),
+        (
+            [KITCHEN_OFF, replace(LIVING_ROOM, phase=LoadPhase.L2)],
+            {LoadPhase.L2: Decimal('12.0')},
+            frozenset({LoadPhase.L2}),
+            None,
+        ),
+        ([KITCHEN_OFF], {LoadPhase.L1: Decimal('12.0')}, frozenset({LoadPhase.L1}), KITCHEN_SHED),
+    ],
+    ids=[
+        'calm_with_room',
+        'calm_without_room',
+        'not_calm',
+        'calm_with_room_beside_a_floor_drawing_on_it',
+        'only_another_phase_reports',
+    ],
+)
+def test_lost_meter_brings_a_floor_back_as_a_fresh_meter_would_while_the_phase_it_was_shed_for_reports(
+    loads: list[LoadStatus],
+    currents: dict[LoadPhase, Decimal],
+    calm: frozenset[LoadPhase],
+    expected: Shed | None,
+) -> None:
+    assert _limp_restore([KITCHEN_SHED], loads, calm=calm, currents=currents) == expected

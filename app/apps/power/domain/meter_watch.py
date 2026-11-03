@@ -1,8 +1,10 @@
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 
 from apps.power.domain.control import PhaseThresholds
+from apps.power.domain.headroom import Currents
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind, LoadPhase
 from apps.power.domain.moments import elapsed, held
@@ -61,6 +63,9 @@ def choose_limp_restore(
     sheds: Sequence[Shed],
     loads: Sequence[LoadStatus],
     *,
+    calm: frozenset[LoadPhase],
+    overloaded: frozenset[LoadPhase],
+    currents: Currents,
     last_restore_at: float | None,
     at: float,
     thresholds: PhaseThresholds,
@@ -71,8 +76,36 @@ def choose_limp_restore(
     taken = {floor.phase for floor in drawing_floors(loads)}
     statuses = {load.slug: load for load in loads if load.kind is LoadKind.ZONE and load.available}
     ready = sorted(
-        (shed for shed in sheds if shed.load in statuses and statuses[shed.load].phase not in taken),
+        (
+            shed
+            for shed in sheds
+            if shed.load in statuses
+            and statuses[shed.load].phase not in taken
+            and _phase_allows_restore(
+                shed,
+                statuses[shed.load].amps,
+                calm=calm,
+                overloaded=overloaded,
+                currents=currents,
+                ceiling=thresholds.start_ceiling,
+            )
+        ),
         key=lambda shed: (not shed.restore_failed, statuses[shed.load].priority),
         reverse=True,
     )
     return next(iter(ready), None)
+
+
+def _phase_allows_restore(
+    shed: Shed,
+    amps: Decimal,
+    *,
+    calm: frozenset[LoadPhase],
+    overloaded: frozenset[LoadPhase],
+    currents: Currents,
+    ceiling: Decimal,
+) -> bool:
+    if shed.phase in currents:
+        return shed.phase in calm and currents[shed.phase] + amps <= ceiling
+
+    return shed.phase not in overloaded

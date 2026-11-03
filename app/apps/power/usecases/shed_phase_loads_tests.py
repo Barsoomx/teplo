@@ -271,14 +271,21 @@ def _house(
     )
 
 
-def _seconds(guard: Guard, count: int, l2: str | None, l1: str = '8.0') -> list[ShedPhaseLoadsOutputDTO]:
+def _seconds(
+    guard: Guard,
+    count: int,
+    l2: str | None,
+    l1: str = '8.0',
+    l3: str | None = '4.0',
+) -> list[ShedPhaseLoadsOutputDTO]:
     outputs: list[ShedPhaseLoadsOutputDTO] = []
     for _ in range(count):
         guard.clock.advance(1)
         now = _moment(int(guard.clock() - START))
         if l2 is not None:
-            for phase, amps in ((Phase.A, l1), (Phase.B, l2), (Phase.C, '4.0')):
-                guard.meter.record_current(METER, phase, Decimal(amps), now)
+            for phase, amps in ((Phase.A, l1), (Phase.B, l2), (Phase.C, l3)):
+                if amps is not None:
+                    guard.meter.record_current(METER, phase, Decimal(amps), now)
         guard.watch.execute(WatchPhasesInputDTO(now=now))
         outputs.append(guard.shed.execute(ShedPhaseLoadsInputDTO(now=now)))
     return outputs
@@ -417,6 +424,20 @@ def f_live_house_with_every_floor_shed(f_live_house: House) -> House:
     _thermostat_read_off(f_live_house, 'thermostat-kitchen', 6)
     _thermostat_read_off(f_live_house, 'thermostat-living-room', 6)
     return f_live_house
+
+
+@pytest.fixture
+def f_live_house_after_its_overload_ended(f_live_house_shedding_thirty_amperes: House) -> House:
+    _seconds(f_live_house_shedding_thirty_amperes.guard, 125, '15.0')
+    return f_live_house_shedding_thirty_amperes
+
+
+@pytest.fixture
+def f_live_house_whose_third_clamp_went_silent() -> House:
+    house = _house(_live(BOILER, KITCHEN), LIVE_CONTROL, LIVE_ZONES)
+    _seconds(house.guard, 3, '10.0')
+    _seconds(house.guard, 75, '10.0', l3=None)
+    return house
 
 
 @pytest.fixture
@@ -1388,68 +1409,63 @@ def test_live_shed_relieves_its_phase_until_the_meter_reads_the_phase_once_it_se
     )
 
 
-def test_lost_meter_brings_the_floors_an_overload_shed_back_one_a_minute_and_leaves_the_plug_off(
+def test_lost_meter_keeps_the_floors_an_overload_shed_off_until_the_meter_reports_the_phase_calm(
     f_live_house_with_every_floor_shed: House,
 ) -> None:
-    outputs = _seconds(f_live_house_with_every_floor_shed.guard, 134, None)
+    silent = _seconds(f_live_house_with_every_floor_shed.guard, 134, None)
+    back = _seconds(f_live_house_with_every_floor_shed.guard, 121, '10.0')
 
     assert (
-        _restored_at(outputs, 7),
+        _restored_at(silent, 7),
+        _restored_at(back, 141),
         f_live_house_with_every_floor_shed.boiler.switches,
         f_live_house_with_every_floor_shed.book.held_zones(),
         f_live_house_with_every_floor_shed.loads.writes[3:],
         f_live_house_with_every_floor_shed.events[4:],
     ) == (
-        [(77, ('living-room',)), (137, ('kitchen',))],
+        [],
+        [(261, ('living-room',))],
         [False],
-        frozenset(),
-        [('clear_shed', 'living-room', None), ('clear_shed', 'kitchen', None)],
+        frozenset({'kitchen'}),
+        [('clear_shed', 'living-room', None)],
         [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('10.0'), occurred_at=_moment(261)),
             LoadRestored(
                 load='living-room',
                 name='Гостиная',
                 kind=LoadKind.ZONE,
                 phase=LoadPhase.L2,
-                amps=None,
+                amps=Decimal('10.0'),
                 load_amps=Decimal('8.0'),
                 reason=ShedReason.OVERLOAD,
-                cause=RestoreCause.LIMP,
+                cause=RestoreCause.CALM,
                 switched_on=False,
-                occurred_at=_moment(77),
-            ),
-            LoadRestored(
-                load='kitchen',
-                name='Кухня',
-                kind=LoadKind.ZONE,
-                phase=LoadPhase.L2,
-                amps=None,
-                load_amps=Decimal('8.0'),
-                reason=ShedReason.OVERLOAD,
-                cause=RestoreCause.LIMP,
-                switched_on=False,
-                occurred_at=_moment(137),
+                occurred_at=_moment(261),
             ),
         ],
     )
 
 
-def test_lost_meter_brings_a_shed_floor_back_only_once_the_floor_heating_on_its_phase_stops(
-    f_live_house_shedding_thirty_amperes: House,
+def test_lost_meter_returns_a_floor_whose_overload_had_ended_once_no_other_floor_heats_on_its_phase(
+    f_live_house_after_its_overload_ended: House,
 ) -> None:
-    heating = _seconds(f_live_house_shedding_thirty_amperes.guard, 80, None)
-    _thermostat_read_off(f_live_house_shedding_thirty_amperes, 'thermostat-living-room', 86)
-    stopped = _seconds(f_live_house_shedding_thirty_amperes.guard, 1, None)
+    heating = _seconds(f_live_house_after_its_overload_ended.guard, 75, None)
+    _thermostat_read_off(f_live_house_after_its_overload_ended, 'thermostat-living-room', 205)
+    stopped = _seconds(f_live_house_after_its_overload_ended.guard, 1, None)
 
     assert (
-        _restored_at(heating, 6),
-        _restored_at(stopped, 86),
-        f_live_house_shedding_thirty_amperes.book.held_zones(),
-        f_live_house_shedding_thirty_amperes.events[3:],
+        _restored_at(heating, 131),
+        _restored_at(stopped, 206),
+        f_live_house_after_its_overload_ended.boiler.switches,
+        f_live_house_after_its_overload_ended.book.held_zones(),
+        f_live_house_after_its_overload_ended.events[3:],
     ) == (
         [],
-        [(86, ('kitchen',))],
+        [(206, ('kitchen',))],
+        [False],
         frozenset(),
         [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('15.0'), occurred_at=_moment(126)),
             LoadRestored(
                 load='kitchen',
                 name='Кухня',
@@ -1460,7 +1476,64 @@ def test_lost_meter_brings_a_shed_floor_back_only_once_the_floor_heating_on_its_
                 reason=ShedReason.OVERLOAD,
                 cause=RestoreCause.LIMP,
                 switched_on=False,
-                occurred_at=_moment(86),
+                occurred_at=_moment(206),
+            ),
+        ],
+    )
+
+
+def test_partly_lost_meter_returns_a_floor_only_once_the_phase_it_was_shed_for_calms_with_room(
+    f_live_house_whose_third_clamp_went_silent: House,
+) -> None:
+    overloaded = _seconds(f_live_house_whose_third_clamp_went_silent.guard, 5, '33.0', l3=None)
+    crowded = _seconds(f_live_house_whose_third_clamp_went_silent.guard, 125, '19.0', l3=None)
+    calm = _seconds(f_live_house_whose_third_clamp_went_silent.guard, 121, '10.0', l3=None)
+
+    assert (
+        _shed_at(overloaded, 79),
+        _restored_at(overloaded + crowded, 79),
+        _restored_at(calm, 209),
+        f_live_house_whose_third_clamp_went_silent.boiler.switches,
+        f_live_house_whose_third_clamp_went_silent.events,
+    ) == (
+        [(82, ('boiler-1f',)), (83, ('kitchen',))],
+        [],
+        [(329, ('kitchen',))],
+        [False],
+        [
+            _overload(82, '33.0'),
+            LoadShed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('33.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(82),
+            ),
+            LoadShed(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('33.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(83),
+            ),
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('10.0'), occurred_at=_moment(329)),
+            LoadRestored(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('10.0'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                switched_on=False,
+                occurred_at=_moment(329),
             ),
         ],
     )

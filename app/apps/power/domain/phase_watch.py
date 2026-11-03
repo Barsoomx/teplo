@@ -132,6 +132,10 @@ def calm_phases(
     )
 
 
+def overloaded_phases(watches: Mapping[LoadPhase, PhaseWatch], *, live: bool) -> frozenset[LoadPhase]:
+    return frozenset(phase for phase, watch in watches.items() if watch.overload(live=live).overloaded)
+
+
 def _followed(watch: OverloadWatch, current: Decimal, at: float, thresholds: PhaseThresholds) -> OverloadWatch:
     above_since = held_since(watch.above_since, current > thresholds.shed, at)
     calm_since = held_since(watch.calm_since, current <= thresholds.restore, at)

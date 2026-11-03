@@ -30,7 +30,7 @@ from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition, choose_limp_restore, limp_sheds, meter_condition
 from apps.power.domain.moments import elapsed
-from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, with_shed
+from apps.power.domain.phase_watch import PhaseWatch, calm_phases, overloaded_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
 from apps.power.domain.shedding import (
     Shed,
@@ -376,7 +376,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 record,
                 shed,
                 amps=view.currents.get(shed.phase),
-                cause=RestoreCause.CALM if meter is MeterCondition.FRESH else RestoreCause.LIMP,
+                cause=_restore_cause(meter, shed, view),
                 switched_on=live and record.kind is LoadKind.PLUG and shed.was_on is True,
                 now=now,
             ),
@@ -402,13 +402,23 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             and self._live_load(state.loads, shed.load) == live
             and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
         )
+        calm = calm_phases(state.phases.watches, at, thresholds, live=live)
         if meter is MeterCondition.LOST:
-            return choose_limp_restore(sheds, view.loads, last_restore_at=last_restore_at, at=at, thresholds=thresholds)
+            return choose_limp_restore(
+                sheds,
+                view.loads,
+                calm=calm,
+                overloaded=overloaded_phases(state.phases.watches, live=live),
+                currents=view.currents,
+                last_restore_at=last_restore_at,
+                at=at,
+                thresholds=thresholds,
+            )
 
         return choose_restore(
             sheds,
             view.loads,
-            calm=calm_phases(state.phases.watches, at, thresholds, live=live),
+            calm=calm,
             currents=view.currents,
             last_restore_at=last_restore_at,
             at=at,
@@ -603,6 +613,13 @@ def _reading(state: GuardState, slug: str) -> LoadReading | None:
 def _overloaded(state: GuardState, phase: LoadPhase) -> bool:
     watch = state.phases.watches.get(phase)
     return watch is not None and watch.live.overloaded
+
+
+def _restore_cause(meter: MeterCondition, shed: Shed, view: GuardView) -> RestoreCause:
+    if meter is MeterCondition.LOST and shed.phase not in view.currents:
+        return RestoreCause.LIMP
+
+    return RestoreCause.CALM
 
 
 def _name(loads: GuardLoads, slug: str) -> str:
