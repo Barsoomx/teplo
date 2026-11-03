@@ -67,21 +67,26 @@ class GetSchedulePageUseCase(BaseUseCase[GetSchedulePageInputDTO, GetSchedulePag
     def _execute(self, input_dto: GetSchedulePageInputDTO) -> GetSchedulePageOutputDTO:  # noqa: ARG002
         zones = {zone.slug: zone for zone in self._zones.all_settings()}
         climate = self._climate_settings.config_record().config
-        schedules = [_schedule(week, zones[week.slug]) for week in self._windows.weeks() if week.slug in zones]
+        lead_cap = timedelta(minutes=climate.preheat_lead_cap_minutes)
+        schedules = [
+            _schedule(week, zones[week.slug], lead_cap) for week in self._windows.weeks() if week.slug in zones
+        ]
         return GetSchedulePageOutputDTO(
             zones=tuple(sorted(schedules, key=lambda schedule: schedule.name)),
-            lead_cap=timedelta(minutes=climate.preheat_lead_cap_minutes),
+            lead_cap=lead_cap,
             mornings_needed=climate.learned_mornings_needed,
         )
 
 
-def _schedule(week: ZoneWeek, zone: ZoneSettings) -> ZoneSchedule:
+def _schedule(week: ZoneWeek, zone: ZoneSettings, lead_cap: timedelta) -> ZoneSchedule:
     windows = tuple(stored.window for stored in week.windows)
+    optimal_start = zone.kind is ZoneKind.AIR and zone.air_sensor_slug is not None and zone.air_control_live
+    lead = min(zone.preheat_lead, lead_cap) if optimal_start else zone.preheat_lead
     return ZoneSchedule(
         slug=week.slug,
         name=week.name,
-        preheat_lead=zone.preheat_lead,
-        optimal_start=zone.kind is ZoneKind.AIR and zone.air_sensor_slug is not None and zone.air_control_live,
+        preheat_lead=lead,
+        optimal_start=optimal_start,
         days=tuple(
             ScheduleDay(
                 weekday=weekday,
@@ -91,7 +96,7 @@ def _schedule(week: ZoneWeek, zone: ZoneSettings) -> ZoneSchedule:
                         key=lambda stored: (stored.start, stored.end),
                     ),
                 ),
-                periods=day_periods(windows, weekday, zone.preheat_lead),
+                periods=day_periods(windows, weekday, lead),
             )
             for weekday in WEEKDAYS
         ),

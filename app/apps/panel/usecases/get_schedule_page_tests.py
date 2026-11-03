@@ -17,6 +17,7 @@ from apps.panel.usecases.get_schedule_page import (
 )
 
 MONDAY_WINDOW = StoredWindow(id=1, weekday=0, start=time(6, 30), end=time(23, 30))
+TUESDAY_WINDOW = StoredWindow(id=2, weekday=1, start=time(7, 0), end=time(22, 0))
 NIGHT_ALL_DAY = (DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=1440),)
 
 
@@ -47,39 +48,57 @@ def _zone(slug: str, name: str, kind: ZoneKind, *, air_sensor: str | None, air_l
     )
 
 
-@pytest.fixture
-def f_use_case() -> GetSchedulePageUseCase:
-    zones = ZoneStoreStub(
-        zones=[
-            _zone('kitchen', 'Кухня', ZoneKind.AIR, air_sensor='air-kitchen', air_live=True, lead=180),
-            _zone('bathroom-1f', 'Санузел 1 этаж', ZoneKind.FLOOR, air_sensor=None, air_live=False, lead=120),
-            _zone('hallway', 'Прихожая', ZoneKind.AIR, air_sensor=None, air_live=True, lead=180),
-        ],
-        errors={},
-    )
-    windows = ComfortWindowStoreStub(
-        weeks=[
-            ZoneWeek(slug='bathroom-1f', name='Санузел 1 этаж', windows=()),
-            ZoneWeek(slug='hallway', name='Прихожая', windows=()),
-            ZoneWeek(slug='kitchen', name='Кухня', windows=(MONDAY_WINDOW,)),
-            ZoneWeek(slug='attic', name='Чердак', windows=()),
-        ],
-    )
-    climate_settings = ClimateConfigStoreStub(
+def _climate_settings(lead_cap_minutes: int) -> ClimateConfigStoreStub:
+    return ClimateConfigStoreStub(
         record=ClimateConfigRecord(
             id=1,
             config=ClimateConfig(
                 air_start_offset=Decimal('0.30'),
                 initial_early_stop_offset=Decimal('0.30'),
                 learned_mornings_needed=3,
-                preheat_lead_cap_minutes=240,
+                preheat_lead_cap_minutes=lead_cap_minutes,
                 second_floor_guard_threshold=Decimal('19.0'),
                 second_floor_guard_hysteresis=Decimal('0.30'),
             ),
             second_floor_guard_live=False,
         ),
     )
-    return GetSchedulePageUseCase(zones=zones, windows=windows, climate_settings=climate_settings)
+
+
+@pytest.fixture
+def zones() -> ZoneStoreStub:
+    return ZoneStoreStub(
+        zones=[
+            _zone('kitchen', 'Кухня', ZoneKind.AIR, air_sensor='air-kitchen', air_live=True, lead=180),
+            _zone('living-room', 'Гостиная', ZoneKind.AIR, air_sensor='air-living-room', air_live=False, lead=150),
+            _zone('bathroom-1f', 'Санузел 1 этаж', ZoneKind.FLOOR, air_sensor=None, air_live=False, lead=120),
+            _zone('hallway', 'Прихожая', ZoneKind.AIR, air_sensor=None, air_live=True, lead=180),
+        ],
+        errors={},
+    )
+
+
+@pytest.fixture
+def windows() -> ComfortWindowStoreStub:
+    return ComfortWindowStoreStub(
+        weeks=[
+            ZoneWeek(slug='bathroom-1f', name='Санузел 1 этаж', windows=()),
+            ZoneWeek(slug='hallway', name='Прихожая', windows=(TUESDAY_WINDOW,)),
+            ZoneWeek(slug='kitchen', name='Кухня', windows=(MONDAY_WINDOW,)),
+            ZoneWeek(slug='living-room', name='Гостиная', windows=()),
+            ZoneWeek(slug='attic', name='Чердак', windows=()),
+        ],
+    )
+
+
+@pytest.fixture
+def f_use_case(zones: ZoneStoreStub, windows: ComfortWindowStoreStub) -> GetSchedulePageUseCase:
+    return GetSchedulePageUseCase(zones=zones, windows=windows, climate_settings=_climate_settings(240))
+
+
+@pytest.fixture
+def f_capped_use_case(zones: ZoneStoreStub, windows: ComfortWindowStoreStub) -> GetSchedulePageUseCase:
+    return GetSchedulePageUseCase(zones=zones, windows=windows, climate_settings=_climate_settings(90))
 
 
 def test_schedule_lists_zones_by_name_with_their_lead_and_learned_start(f_use_case: GetSchedulePageUseCase) -> None:
@@ -91,12 +110,47 @@ def test_schedule_lists_zones_by_name_with_their_lead_and_learned_start(f_use_ca
         output.mornings_needed,
     ) == (
         [
+            ('living-room', timedelta(minutes=150), False),
             ('kitchen', timedelta(hours=3), True),
             ('hallway', timedelta(hours=3), False),
             ('bathroom-1f', timedelta(hours=2), False),
         ],
         timedelta(hours=4),
         3,
+    )
+
+
+def test_schedule_caps_the_fixed_lead_only_of_a_zone_under_air_control(
+    f_capped_use_case: GetSchedulePageUseCase,
+) -> None:
+    output = f_capped_use_case.execute(GetSchedulePageInputDTO())
+
+    kitchen, hallway = output.zone('kitchen'), output.zone('hallway')
+    assert (
+        [(zone.slug, zone.preheat_lead) for zone in output.zones],
+        output.lead_cap,
+        kitchen.days[0].periods if kitchen else None,
+        hallway.days[1].periods if hallway else None,
+    ) == (
+        [
+            ('living-room', timedelta(minutes=150)),
+            ('kitchen', timedelta(minutes=90)),
+            ('hallway', timedelta(hours=3)),
+            ('bathroom-1f', timedelta(hours=2)),
+        ],
+        timedelta(minutes=90),
+        (
+            DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=300),
+            DayPeriod(mode=ScheduleMode.PREHEAT, start=300, end=390),
+            DayPeriod(mode=ScheduleMode.COMFORT, start=390, end=1410),
+            DayPeriod(mode=ScheduleMode.NIGHT, start=1410, end=1440),
+        ),
+        (
+            DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=240),
+            DayPeriod(mode=ScheduleMode.PREHEAT, start=240, end=420),
+            DayPeriod(mode=ScheduleMode.COMFORT, start=420, end=1320),
+            DayPeriod(mode=ScheduleMode.NIGHT, start=1320, end=1440),
+        ),
     )
 
 
