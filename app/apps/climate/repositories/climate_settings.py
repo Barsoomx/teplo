@@ -9,6 +9,7 @@ from apps.climate.domain.optimal_start import OptimalStartSettings
 from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.models import ClimateSettings, Zone
+from apps.core.repositories.write_lock import lock_for_update
 from apps.devices.models import Device
 
 
@@ -62,6 +63,11 @@ class ClimateSettingsRepository:
             ),
             second_floor_guard_live=climate_settings.second_floor_guard_live,
         )
+
+    @staticmethod
+    def config_record_for_update() -> ClimateConfigRecord:
+        lock_for_update(ClimateSettings.objects.all())
+        return ClimateSettingsRepository.config_record()
 
     @staticmethod
     def save_config(config: ClimateConfig, fields: Collection[str]) -> None:

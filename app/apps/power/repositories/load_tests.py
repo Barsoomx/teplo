@@ -3,7 +3,8 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
@@ -415,3 +416,13 @@ def test_saving_a_load_that_is_gone_raises_and_changes_nothing() -> None:
         ('kitchen', 2),
         ('hallway', 3),
     ]
+
+
+def test_config_records_for_update_take_the_write_lock_before_they_read_the_loads(f_loads: list[Load]) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        records = LoadRepository.config_records_for_update()
+
+    assert (
+        [record.slug for record in records],
+        [query['sql'].split(' ', 1)[0] for query in queries.captured_queries],
+    ) == ([load.slug for load in f_loads], ['UPDATE', 'SELECT'])

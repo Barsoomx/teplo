@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from django.db import transaction
 from django.db.models import Max
 
+from apps.core.repositories.write_lock import lock_for_update
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LearnedPhase, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
@@ -62,6 +63,11 @@ class LoadRepository:
             )
             for load in Load.objects.order_by('priority')
         ]
+
+    @staticmethod
+    def config_records_for_update() -> list[LoadConfigRecord]:
+        lock_for_update(Load.objects.all())
+        return LoadRepository.config_records()
 
     @staticmethod
     def save_configs(configs: Mapping[str, LoadConfig]) -> None:

@@ -3,9 +3,10 @@ from datetime import datetime
 from functools import partial
 
 from apps.core.domain.errors import SettingsRejectedError
-from apps.core.domain.ports import SettingsRecorder
+from apps.core.domain.ports import SettingsRecorder, Transaction
 from apps.core.domain.settings import SettingChange, setting_changes
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.core.services.database_transaction import DatabaseTransaction
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LOAD, LoadConfig, LoadConfigRecord, load_problems
 from apps.power.domain.ports import LoadConfigStore
@@ -31,17 +32,23 @@ class UpdateLoadsOutputDTO:
 
 
 class UpdateLoadsUseCase(BaseUseCase[UpdateLoadsInputDTO, UpdateLoadsOutputDTO]):
-    def __init__(self, loads: LoadConfigStore, recorder: SettingsRecorder) -> None:
+    def __init__(self, loads: LoadConfigStore, recorder: SettingsRecorder, transaction: Transaction) -> None:
         super().__init__()
         self._loads = loads
         self._recorder = recorder
+        self._transaction = transaction
 
     @classmethod
     def init(cls) -> 'UpdateLoadsUseCase':
-        return cls(loads=LoadRepository(), recorder=SettingsJournal.init())
+        return cls(loads=LoadRepository(), recorder=SettingsJournal.init(), transaction=DatabaseTransaction())
 
     def _execute(self, input_dto: UpdateLoadsInputDTO) -> UpdateLoadsOutputDTO:
-        records = {record.slug: record for record in self._loads.config_records()}
+        with self._transaction():
+            changes = self._update(input_dto)
+        return UpdateLoadsOutputDTO(changes=changes)
+
+    def _update(self, input_dto: UpdateLoadsInputDTO) -> tuple[SettingChange, ...]:
+        records = {record.slug: record for record in self._loads.config_records_for_update()}
         missing = [edit.slug for edit in input_dto.loads if edit.slug not in records]
         if missing:
             raise LoadNotFoundError(missing[0])
@@ -56,7 +63,7 @@ class UpdateLoadsUseCase(BaseUseCase[UpdateLoadsInputDTO, UpdateLoadsOutputDTO])
         changed = {slug: configs[slug] for slug in dict.fromkeys(change.subject for change in changes)}
         if changes:
             self._recorder.record(changes, input_dto.now, write=partial(self._loads.save_configs, changed))
-        return UpdateLoadsOutputDTO(changes=changes)
+        return changes
 
 
 def _changes(record: LoadConfigRecord, config: LoadConfig) -> tuple[SettingChange, ...]:

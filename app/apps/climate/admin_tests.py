@@ -28,6 +28,9 @@ CLIMATE_POSTED = {
     'second_floor_guard_hysteresis': '0.30',
 }
 BELOW_MIN_BAND = 'Must not be below the air min band, or heating stops above the target'
+IDLE_NOT_BELOW_LIMIT = (
+    'The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats'
+)
 
 
 @pytest.fixture
@@ -61,6 +64,25 @@ def russian() -> Iterator[None]:
 @pytest.fixture
 def f_kitchen() -> Zone:
     return ZoneFactory.create(slug='kitchen', thermostat__slug='thermostat-kitchen')
+
+
+@pytest.fixture
+def f_kitchen_posted(f_kitchen: Zone) -> dict[str, str]:
+    return {
+        'slug': f_kitchen.slug,
+        'name': f_kitchen.name,
+        'kind': f_kitchen.kind,
+        'thermostat': str(f_kitchen.thermostat.pk),
+        'heating_enabled': 'on',
+        'comfort_floor_setpoint': '28.0',
+        'night_floor_setpoint': '22.0',
+        'boost_floor_setpoint': '30.0',
+        'idle_floor_setpoint': '18.0',
+        'floor_limit_setpoint': '30.0',
+        'comfort_air_target': '22.0',
+        'night_air_target': '19.5',
+        'preheat_lead_minutes': '180',
+    }
 
 
 @pytest.fixture
@@ -191,3 +213,26 @@ def test_climate_settings_page_explains_a_start_offset_below_the_min_band_in_the
         False,
         {'air_start_offset': ['Не может быть меньше air min band, иначе обогрев остановится выше цели']},
     )
+
+
+@pytest.mark.parametrize(
+    ('posted', 'errors'),
+    [
+        ({}, {}),
+        ({'idle_floor_setpoint': '29.9'}, {}),
+        ({'idle_floor_setpoint': '30.0'}, {'__all__': [IDLE_NOT_BELOW_LIMIT]}),
+        ({'floor_limit_setpoint': '17.5'}, {'__all__': [IDLE_NOT_BELOW_LIMIT]}),
+    ],
+    ids=['as_seeded', 'idle_just_below_the_limit', 'idle_at_the_limit', 'limit_lowered_below_idle'],
+)
+def test_zone_page_refuses_an_idle_floor_setpoint_not_below_the_floor_limit(
+    f_zone_admin: ZoneAdmin,
+    f_request: HttpRequest,
+    f_kitchen: Zone,
+    f_kitchen_posted: dict[str, str],
+    posted: dict[str, str],
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_zone_admin.get_form(f_request, f_kitchen, change=True)({**f_kitchen_posted, **posted}, instance=f_kitchen)
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)

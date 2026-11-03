@@ -7,6 +7,7 @@ from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.climate.models import Zone
+from apps.core.repositories.write_lock import lock_for_update
 
 STAMPS = ('last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
 
@@ -53,12 +54,11 @@ class ZoneRepository:
         ]
 
     @staticmethod
-    def config(slug: str) -> ZoneConfig:
-        zone = Zone.objects.filter(slug=slug).first()
-        if zone is None:
+    def config_for_update(slug: str) -> ZoneConfig:
+        if lock_for_update(Zone.objects.filter(slug=slug)) == 0:
             raise ZoneNotFoundError(slug)
 
-        return _to_config(zone)
+        return _to_config(Zone.objects.get(slug=slug))
 
     @staticmethod
     def save_config(slug: str, config: ZoneConfig, fields: Collection[str]) -> None:

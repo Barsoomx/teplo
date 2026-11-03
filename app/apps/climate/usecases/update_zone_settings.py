@@ -7,9 +7,10 @@ from apps.climate.domain.ports import ZoneConfigStore
 from apps.climate.domain.zone_config import ZONE, ZoneConfig, zone_config_problems
 from apps.climate.repositories.zone import ZoneRepository
 from apps.core.domain.errors import SettingsRejectedError
-from apps.core.domain.ports import SettingsRecorder
+from apps.core.domain.ports import SettingsRecorder, Transaction
 from apps.core.domain.settings import SettingChange, setting_changes
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.core.services.database_transaction import DatabaseTransaction
 from apps.telemetry.services.settings_journal import SettingsJournal
 
 
@@ -35,17 +36,23 @@ class UpdateZoneSettingsOutputDTO:
 
 
 class UpdateZoneSettingsUseCase(BaseUseCase[UpdateZoneSettingsInputDTO, UpdateZoneSettingsOutputDTO]):
-    def __init__(self, zones: ZoneConfigStore, recorder: SettingsRecorder) -> None:
+    def __init__(self, zones: ZoneConfigStore, recorder: SettingsRecorder, transaction: Transaction) -> None:
         super().__init__()
         self._zones = zones
         self._recorder = recorder
+        self._transaction = transaction
 
     @classmethod
     def init(cls) -> 'UpdateZoneSettingsUseCase':
-        return cls(zones=ZoneRepository(), recorder=SettingsJournal.init())
+        return cls(zones=ZoneRepository(), recorder=SettingsJournal.init(), transaction=DatabaseTransaction())
 
     def _execute(self, input_dto: UpdateZoneSettingsInputDTO) -> UpdateZoneSettingsOutputDTO:
-        current = self._zones.config(input_dto.zone)
+        with self._transaction():
+            changes = self._update(input_dto)
+        return UpdateZoneSettingsOutputDTO(changes=changes)
+
+    def _update(self, input_dto: UpdateZoneSettingsInputDTO) -> tuple[SettingChange, ...]:
+        current = self._zones.config_for_update(input_dto.zone)
         config = _edited(current, input_dto)
         problems = zone_config_problems(config)
         if problems:
@@ -65,7 +72,7 @@ class UpdateZoneSettingsUseCase(BaseUseCase[UpdateZoneSettingsInputDTO, UpdateZo
                 input_dto.now,
                 write=partial(self._zones.save_config, input_dto.zone, config, fields),
             )
-        return UpdateZoneSettingsOutputDTO(changes=changes)
+        return changes
 
 
 def _edited(current: ZoneConfig, edit: UpdateZoneSettingsInputDTO) -> ZoneConfig:

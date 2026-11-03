@@ -3,7 +3,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
@@ -149,3 +150,15 @@ def test_saved_config_without_stored_settings_creates_them_with_load_management_
 def test_saved_config_refuses_to_write_the_load_management_gate() -> None:
     with pytest.raises(KeyError):
         LoadSettingsRepository.save_config(DEFAULT_CONFIG, ('load_management_live',))
+
+
+def test_config_record_for_update_takes_the_write_lock_before_it_reads_the_settings(
+    f_live_settings: LoadSettings,
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        record = LoadSettingsRepository.config_record_for_update()
+
+    assert (record.id, [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]) == (
+        f_live_settings.pk,
+        ['UPDATE', 'SELECT'],
+    )

@@ -2,6 +2,7 @@ from collections.abc import Collection
 from dataclasses import asdict
 from datetime import timedelta
 
+from apps.core.repositories.write_lock import lock_for_update
 from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
 from apps.power.models import LoadSettings
@@ -46,6 +47,11 @@ class LoadSettingsRepository:
             ),
             load_management_live=load_settings.load_management_live,
         )
+
+    @staticmethod
+    def config_record_for_update() -> LoadSettingsRecord:
+        lock_for_update(LoadSettings.objects.all())
+        return LoadSettingsRepository.config_record()
 
     @staticmethod
     def save_config(config: LoadSettingsConfig, fields: Collection[str]) -> None:

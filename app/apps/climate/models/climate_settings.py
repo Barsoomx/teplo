@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.climate_config import (
     MIN_BAND_MAX,
@@ -19,6 +20,7 @@ TEMPERATURE_SENSORS = {'kind': DeviceKind.TEMPERATURE_SENSOR.value}
 OFFSET_VALIDATORS = [MinValueValidator(OFFSET_MIN), MaxValueValidator(OFFSET_MAX)]
 EARLY_STOP_OFFSET_VALIDATORS = [MinValueValidator(EARLY_STOP_OFFSET_MIN), MaxValueValidator(EARLY_STOP_OFFSET_MAX)]
 MIN_BAND_VALIDATORS = [MinValueValidator(MIN_BAND_MIN), MaxValueValidator(MIN_BAND_MAX)]
+START_OFFSET_BELOW_MIN_BAND = gettext_lazy('Must not be below the air min band, or heating stops above the target')
 
 
 class ClimateSettings(models.Model):
@@ -88,6 +90,13 @@ class ClimateSettings(models.Model):
 
     class Meta:
         verbose_name_plural = 'climate settings'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(air_start_offset__gte=models.F('air_min_band')),
+                name='climate_settings_start_offset_keeps_min_band',
+                violation_error_message=START_OFFSET_BELOW_MIN_BAND,
+            ),
+        ]
 
     def __str__(self) -> str:
         return 'Climate settings'

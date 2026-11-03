@@ -23,6 +23,7 @@ PROBLEM_MESSAGES = {
     'overlap': gettext_lazy('Comfort windows of a day must not overlap'),
 }
 UNKNOWN_PROBLEM = gettext_lazy('Not saved: check the values')
+NOT_SAVED = gettext_lazy('Not saved: the database did not take the change. Try again')
 
 
 def problem_message(problem: SettingProblem) -> str:
@@ -32,3 +33,7 @@ def problem_message(problem: SettingProblem) -> str:
 def add_problems(form: forms.BaseForm, problems: Iterable[SettingProblem]) -> None:
     for problem in problems:
         form.add_error(problem.field if problem.field in form.fields else None, problem_message(problem))
+
+
+def add_not_saved(form: forms.BaseForm) -> None:
+    form.add_error(None, NOT_SAVED)

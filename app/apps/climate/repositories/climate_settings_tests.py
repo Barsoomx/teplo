@@ -3,6 +3,8 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
@@ -206,3 +208,31 @@ def test_saved_config_without_stored_settings_creates_them_with_the_guard_off() 
 def test_saved_config_refuses_to_write_the_guard_gate() -> None:
     with pytest.raises(KeyError):
         ClimateSettingsRepository.save_config(DEFAULT_CONFIG, ('second_floor_guard_live',))
+
+
+def test_config_record_for_update_takes_the_write_lock_before_it_reads_the_settings(
+    f_guarded_settings: ClimateSettings,
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        record = ClimateSettingsRepository.config_record_for_update()
+
+    assert (record.id, [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]) == (
+        f_guarded_settings.pk,
+        ['UPDATE', 'SELECT'],
+    )
+
+
+@pytest.mark.parametrize(
+    'overrides',
+    [{'air_start_offset': Decimal('0.15')}, {'air_min_band': Decimal('0.35')}],
+    ids=['start_offset_narrowed', 'band_widened'],
+)
+def test_database_refuses_a_start_offset_below_the_min_band(overrides: dict[str, Decimal]) -> None:
+    with pytest.raises(IntegrityError):
+        ClimateSettingsFactory.create(**overrides)
+
+
+def test_start_offset_may_equal_the_min_band() -> None:
+    ClimateSettingsFactory.create(air_start_offset=Decimal('0.20'))
+
+    assert ClimateSettingsRepository.control().regulation.start_offset == Decimal('0.20')

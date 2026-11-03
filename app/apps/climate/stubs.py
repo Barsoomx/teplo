@@ -125,7 +125,7 @@ class ZoneConfigStoreStub:
     def config_records(self) -> list[ZoneConfigRecord]:
         return list(self._records)
 
-    def config(self, slug: str) -> ZoneConfig:
+    def config_for_update(self, slug: str) -> ZoneConfig:
         record = next((record for record in self._records if record.slug == slug), None)
         if record is None:
             raise ZoneNotFoundError(slug)
@@ -134,6 +134,11 @@ class ZoneConfigStoreStub:
 
     def save_config(self, slug: str, config: ZoneConfig, fields: Collection[str]) -> None:
         self._saved.append((slug, config, tuple(fields)))
+        written = {field: getattr(config, field) for field in fields}
+        self._records = [
+            replace(record, config=replace(record.config, **written)) if record.slug == slug else record
+            for record in self._records
+        ]
 
 
 class ClimateConfigStoreStub:
@@ -148,8 +153,13 @@ class ClimateConfigStoreStub:
     def config_record(self) -> ClimateConfigRecord:
         return self._record
 
+    def config_record_for_update(self) -> ClimateConfigRecord:
+        return self._record
+
     def save_config(self, config: ClimateConfig, fields: Collection[str]) -> None:
         self._saved.append((config, tuple(fields)))
+        written = {field: getattr(config, field) for field in fields}
+        self._record = replace(self._record, config=replace(self._record.config, **written))
 
 
 class ComfortWindowStoreStub:

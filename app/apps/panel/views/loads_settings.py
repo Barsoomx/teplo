@@ -1,15 +1,19 @@
+import structlog
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import IntegrityError, OperationalError
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
 from django.views import View
 
 from apps.core.domain.errors import SettingsRejectedError
-from apps.panel.forms.loads import add_load_problems, load_formset, load_rows
+from apps.panel.forms.loads import add_load_problems, add_loads_not_saved, load_formset, load_rows
 from apps.panel.usecases.get_settings_page import GetSettingsPageInputDTO, GetSettingsPageUseCase
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LoadConfig
 from apps.power.usecases.update_loads import LoadEdit, UpdateLoadsInputDTO, UpdateLoadsUseCase
+
+logger = structlog.get_logger(__name__)
 
 
 class LoadsSettingsView(LoginRequiredMixin, View):
@@ -39,6 +43,9 @@ class LoadsSettingsView(LoginRequiredMixin, View):
                 raise Http404(error.detail) from error
             except SettingsRejectedError as error:
                 add_load_problems(formset, error.problems)
+            except (OperationalError, IntegrityError) as error:
+                logger.warning('loads_not_saved', error=str(error))
+                add_loads_not_saved(formset)
             else:
                 outcome = 'saved' if output.changes else 'unchanged'
 

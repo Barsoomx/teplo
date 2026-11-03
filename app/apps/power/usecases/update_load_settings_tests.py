@@ -1,12 +1,13 @@
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
-from apps.core.stubs import SettingsRecorderStub
+from apps.core.stubs import SettingsRecorderStub, TransactionStub
 from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
 from apps.power.stubs import LoadSettingsConfigStoreStub
 from apps.power.usecases.update_load_settings import (
@@ -58,7 +59,24 @@ def f_use_case(
     f_load_settings: LoadSettingsConfigStoreStub,
     f_recorder: SettingsRecorderStub,
 ) -> UpdateLoadSettingsUseCase:
-    return UpdateLoadSettingsUseCase(load_settings=f_load_settings, recorder=f_recorder)
+    return UpdateLoadSettingsUseCase(
+        load_settings=f_load_settings,
+        recorder=f_recorder,
+        transaction=TransactionStub(meanwhile=None),
+    )
+
+
+@pytest.fixture
+def f_use_case_after_the_start_ceiling_was_raised_meanwhile(
+    f_load_settings: LoadSettingsConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> UpdateLoadSettingsUseCase:
+    raised = replace(DEFAULTS, start_ceiling_amps=Decimal('22.0'))
+    return UpdateLoadSettingsUseCase(
+        load_settings=f_load_settings,
+        recorder=f_recorder,
+        transaction=TransactionStub(meanwhile=partial(f_load_settings.save_config, raised, ('start_ceiling_amps',))),
+    )
 
 
 def test_raised_thresholds_are_saved_and_journaled(
@@ -114,3 +132,17 @@ def test_thresholds_out_of_order_are_refused(
 
 def test_input_carries_no_load_management_gate() -> None:
     assert 'load_management_live' not in {field.name for field in fields(UpdateLoadSettingsInputDTO)}
+
+
+def test_shed_threshold_saved_after_another_save_raised_the_start_ceiling_is_written_with_its_own_ceiling(
+    f_use_case_after_the_start_ceiling_was_raised_meanwhile: UpdateLoadSettingsUseCase,
+    f_load_settings: LoadSettingsConfigStoreStub,
+) -> None:
+    output = f_use_case_after_the_start_ceiling_was_raised_meanwhile.execute(replace(EDIT, shed_amps=Decimal('21.0')))
+
+    lowered = replace(DEFAULTS, shed_amps=Decimal('21.0'))
+    assert (output.changes, f_load_settings.saved[-1], f_load_settings.config_record_for_update().config) == (
+        (_change('start_ceiling_amps', '22.0', '20.0'), _change('shed_amps', '24.0', '21.0')),
+        (lowered, ('start_ceiling_amps', 'shed_amps')),
+        lowered,
+    )

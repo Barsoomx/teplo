@@ -6,7 +6,7 @@ from django.utils import translation
 
 from apps.core.domain.settings import SettingProblem
 from apps.panel.forms.comfort_window import ComfortWindowForm
-from apps.panel.forms.problems import add_problems, problem_message
+from apps.panel.forms.problems import add_not_saved, add_problems, problem_message
 
 
 @pytest.fixture
@@ -56,3 +56,10 @@ def test_problem_of_an_unknown_kind_reads_generically() -> None:
 )
 def test_problem_messages_are_translated(code: str, expected: str) -> None:
     assert problem_message(SettingProblem(field='', code=code)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+def test_save_the_database_did_not_take_is_said_on_the_form(f_checked_form: ComfortWindowForm) -> None:
+    add_not_saved(f_checked_form)
+
+    assert f_checked_form.errors == {'__all__': ['Не сохранено: база данных не приняла изменение. Попробуйте ещё раз']}

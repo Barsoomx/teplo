@@ -3,7 +3,8 @@ from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 
 import pytest
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.modes import ZoneKind
@@ -228,13 +229,26 @@ def test_config_records_list_every_zone_by_slug() -> None:
 
 
 @pytest.mark.usefixtures('f_live_zone')
-def test_config_reads_the_settings_of_one_zone() -> None:
-    assert ZoneRepository.config('kitchen') == KITCHEN_CONFIG
+def test_config_for_update_takes_the_write_lock_on_the_zone_before_it_reads_its_settings() -> None:
+    with CaptureQueriesContext(connection) as queries:
+        config = ZoneRepository.config_for_update('kitchen')
+
+    assert (config, [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]) == (
+        KITCHEN_CONFIG,
+        ['UPDATE', 'SELECT'],
+    )
 
 
-def test_config_of_an_unknown_zone_raises() -> None:
+def test_config_for_update_of_an_unknown_zone_raises() -> None:
     with pytest.raises(ZoneNotFoundError):
-        ZoneRepository.config('attic')
+        ZoneRepository.config_for_update('attic')
+
+
+@pytest.mark.usefixtures('f_live_zone')
+@pytest.mark.parametrize('idle', [Decimal('30.0'), Decimal('31.0')], ids=['at_the_floor_limit', 'above_it'])
+def test_database_refuses_an_idle_floor_setpoint_not_below_the_floor_limit(idle: Decimal) -> None:
+    with pytest.raises(IntegrityError):
+        Zone.objects.filter(slug='kitchen').update(idle_floor_setpoint=idle)
 
 
 def test_saved_config_writes_the_named_fields_only(f_live_zone: Zone) -> None:

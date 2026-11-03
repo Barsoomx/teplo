@@ -1,12 +1,13 @@
-from dataclasses import fields
+from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
-from apps.core.stubs import SettingsRecorderStub
+from apps.core.stubs import SettingsRecorderStub, TransactionStub
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LoadKind, LoadPhase
@@ -44,7 +45,20 @@ def f_recorder() -> SettingsRecorderStub:
 
 @pytest.fixture
 def f_use_case(f_loads: LoadConfigStoreStub, f_recorder: SettingsRecorderStub) -> UpdateLoadsUseCase:
-    return UpdateLoadsUseCase(loads=f_loads, recorder=f_recorder)
+    return UpdateLoadsUseCase(loads=f_loads, recorder=f_recorder, transaction=TransactionStub(meanwhile=None))
+
+
+@pytest.fixture
+def f_use_case_after_the_hallway_moved_meanwhile(
+    f_loads: LoadConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> UpdateLoadsUseCase:
+    moved = {'hallway': replace(HALLWAY, priority=4)}
+    return UpdateLoadsUseCase(
+        loads=f_loads,
+        recorder=f_recorder,
+        transaction=TransactionStub(meanwhile=partial(f_loads.save_configs, moved)),
+    )
 
 
 def test_swapped_priorities_are_saved_together_and_journaled_per_load(
@@ -165,3 +179,23 @@ def test_unknown_load_raises(f_use_case: UpdateLoadsUseCase, f_loads: LoadConfig
 
 def test_load_edit_carries_no_live_gate() -> None:
     assert 'live' not in {field.name for field in (*fields(LoadEdit), *fields(LoadConfig))}
+
+
+def test_priority_another_save_took_meanwhile_is_refused_and_nothing_more_is_written(
+    f_use_case_after_the_hallway_moved_meanwhile: UpdateLoadsUseCase,
+    f_loads: LoadConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> None:
+    with pytest.raises(SettingsRejectedError) as raised:
+        f_use_case_after_the_hallway_moved_meanwhile.execute(
+            UpdateLoadsInputDTO(loads=(LoadEdit(slug='boiler-1f', config=replace(BOILER, priority=4)),), now=NOW),
+        )
+
+    assert (raised.value.problems, f_loads.saved, f_recorder.records) == (
+        (
+            SettingProblem(field='priority', code='priority_taken', subject='boiler-1f'),
+            SettingProblem(field='priority', code='priority_taken', subject='hallway'),
+        ),
+        [{'hallway': replace(HALLWAY, priority=4)}],
+        [],
+    )

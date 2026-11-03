@@ -46,6 +46,7 @@ Contexts: `core`, `devices`, `climate`, `power`, `tariffs`, `telemetry`, `notifi
 - **Devices** are reached through capability ports declared as `Protocol` in `devices/domain/capabilities.py` (`FloorThermostat`, the read-only `MeteredPlug` and `SwitchablePlug` that extends it, `TemperatureSensor`, `PhaseMeter`, `ClimateUnit`, `EvCharger`). A new device type is a driver implementing a port; an unsupported one is a stub driver raising `DriverNotImplementedError`.
 - **Domain events** (`DomainEvent`) are collected by the use case and dispatched in-process after success to `@domain_event_handler` handlers: journal, Telegram.
 - **Errors** subclass `DomainError(detail, error_code=...)`.
+- **Read to change.** The settings use cases read, check and write inside one `Transaction` (`core/domain/ports.py`) and read through the repository's `*_for_update` method, which takes SQLite's write lock before it reads, so two saves at once run one after the other.
 - **DTOs and value objects** are frozen dataclasses and `StrEnum`s, which keeps the router install free of compiled wheels.
 
 Use case shape:

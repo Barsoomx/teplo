@@ -1,4 +1,6 @@
+import structlog
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import IntegrityError, OperationalError
 from django.http import Http404, HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -7,9 +9,11 @@ from django.views import View
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.usecases.update_zone_settings import UpdateZoneSettingsInputDTO, UpdateZoneSettingsUseCase
 from apps.core.domain.errors import SettingsRejectedError
-from apps.panel.forms.problems import add_problems
+from apps.panel.forms.problems import add_not_saved, add_problems
 from apps.panel.forms.zone_settings import ZoneSettingsForm
 from apps.panel.usecases.get_settings_page import GetSettingsPageInputDTO, GetSettingsPageUseCase
+
+logger = structlog.get_logger(__name__)
 
 
 class ZoneSettingsView(LoginRequiredMixin, View):
@@ -44,6 +48,9 @@ class ZoneSettingsView(LoginRequiredMixin, View):
                 raise Http404(error.detail) from error
             except SettingsRejectedError as error:
                 add_problems(form, error.problems)
+            except (OperationalError, IntegrityError) as error:
+                logger.warning('zone_settings_not_saved', zone=slug, error=str(error))
+                add_not_saved(form)
             else:
                 outcome = 'saved' if output.changes else 'unchanged'
 

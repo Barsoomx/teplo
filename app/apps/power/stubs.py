@@ -220,8 +220,13 @@ class LoadSettingsConfigStoreStub:
     def config_record(self) -> LoadSettingsRecord:
         return self._record
 
+    def config_record_for_update(self) -> LoadSettingsRecord:
+        return self._record
+
     def save_config(self, config: LoadSettingsConfig, fields: Collection[str]) -> None:
         self._saved.append((config, tuple(fields)))
+        written = {field: getattr(config, field) for field in fields}
+        self._record = replace(self._record, config=replace(self._record.config, **written))
 
 
 class LoadConfigStoreStub:
@@ -236,5 +241,12 @@ class LoadConfigStoreStub:
     def config_records(self) -> list[LoadConfigRecord]:
         return list(self._records)
 
+    def config_records_for_update(self) -> list[LoadConfigRecord]:
+        return list(self._records)
+
     def save_configs(self, configs: Mapping[str, LoadConfig]) -> None:
         self._saved.append(dict(configs))
+        self._records = [
+            replace(record, config=configs[record.slug]) if record.slug in configs else record
+            for record in self._records
+        ]

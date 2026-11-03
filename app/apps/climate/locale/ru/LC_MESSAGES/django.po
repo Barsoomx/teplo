@@ -10,3 +10,6 @@ msgstr ""
 
 msgid "Must not be below the air min band, or heating stops above the target"
 msgstr "Не может быть меньше air min band, иначе обогрев остановится выше цели"
+
+msgid "The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats"
+msgstr "idle floor setpoint должен быть ниже floor limit setpoint, иначе в режиме воздуха простой будет теплее нагрева"

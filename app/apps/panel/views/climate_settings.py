@@ -1,4 +1,6 @@
+import structlog
 from django.contrib.auth.mixins import LoginRequiredMixin
+from django.db import IntegrityError, OperationalError
 from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render
 from django.utils import timezone
@@ -7,8 +9,10 @@ from django.views import View
 from apps.climate.usecases.update_climate_settings import UpdateClimateSettingsInputDTO, UpdateClimateSettingsUseCase
 from apps.core.domain.errors import SettingsRejectedError
 from apps.panel.forms.climate_settings import ClimateSettingsForm
-from apps.panel.forms.problems import add_problems
+from apps.panel.forms.problems import add_not_saved, add_problems
 from apps.panel.usecases.get_settings_page import GetSettingsPageInputDTO, GetSettingsPageUseCase
+
+logger = structlog.get_logger(__name__)
 
 
 class ClimateSettingsView(LoginRequiredMixin, View):
@@ -32,6 +36,9 @@ class ClimateSettingsView(LoginRequiredMixin, View):
                 )
             except SettingsRejectedError as error:
                 add_problems(form, error.problems)
+            except (OperationalError, IntegrityError) as error:
+                logger.warning('climate_settings_not_saved', error=str(error))
+                add_not_saved(form)
             else:
                 outcome = 'saved' if output.changes else 'unchanged'
 

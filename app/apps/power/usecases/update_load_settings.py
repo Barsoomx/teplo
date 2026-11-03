@@ -4,9 +4,10 @@ from decimal import Decimal
 from functools import partial
 
 from apps.core.domain.errors import SettingsRejectedError
-from apps.core.domain.ports import SettingsRecorder
+from apps.core.domain.ports import SettingsRecorder, Transaction
 from apps.core.domain.settings import SettingChange, setting_changes
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.core.services.database_transaction import DatabaseTransaction
 from apps.power.domain.load_config import LOAD_SETTINGS, LoadSettingsConfig, load_settings_problems
 from apps.power.domain.ports import LoadSettingsConfigStore
 from apps.power.repositories.load_settings import LoadSettingsRepository
@@ -32,17 +33,32 @@ class UpdateLoadSettingsOutputDTO:
 
 
 class UpdateLoadSettingsUseCase(BaseUseCase[UpdateLoadSettingsInputDTO, UpdateLoadSettingsOutputDTO]):
-    def __init__(self, load_settings: LoadSettingsConfigStore, recorder: SettingsRecorder) -> None:
+    def __init__(
+        self,
+        load_settings: LoadSettingsConfigStore,
+        recorder: SettingsRecorder,
+        transaction: Transaction,
+    ) -> None:
         super().__init__()
         self._load_settings = load_settings
         self._recorder = recorder
+        self._transaction = transaction
 
     @classmethod
     def init(cls) -> 'UpdateLoadSettingsUseCase':
-        return cls(load_settings=LoadSettingsRepository(), recorder=SettingsJournal.init())
+        return cls(
+            load_settings=LoadSettingsRepository(),
+            recorder=SettingsJournal.init(),
+            transaction=DatabaseTransaction(),
+        )
 
     def _execute(self, input_dto: UpdateLoadSettingsInputDTO) -> UpdateLoadSettingsOutputDTO:
-        current = self._load_settings.config_record().config
+        with self._transaction():
+            changes = self._update(input_dto)
+        return UpdateLoadSettingsOutputDTO(changes=changes)
+
+    def _update(self, input_dto: UpdateLoadSettingsInputDTO) -> tuple[SettingChange, ...]:
+        current = self._load_settings.config_record_for_update().config
         config = LoadSettingsConfig(
             start_ceiling_amps=input_dto.start_ceiling_amps,
             shed_amps=input_dto.shed_amps,
@@ -65,4 +81,4 @@ class UpdateLoadSettingsUseCase(BaseUseCase[UpdateLoadSettingsInputDTO, UpdateLo
                 input_dto.now,
                 write=partial(self._load_settings.save_config, config, fields),
             )
-        return UpdateLoadSettingsOutputDTO(changes=changes)
+        return changes

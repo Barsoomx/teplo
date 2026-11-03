@@ -1,6 +1,7 @@
 from dataclasses import fields, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from functools import partial
 
 import pytest
 
@@ -13,7 +14,7 @@ from apps.climate.usecases.update_climate_settings import (
 )
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
-from apps.core.stubs import SettingsRecorderStub
+from apps.core.stubs import SettingsRecorderStub, TransactionStub
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 DEFAULTS = ClimateConfig(
@@ -52,7 +53,24 @@ def f_use_case(
     f_climate_settings: ClimateConfigStoreStub,
     f_recorder: SettingsRecorderStub,
 ) -> UpdateClimateSettingsUseCase:
-    return UpdateClimateSettingsUseCase(climate_settings=f_climate_settings, recorder=f_recorder)
+    return UpdateClimateSettingsUseCase(
+        climate_settings=f_climate_settings,
+        recorder=f_recorder,
+        transaction=TransactionStub(meanwhile=None),
+    )
+
+
+@pytest.fixture
+def f_use_case_after_the_start_offset_was_narrowed_meanwhile(
+    f_climate_settings: ClimateConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> UpdateClimateSettingsUseCase:
+    narrowed = replace(DEFAULTS, air_start_offset=Decimal('0.20'))
+    return UpdateClimateSettingsUseCase(
+        climate_settings=f_climate_settings,
+        recorder=f_recorder,
+        transaction=TransactionStub(meanwhile=partial(f_climate_settings.save_config, narrowed, ('air_start_offset',))),
+    )
 
 
 def test_changed_climate_settings_are_saved_and_journaled(
@@ -171,3 +189,29 @@ def test_start_offset_below_the_min_band_is_refused_at_the_start_offset(
 
 def test_input_carries_no_guard_gate() -> None:
     assert 'second_floor_guard_live' not in {field.name for field in fields(UpdateClimateSettingsInputDTO)}
+
+
+def test_band_saved_after_another_save_narrowed_the_start_offset_is_written_with_its_own_start_offset(
+    f_use_case_after_the_start_offset_was_narrowed_meanwhile: UpdateClimateSettingsUseCase,
+    f_climate_settings: ClimateConfigStoreStub,
+) -> None:
+    output = f_use_case_after_the_start_offset_was_narrowed_meanwhile.execute(
+        replace(EDIT, air_min_band=Decimal('0.30')),
+    )
+
+    widened = replace(DEFAULTS, air_min_band=Decimal('0.30'))
+    assert (output.changes, f_climate_settings.saved[-1], f_climate_settings.config_record_for_update().config) == (
+        (
+            SettingChange(
+                target='climate_settings',
+                subject='',
+                name='',
+                field='air_start_offset',
+                old='0.20',
+                new='0.30',
+            ),
+            SettingChange(target='climate_settings', subject='', name='', field='air_min_band', old='0.20', new='0.30'),
+        ),
+        (widened, ('air_start_offset', 'air_min_band')),
+        widened,
+    )

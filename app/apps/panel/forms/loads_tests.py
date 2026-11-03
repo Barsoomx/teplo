@@ -6,7 +6,7 @@ from django.forms import BaseFormSet
 from django.http import QueryDict
 
 from apps.core.domain.settings import SettingProblem
-from apps.panel.forms.loads import LoadForm, add_load_problems, load_formset, load_rows
+from apps.panel.forms.loads import LoadForm, add_load_problems, add_loads_not_saved, load_formset, load_rows
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LoadKind, LoadPhase
 
@@ -111,3 +111,12 @@ def test_live_gate_is_no_field_of_a_row_and_a_posted_one_is_dropped() -> None:
         False,
         [['nominal_amps', 'phase', 'priority', 'slug'], ['nominal_amps', 'phase', 'priority', 'slug']],
     )
+
+
+def test_save_the_database_did_not_take_is_said_on_the_first_row(f_checked_formset: BaseFormSet) -> None:
+    add_loads_not_saved(f_checked_formset)
+
+    assert [form.errors for form in f_checked_formset.forms] == [
+        {'__all__': ['Not saved: the database did not take the change. Try again']},
+        {},
+    ]

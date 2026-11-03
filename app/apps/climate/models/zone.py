@@ -2,12 +2,16 @@ from decimal import Decimal
 
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone_config import NAME_MAX_LENGTH, PREHEAT_LEAD_MAX_MINUTES, SETPOINT_MAX, SETPOINT_MIN
 from apps.devices.domain.kinds import DeviceKind
 
 SETPOINT_VALIDATORS = [MinValueValidator(SETPOINT_MIN), MaxValueValidator(SETPOINT_MAX)]
+IDLE_NOT_BELOW_FLOOR_LIMIT = gettext_lazy(
+    'The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats',
+)
 
 
 class Zone(models.Model):
@@ -85,6 +89,13 @@ class Zone(models.Model):
 
     class Meta:
         ordering = ('slug',)
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(idle_floor_setpoint__lt=models.F('floor_limit_setpoint')),
+                name='zone_idle_below_floor_limit',
+                violation_error_message=IDLE_NOT_BELOW_FLOOR_LIMIT,
+            ),
+        ]
 
     def __str__(self) -> str:
         return self.name

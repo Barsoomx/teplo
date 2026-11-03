@@ -34,6 +34,14 @@ flowchart LR
 
 A failed step stops the script before `current` moves, so the running release stays in place.
 
+The release that brings the panel's settings pages adds two checks to the database: every zone's idle floor setpoint below its floor limit, and the climate settings' air start offset at or above the minimum band, 0.20 °C as the migration seeds it. The admin of earlier releases checked neither, so before that deploy look for a value that breaks them:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py shell -c "from decimal import Decimal; from django.db.models import F; from apps.climate.models import ClimateSettings, Zone; print(list(Zone.objects.filter(idle_floor_setpoint__gte=F(\"floor_limit_setpoint\")).values_list(\"slug\", flat=True)), list(ClimateSettings.objects.filter(air_start_offset__lt=Decimal(\"0.20\")).values_list(\"air_start_offset\", flat=True)))"'
+```
+
+Its last line reads `[] []` when nothing stands in the way. Otherwise raise the floor limit or lower the idle floor setpoint of the zones it names, or widen the air start offset to 0.20 °C or more, in the admin, then deploy. A deploy that meets such a value anyway stops at `migrate` with `CHECK constraint failed` and the constraint's name, and leaves the running release in place.
+
 After the deploy, send a test alert as shown in [Telegram alerts](#telegram-alerts) to confirm that the new release still reaches the chat.
 
 Layout on the router:

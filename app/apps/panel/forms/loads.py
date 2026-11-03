@@ -8,7 +8,7 @@ from django.utils.translation import gettext_lazy
 
 from apps.core.domain.settings import SettingProblem
 from apps.panel.forms.load_settings import amps_field
-from apps.panel.forms.problems import add_problems
+from apps.panel.forms.problems import add_not_saved, add_problems
 from apps.power.domain.load_config import PRIORITY_MAX, PRIORITY_MIN, LoadConfigRecord
 from apps.power.domain.loads import MEASURED_PHASES, LoadPhase
 
@@ -63,3 +63,8 @@ def add_load_problems(formset: BaseFormSet, problems: Iterable[SettingProblem]) 
             add_problems(row, (problem,))
         elif formset.forms:
             add_problems(formset.forms[0], (replace(problem, field=''),))
+
+
+def add_loads_not_saved(formset: BaseFormSet) -> None:
+    if formset.forms:
+        add_not_saved(formset.forms[0])

@@ -862,6 +862,9 @@ msgstr "Окна комфорта одного дня не должны пере
 msgid "Not saved: check the values"
 msgstr "Не сохранено: проверьте значения"
 
+msgid "Not saved: the database did not take the change. Try again"
+msgstr "Не сохранено: база данных не приняла изменение. Попробуйте ещё раз"
+
 #, python-format
 msgid "%(temperature)s°"
 msgstr "%(temperature)s°"

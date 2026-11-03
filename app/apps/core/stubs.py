@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import AbstractContextManager, contextmanager
 from datetime import datetime, timedelta
 
 from apps.core.domain.settings import SettingChange
@@ -55,3 +56,27 @@ class SettingsRecorderStub:
 
         write()
         self._records.append((tuple(changes), at))
+
+
+class TransactionStub:
+    def __init__(self, meanwhile: Callable[[], object] | None) -> None:
+        self._meanwhile = meanwhile
+        self._outcomes: list[str] = []
+
+    @property
+    def outcomes(self) -> list[str]:
+        return self._outcomes
+
+    def __call__(self) -> AbstractContextManager[None]:
+        return self._transaction()
+
+    @contextmanager
+    def _transaction(self) -> Iterator[None]:
+        if self._meanwhile is not None:
+            self._meanwhile()
+        committed = False
+        try:
+            yield
+            committed = True
+        finally:
+            self._outcomes.append('committed' if committed else 'rolled_back')

@@ -6,6 +6,7 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
+from django.db import IntegrityError, OperationalError
 from django.test import Client
 
 from apps.climate.usecases.update_climate_settings import (
@@ -71,6 +72,13 @@ def m_band_rejecting_update_use_case() -> Iterator[MagicMock]:
         use_case.init.return_value.execute.side_effect = SettingsRejectedError(
             (SettingProblem(field='air_start_offset', code='below_min_band'),),
         )
+        yield use_case
+
+
+@pytest.fixture
+def m_update_use_case_the_database_refuses(request: pytest.FixtureRequest) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.climate_settings.UpdateClimateSettingsUseCase') as use_case:
+        use_case.init.return_value.execute.side_effect = request.param
         yield use_case
 
 
@@ -186,3 +194,27 @@ def test_saving_climate_settings_requires_login(f_anonymous_client: Client, m_up
         '/login/?next=/settings/climate/',
         0,
     )
+
+
+@pytest.mark.parametrize(
+    'm_update_use_case_the_database_refuses',
+    [OperationalError('database is locked'), IntegrityError('CHECK constraint failed')],
+    ids=['database_locked', 'check_failed'],
+    indirect=True,
+)
+def test_save_the_database_does_not_take_is_answered_on_the_card_with_what_was_typed(
+    f_russian_client: Client,
+    m_settings_use_case: MagicMock,
+    m_update_use_case_the_database_refuses: MagicMock,
+) -> None:
+    response = f_russian_client.post('/settings/climate/', POSTED)
+
+    content = response.content.decode()
+    assert (
+        response.status_code,
+        'Не сохранено: база данных не приняла изменение. Попробуйте ещё раз' in content,
+        'name="preheat_lead_cap_minutes" value="210"' in content,
+        'Сохранено' in content,
+        m_update_use_case_the_database_refuses.init.call_count,
+        m_settings_use_case.init.call_count,
+    ) == (200, True, True, False, 1, 1)
