@@ -138,7 +138,8 @@ def _seed_journal(now: datetime) -> None:
             'previous_state': 'heat' if state == 'idle' else 'idle',
             'power': True,
             'setpoint': floor,
-            'early_stop_offset': '0.30',
+            'start_offset': '0.30',
+            'early_stop_offset': '0.10',
             'lead_minutes': lead_minutes,
         }
 

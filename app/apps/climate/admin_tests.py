@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from django.contrib import admin
@@ -7,7 +8,7 @@ from django.http import HttpRequest
 from django.test import RequestFactory
 
 from apps.climate.admin import ZoneAdmin, ZoneLearningAdmin
-from apps.climate.factories import ZoneFactory
+from apps.climate.factories import ClimateSettingsFactory, ZoneFactory, ZoneLearningFactory
 from apps.climate.models import Zone, ZoneLearning
 from apps.power.factories import ZoneLoadFactory
 
@@ -43,6 +44,12 @@ def f_kitchen() -> Zone:
 def f_kitchen_with_its_load(request: pytest.FixtureRequest, f_kitchen: Zone) -> Zone:
     ZoneLoadFactory.create(slug='kitchen', zone=f_kitchen, shed_at=request.param)
     return f_kitchen
+
+
+@pytest.fixture
+def f_learned_kitchen(request: pytest.FixtureRequest, f_kitchen: Zone) -> ZoneLearning:
+    ClimateSettingsFactory.create(air_start_offset=request.param)
+    return ZoneLearningFactory.create(zone=f_kitchen, early_stop_offset=Decimal('0.45'))
 
 
 @pytest.fixture
@@ -110,3 +117,20 @@ def test_zone_learning_admin_shows_what_zones_learned_without_editing_it(
         f_zone_learning_admin.has_change_permission(f_request),
         f_zone_learning_admin.has_delete_permission(f_request),
     ) == (True, False, False, False)
+
+
+@pytest.mark.parametrize(
+    ('f_learned_kitchen', 'in_effect'),
+    [(Decimal('0.30'), Decimal('0.10')), (Decimal('0.80'), Decimal('0.45'))],
+    ids=['held_to_the_minimum_band', 'wider_start_offset_leaves_room'],
+    indirect=['f_learned_kitchen'],
+)
+def test_zone_learning_admin_shows_the_early_stop_offset_in_effect_beside_the_learned_one(
+    f_zone_learning_admin: ZoneLearningAdmin,
+    f_learned_kitchen: ZoneLearning,
+    in_effect: Decimal,
+) -> None:
+    assert (
+        f_zone_learning_admin.list_display[1:3],
+        f_zone_learning_admin.early_stop_offset_in_effect(f_learned_kitchen),
+    ) == (('early_stop_offset', 'early_stop_offset_in_effect'), in_effect)

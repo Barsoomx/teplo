@@ -249,6 +249,7 @@ def _follow_air_dry_run(
             previous_state=memory.air_state_on(ControlPath.AIR_DRY_RUN),
             power=target.power,
             setpoint=target.setpoint,
+            start_offset=cycle.control.regulation.start_offset,
             early_stop_offset=plan.early_stop_offset,
             lead_minutes=None if plan.lead is None else plan.lead // MINUTE,
             occurred_at=cycle.now,

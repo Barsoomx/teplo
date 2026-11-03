@@ -1,7 +1,10 @@
+from decimal import Decimal
+
 from django.contrib import admin
 from django.http import HttpRequest
 
 from apps.climate.models import ClimateSettings, ComfortPeriod, Zone, ZoneLearning
+from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.power.models import Load
 
 SHED_ZONE_FIELDS = ('slug', 'thermostat')
@@ -55,7 +58,19 @@ class ClimateSettingsAdmin(admin.ModelAdmin):
 
 @admin.register(ZoneLearning)
 class ZoneLearningAdmin(admin.ModelAdmin):
-    list_display = ('zone', 'early_stop_offset', 'dead_time', 'heat_up_rates', 'mornings', 'updated_at')
+    list_display = (
+        'zone',
+        'early_stop_offset',
+        'early_stop_offset_in_effect',
+        'dead_time',
+        'heat_up_rates',
+        'mornings',
+        'updated_at',
+    )
+
+    @admin.display(description='early-stop offset in effect')
+    def early_stop_offset_in_effect(self, obj: ZoneLearning) -> Decimal:
+        return ClimateSettingsRepository.control().regulation.early_stop_offset(obj.early_stop_offset)
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
         return False
