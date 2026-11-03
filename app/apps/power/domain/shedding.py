@@ -24,7 +24,7 @@ class Shed:
     at: float
     settled_at: float
     restore_failed: bool = False
-    stamp_lost: bool = False
+    unstamped_write_at: float | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -87,20 +87,36 @@ def shed_confirmed(unconfirmed: UnconfirmedShed, reading: LoadReading | None) ->
     return reading.closed is False
 
 
-def resumed_shed(record: LoadRecord, *, at: float, now: datetime, default_amps: Decimal) -> Shed | None:
-    if record.shed is None:
+def resumed_shed(
+    record: LoadRecord,
+    *,
+    at: float,
+    now: datetime,
+    default_amps: Decimal,
+    write_interval: timedelta,
+) -> Shed | None:
+    stored = record.shed
+    if stored is None:
         return None
 
+    shed_at = at - max((now - stored.at).total_seconds(), 0.0)
     return Shed(
         load=record.slug,
-        phase=record.shed.phase,
+        phase=stored.phase,
         amps=record.effective_amps(default_amps),
         live=True,
-        reason=record.shed.reason,
-        was_on=record.shed.was_on,
-        at=at - max((now - record.shed.at).total_seconds(), 0.0),
+        reason=stored.reason,
+        was_on=stored.was_on,
+        at=shed_at,
         settled_at=SETTLED,
-        stamp_lost=record.kind is LoadKind.ZONE,
+        unstamped_write_at=_resumed_unstamped_write(
+            record,
+            stored.at,
+            shed_at=shed_at,
+            at=at,
+            now=now,
+            write_interval=write_interval,
+        ),
     )
 
 
@@ -116,7 +132,7 @@ def relief(sheds: Iterable[Shed], phase: LoadPhase, read_at: float) -> Decimal:
 
 
 def can_hand_back(shed: Shed, at: float, write_interval: timedelta) -> bool:
-    return not shed.stamp_lost or elapsed(shed.at, at, write_interval)
+    return elapsed(shed.unstamped_write_at, at, write_interval)
 
 
 def switched_back_on(shed: Shed, reading: LoadReading | None) -> bool:
@@ -163,6 +179,25 @@ def choose_restore(
         ),
         None,
     )
+
+
+def _resumed_unstamped_write(
+    record: LoadRecord,
+    stored_at: datetime,
+    *,
+    shed_at: float,
+    at: float,
+    now: datetime,
+    write_interval: timedelta,
+) -> float | None:
+    if record.kind is not LoadKind.ZONE:
+        return None
+
+    last_write = stored_at if record.last_command_at is None else max(stored_at, record.last_command_at)
+    if now - last_write < write_interval:
+        return shed_at
+
+    return at
 
 
 def _calm_for(phase: LoadPhase, calm: frozenset[LoadPhase]) -> bool:

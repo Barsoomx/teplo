@@ -36,6 +36,7 @@ THRESHOLDS = PhaseThresholds(
 )
 AT = 1000.0
 NOW = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
+WRITE_INTERVAL = timedelta(minutes=30)
 ALL_CALM = frozenset({LoadPhase.L1, LoadPhase.L2, LoadPhase.L3})
 CURRENTS = {LoadPhase.L1: Decimal('10.0'), LoadPhase.L2: Decimal('14.0'), LoadPhase.L3: Decimal('4.0')}
 BOILER = LoadStatus(
@@ -102,6 +103,14 @@ SHED_KITCHEN_RECORD = replace(
     nominal_amps=Decimal('8.0'),
     shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
 )
+
+
+def _kitchen_shed_ago(shed: timedelta, stamped: timedelta | None) -> LoadRecord:
+    return replace(
+        SHED_KITCHEN_RECORD,
+        shed=LiveShed(at=NOW - shed, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None),
+        last_command_at=None if stamped is None else NOW - stamped,
+    )
 
 
 @pytest.fixture
@@ -205,7 +214,13 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_date
     now: datetime,
     resumed_at: float,
 ) -> None:
-    resumed = resumed_shed(SHED_BOILER_RECORD, at=AT, now=now, default_amps=Decimal('6.0'))
+    resumed = resumed_shed(
+        SHED_BOILER_RECORD,
+        at=AT,
+        now=now,
+        default_amps=Decimal('6.0'),
+        write_interval=WRITE_INTERVAL,
+    )
 
     assert (resumed, relief([] if resumed is None else [resumed], LoadPhase.L2, AT - 1)) == (
         Shed(
@@ -223,7 +238,13 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_date
 
 
 def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
-    resumed = resumed_shed(SHED_KITCHEN_RECORD, at=AT, now=NOW, default_amps=Decimal('6.0'))
+    resumed = resumed_shed(
+        SHED_KITCHEN_RECORD,
+        at=AT,
+        now=NOW,
+        default_amps=Decimal('6.0'),
+        write_interval=WRITE_INTERVAL,
+    )
 
     assert resumed == Shed(
         load='kitchen',
@@ -234,12 +255,42 @@ def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
         was_on=None,
         at=AT,
         settled_at=SETTLED,
-        stamp_lost=True,
+        unstamped_write_at=AT,
     )
 
 
+@pytest.mark.parametrize(
+    ('record', 'unstamped_write_at'),
+    [
+        (_kitchen_shed_ago(timedelta(minutes=20), None), AT - 1200),
+        (_kitchen_shed_ago(timedelta(minutes=29), timedelta(minutes=29)), AT - 1740),
+        (_kitchen_shed_ago(timedelta(minutes=30), timedelta(minutes=30)), AT),
+        (_kitchen_shed_ago(timedelta(minutes=40), timedelta(minutes=10)), AT - 2400),
+    ],
+    ids=[
+        'shed_twenty_minutes_ago',
+        'shed_and_stamped_within_the_write_interval',
+        'shed_and_stamped_a_write_interval_ago',
+        'release_stamped_within_the_write_interval',
+    ],
+)
+def test_resumed_zone_shed_counts_a_release_unstamped_just_before_the_restart_once_one_could_be_written(
+    record: LoadRecord,
+    unstamped_write_at: float,
+) -> None:
+    resumed = resumed_shed(record, at=AT, now=NOW, default_amps=Decimal('6.0'), write_interval=WRITE_INTERVAL)
+
+    assert (None if resumed is None else resumed.unstamped_write_at) == unstamped_write_at
+
+
 def test_resumed_shed_of_a_load_not_shed_is_none() -> None:
-    resumed = resumed_shed(replace(SHED_BOILER_RECORD, shed=None), at=AT, now=NOW, default_amps=Decimal('6.0'))
+    resumed = resumed_shed(
+        replace(SHED_BOILER_RECORD, shed=None),
+        at=AT,
+        now=NOW,
+        default_amps=Decimal('6.0'),
+        write_interval=WRITE_INTERVAL,
+    )
 
     assert resumed is None
 
@@ -248,16 +299,16 @@ def test_resumed_shed_of_a_load_not_shed_is_none() -> None:
     ('shed', 'expected'),
     [
         (KITCHEN_SHED, True),
-        (replace(KITCHEN_SHED, stamp_lost=True, at=AT - 1799), False),
-        (replace(KITCHEN_SHED, stamp_lost=True, at=AT - 1800), True),
+        (replace(KITCHEN_SHED, unstamped_write_at=AT - 1799), False),
+        (replace(KITCHEN_SHED, unstamped_write_at=AT - 1800), True),
     ],
-    ids=['write_stamped', 'stamp_lost_within_the_write_interval', 'stamp_lost_a_write_interval_ago'],
+    ids=['every_write_stamped', 'unstamped_write_within_the_write_interval', 'unstamped_write_a_write_interval_ago'],
 )
-def test_zone_shed_whose_write_stamp_was_lost_is_handed_back_a_write_interval_after_the_shed(
+def test_zone_shed_is_handed_back_a_write_interval_after_a_write_whose_stamp_may_be_lost(
     shed: Shed,
     expected: bool,
 ) -> None:
-    assert can_hand_back(shed, AT, timedelta(minutes=30)) is expected
+    assert can_hand_back(shed, AT, WRITE_INTERVAL) is expected
 
 
 @pytest.mark.parametrize(

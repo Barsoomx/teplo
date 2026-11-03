@@ -132,11 +132,11 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             return replace(shedding, resumed=True)
 
         default_amps = state.loads.control.default_amps
-        resumed = {
-            record.slug: shed
+        sheds = (
+            resumed_shed(record, at=at, now=now, default_amps=default_amps, write_interval=MIN_WRITE_INTERVAL)
             for record in state.loads.records
-            if (shed := resumed_shed(record, at=at, now=now, default_amps=default_amps)) is not None
-        }
+        )
+        resumed = {shed.load: shed for shed in sheds if shed is not None}
         if resumed:
             logger.info('load_sheds_resumed', loads=sorted(resumed))
         return replace(shedding, sheds={**resumed, **shedding.sheds}, resumed=True)
@@ -329,10 +329,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
             logger.info('load_shed', load=record.slug, stamp_lost=stamp_lost)
 
-        shed = replace(
-            new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at),
-            stamp_lost=stamp_lost,
-        )
+        shed = new_shed(load, phase=phase, live=live, reason=reason, was_on=was_on, at=self._clock() if live else at)
+        if stamp_lost:
+            shed = replace(shed, unstamped_write_at=shed.at)
         self._event_store.add_event(
             _shed_event(LoadShed if live else LoadShedDryRun, record, shed, amps=amps, now=now),
         )
@@ -498,10 +497,14 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         now: datetime,
     ) -> ShedState:
         self._failed(record, LoadCommand.RESTORE, error, now, journaled=not shed.restore_failed)
+        failed_at = self._clock()
+        failed_shed = replace(shed, restore_failed=True)
+        if record.kind is LoadKind.ZONE:
+            failed_shed = replace(failed_shed, unstamped_write_at=failed_at)
         return replace(
             shedding,
-            sheds={**shedding.sheds, record.slug: replace(shed, restore_failed=True)},
-            failed={**shedding.failed, record.slug: self._clock()},
+            sheds={**shedding.sheds, record.slug: failed_shed},
+            failed={**shedding.failed, record.slug: failed_at},
         )
 
     def _lookup_failed(
@@ -608,6 +611,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
         return (
             elapsed(shed.at, at, MIN_WRITE_INTERVAL)
+            and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
             and elapsed(shedding.failed.get(record.slug), at, MIN_WRITE_INTERVAL)
             and write_allowed(record.last_command_at, now)
         )

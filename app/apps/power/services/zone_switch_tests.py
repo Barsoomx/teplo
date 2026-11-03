@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from django.db import OperationalError
+from structlog.testing import capture_logs
 
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
@@ -65,6 +66,14 @@ def f_switch_without_a_database(f_thermostat: FloorThermostatStub) -> Thermostat
     )
 
 
+@pytest.fixture
+def f_unreachable_switch_without_a_database(unreachable_thermostat: FloorThermostatStub) -> ThermostatZoneSwitch:
+    return ThermostatZoneSwitch(
+        stamps=ZoneWriteStampsStub(error=OperationalError('database is locked')),
+        thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': unreachable_thermostat}),
+    )
+
+
 @pytest.mark.parametrize(
     ('switch', 'commands'),
     [(ThermostatZoneSwitch.switch_off, [('power', False)]), (ThermostatZoneSwitch.switch_on, [('power', True)])],
@@ -112,3 +121,20 @@ def test_switch_reaches_the_thermostat_and_says_so_when_the_database_cannot_stam
     stamped = f_switch_without_a_database.switch_off('kitchen', 'thermostat-kitchen', NOW)
 
     assert (stamped, f_thermostat.commands) == (False, [('power', False)])
+
+
+def test_failed_switch_whose_stamp_the_database_refuses_raises_the_device_error_and_logs_the_lost_stamp(
+    f_unreachable_switch_without_a_database: ThermostatZoneSwitch,
+) -> None:
+    with capture_logs() as logs, pytest.raises(DeviceUnavailableError):
+        f_unreachable_switch_without_a_database.switch_on('kitchen', 'thermostat-kitchen', NOW)
+
+    assert logs == [
+        {
+            'event': 'zone_write_stamp_failed',
+            'log_level': 'warning',
+            'zone': 'kitchen',
+            'at': NOW.isoformat(),
+            'error': 'database is locked',
+        },
+    ]

@@ -364,6 +364,10 @@ def _zone_live_control_off(house: House) -> None:
     house.loads.edit(house.loads.records, frozenset())
 
 
+def _zone_live_control_on(house: House) -> None:
+    house.loads.edit(house.loads.records, LIVE_ZONES)
+
+
 def _zone_load_off(house: House) -> None:
     house.loads.edit([replace(record, live=False) for record in house.loads.records], LIVE_ZONES)
 
@@ -520,6 +524,30 @@ def f_zone_release_that_failed() -> House:
     _pause(house.guard, 1740)
     _seconds(house.guard, 3, '15.0')
     return house
+
+
+@pytest.fixture
+def f_zone_whose_release_failed_with_its_live_control_back_on(f_zone_release_that_failed: House) -> House:
+    _zone_live_control_on(f_zone_release_that_failed)
+    _pause(f_zone_release_that_failed.guard, 1)
+    _thermostat_read_off(f_zone_release_that_failed, 'thermostat-kitchen', 1805)
+    return f_zone_release_that_failed
+
+
+@pytest.fixture
+def f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost(request: pytest.FixtureRequest) -> House:
+    return _house(
+        [
+            replace(
+                KITCHEN,
+                live=True,
+                shed=replace(STORED_SHED, at=NOW - timedelta(minutes=31), was_on=None),
+                last_command_at=NOW - timedelta(minutes=31),
+            ),
+        ],
+        LIVE_CONTROL,
+        request.param,
+    )
 
 
 @pytest.fixture
@@ -1794,6 +1822,69 @@ def test_zone_release_that_failed_is_tried_again_only_thirty_minutes_after_the_a
             ),
         ],
     )
+
+
+def test_zone_whose_release_failed_stays_held_thirty_minutes_after_the_attempt_once_its_live_control_is_back_on(
+    f_zone_whose_release_failed_with_its_live_control_back_on: House,
+) -> None:
+    calm = _seconds(f_zone_whose_release_failed_with_its_live_control_back_on.guard, 120, '10.0')
+    held = f_zone_whose_release_failed_with_its_live_control_back_on.book.held_zones()
+    _pause(f_zone_whose_release_failed_with_its_live_control_back_on.guard, 1674)
+    _thermostat_read_off(f_zone_whose_release_failed_with_its_live_control_back_on, 'thermostat-kitchen', 3599)
+    late = _seconds(f_zone_whose_release_failed_with_its_live_control_back_on.guard, 6, '10.0')
+
+    assert (
+        _restored_at(calm, 1806),
+        held,
+        _restored_at(late, 3600),
+        f_zone_whose_release_failed_with_its_live_control_back_on.zones.switched_on,
+        f_zone_whose_release_failed_with_its_live_control_back_on.book.held_zones(),
+    ) == ([], frozenset({'kitchen'}), [(3604, ('kitchen',))], [], frozenset())
+
+
+@pytest.mark.parametrize(
+    'f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost',
+    [frozenset()],
+    indirect=True,
+)
+def test_zone_release_after_a_restart_waits_thirty_minutes_after_it_when_an_unstamped_release_may_precede_it(
+    f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost: House,
+) -> None:
+    early = _seconds(f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.guard, 1, '10.0')
+    _pause(f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.guard, 1797)
+    late = _seconds(f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.guard, 3, '10.0')
+
+    assert (
+        _restored_at(early, 1),
+        _restored_at(late, 1799),
+        f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.zones.switched_on,
+    ) == ([], [(1801, ('kitchen',))], [('kitchen', 'thermostat-kitchen', _moment(1801))])
+
+
+@pytest.mark.parametrize(
+    'f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost',
+    [LIVE_ZONES],
+    indirect=True,
+)
+def test_zone_live_again_after_such_a_restart_is_handed_back_no_sooner_than_thirty_minutes_after_it(
+    f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost: House,
+) -> None:
+    calm = _seconds(f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.guard, 300, '10.0')
+    held = f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.book.held_zones()
+    _pause(f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.guard, 1497)
+    _thermostat_read_off(
+        f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost,
+        'thermostat-kitchen',
+        1797,
+    )
+    late = _seconds(f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.guard, 4, '10.0')
+
+    assert (
+        _restored_at(calm, 1),
+        held,
+        _restored_at(late, 1798),
+        f_restarted_house_a_minute_after_a_zone_release_whose_stamp_was_lost.book.held_zones(),
+    ) == ([], frozenset({'kitchen'}), [(1801, ('kitchen',))], frozenset())
 
 
 def test_zone_release_after_a_restart_waits_thirty_minutes_after_the_zones_last_write_stamp(
