@@ -257,10 +257,45 @@ def test_reservation_holds_until_another_write_takes_the_slot(
 
 @pytest.mark.usefixtures('f_reservation')
 def test_cleared_zone_takes_its_next_write_at_once(f_gate: ZoneWriteGate) -> None:
-    f_gate.clear('kitchen')
+    freed = f_gate.clear('kitchen')
 
-    assert f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None) == WriteReservation(
-        zone='kitchen',
-        slot=WriteSlot(at=NOW + timedelta(minutes=1), moment=START),
-        previous=None,
+    assert (freed, f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None)) == (
+        True,
+        WriteReservation(
+            zone='kitchen',
+            slot=WriteSlot(at=NOW + timedelta(minutes=1), moment=START),
+            previous=None,
+        ),
     )
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'expected'),
+    [
+        (1799, (False, None)),
+        (
+            1800,
+            (
+                True,
+                WriteReservation(
+                    zone='kitchen',
+                    slot=WriteSlot(at=NOW + HALF_HOUR, moment=START + 1810),
+                    previous=None,
+                ),
+            ),
+        ),
+    ],
+    ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
+)
+@pytest.mark.usefixtures('f_reservation_overridden_by_a_shed')
+def test_clear_keeps_the_slot_of_a_shed_for_thirty_minutes_on_the_monotonic_clock_and_says_so(
+    f_gate: ZoneWriteGate,
+    f_clock: MonotonicClockStub,
+    seconds: int,
+    expected: tuple[bool, WriteReservation | None],
+) -> None:
+    f_clock.advance(seconds)
+
+    freed = f_gate.clear('kitchen')
+
+    assert (freed, f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None)) == expected

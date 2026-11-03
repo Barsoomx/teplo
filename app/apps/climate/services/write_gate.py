@@ -5,7 +5,7 @@ from datetime import datetime
 
 from django.utils import timezone
 
-from apps.climate.domain.write_guard import WriteReservation, WriteSlot, slot_free
+from apps.climate.domain.write_guard import WriteReservation, WriteSlot, override_holds, slot_free
 
 
 class ZoneWriteGate:
@@ -51,9 +51,13 @@ class ZoneWriteGate:
 
             self._slots[reservation.zone] = reservation.previous
 
-    def clear(self, zone: str) -> None:
+    def clear(self, zone: str) -> bool:
         with self._lock:
+            if override_holds(self._slots.get(zone), self._clock()):
+                return False
+
             self._slots.pop(zone, None)
+            return True
 
 
 zone_write_gate = ZoneWriteGate.init()

@@ -39,7 +39,7 @@ class BoostZoneUseCase(BaseUseCase[BoostZoneInputDTO, BoostZoneOutputDTO]):
 
     def _execute(self, input_dto: BoostZoneInputDTO) -> BoostZoneOutputDTO:
         until = input_dto.now + BOOST_DURATION
-        self._zones.boost(input_dto.zone, until)
-        self._writes.clear(input_dto.zone)
+        freed = self._writes.clear(input_dto.zone)
+        self._zones.boost(input_dto.zone, until, clear_stamps=freed)
         self._event_store.add_event(ZoneBoosted(zone=input_dto.zone, until=until, occurred_at=input_dto.now))
         return BoostZoneOutputDTO(zone=input_dto.zone, until=until)

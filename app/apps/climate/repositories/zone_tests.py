@@ -136,7 +136,7 @@ def test_mark_air_dry_run_stores_time_apart_from_write_stamps(f_zone: Zone) -> N
 
 
 def test_boost_sets_until_and_clears_write_stamps(f_commanded_zone: Zone) -> None:
-    ZoneRepository.boost(f_commanded_zone.slug, NOW + timedelta(hours=2))
+    ZoneRepository.boost(f_commanded_zone.slug, NOW + timedelta(hours=2), clear_stamps=True)
 
     zone = Zone.objects.get(pk=f_commanded_zone.pk)
     assert (zone.boost_until, zone.last_command_at, zone.last_dry_run_at, zone.last_air_dry_run_at) == (
@@ -147,9 +147,21 @@ def test_boost_sets_until_and_clears_write_stamps(f_commanded_zone: Zone) -> Non
     )
 
 
+def test_boost_asked_to_keep_the_stamps_sets_until_only(f_commanded_zone: Zone) -> None:
+    ZoneRepository.boost(f_commanded_zone.slug, NOW + timedelta(hours=2), clear_stamps=False)
+
+    zone = Zone.objects.get(pk=f_commanded_zone.pk)
+    assert (zone.boost_until, zone.last_command_at, zone.last_dry_run_at, zone.last_air_dry_run_at) == (
+        NOW + timedelta(hours=2),
+        NOW - timedelta(minutes=5),
+        NOW - timedelta(minutes=5),
+        NOW - timedelta(minutes=5),
+    )
+
+
 def test_boost_unknown_zone_raises() -> None:
     with pytest.raises(ZoneNotFoundError):
-        ZoneRepository.boost('attic', NOW)
+        ZoneRepository.boost('attic', NOW, clear_stamps=True)
 
 
 def test_comfort_period_must_end_after_start(f_zone: Zone) -> None:

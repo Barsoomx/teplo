@@ -3632,6 +3632,41 @@ def test_restored_zone_waits_thirty_minutes_after_its_live_shed_on_a_clock_stepp
     )
 
 
+def test_boost_pressed_while_the_zone_is_shed_live_goes_out_thirty_minutes_after_the_shed(
+    f_kitchen_shed_live: GatedHouse,
+    f_held_gate: LoadGateStub,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    f_kitchen_shed_live.boost.execute(BoostZoneInputDTO(zone='kitchen', now=MORNING + MINUTE))
+    f_held_gate.release('kitchen')
+    f_kitchen_shed_live.clock.advance(180)
+    restored = f_kitchen_shed_live.cycle().execute(_at(MORNING + timedelta(minutes=3)))
+    f_kitchen_shed_live.clock.advance(1620)
+    boosted = f_kitchen_shed_live.cycle().execute(_at(MORNING + HALF_HOUR))
+
+    assert (
+        [output.outcomes['kitchen'] for output in (restored, boosted)],
+        f_thermostat.commands,
+        Zone.objects.get(slug='kitchen').last_command_at,
+        f_held_gate.asked,
+        f_events,
+    ) == (
+        [ZoneCycleOutcome.THROTTLED, ZoneCycleOutcome.APPLIED],
+        [('power', True), ('setpoint', Decimal('30.0'))],
+        MORNING + HALF_HOUR,
+        [(), (ZoneStart(zone='kitchen', writes_live=True),)],
+        [
+            ZoneCommandIssued(
+                zone='kitchen',
+                change=ThermostatChange(power=True, setpoint=Decimal('30.0')),
+                dry_run=False,
+                occurred_at=MORNING + HALF_HOUR,
+            ),
+        ],
+    )
+
+
 def test_cycle_in_flight_with_an_older_stamp_writes_nothing_after_a_guard_release_of_its_zone(
     f_living_room_released_while_the_cycle_writes_the_kitchen: RunHeatingCycleUseCase,
     f_living_room_thermostat: FloorThermostatStub,

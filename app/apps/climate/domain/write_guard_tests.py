@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from apps.climate.domain.write_guard import WriteSlot, slot_free, write_allowed
+from apps.climate.domain.write_guard import WriteSlot, override_holds, slot_free, write_allowed
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
 CURRENT = NOW + timedelta(seconds=30)
@@ -102,3 +102,20 @@ def test_slot_the_caller_has_not_seen_waits_thirty_minutes_on_the_monotonic_cloc
     expected: bool,
 ) -> None:
     assert slot_free(slot, stamped_at=stamped_at, now=NOW, current=CURRENT, moment=MOMENT) is expected
+
+
+@pytest.mark.parametrize(
+    ('slot', 'expected'),
+    [
+        (None, False),
+        (WriteSlot(at=NOW, moment=MOMENT - 60), False),
+        (WriteSlot(at=NOW, moment=MOMENT - 1799, override=True), True),
+        (WriteSlot(at=NOW, moment=MOMENT - 1800, override=True), False),
+    ],
+    ids=['no_write', 'an_ordinary_write', 'shed_within_thirty_minutes', 'shed_thirty_minutes_ago'],
+)
+def test_override_holds_its_zone_for_thirty_minutes_on_the_monotonic_clock(
+    slot: WriteSlot | None,
+    expected: bool,
+) -> None:
+    assert override_holds(slot, MOMENT) is expected

@@ -5,6 +5,8 @@ from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.models import Zone
 
+STAMPS = ('last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
+
 
 class ZoneRepository:
     @staticmethod
@@ -27,13 +29,9 @@ class ZoneRepository:
         Zone.objects.filter(slug=slug).update(last_air_dry_run_at=at)
 
     @staticmethod
-    def boost(slug: str, until: datetime) -> None:
-        updated = Zone.objects.filter(slug=slug).update(
-            boost_until=until,
-            last_command_at=None,
-            last_dry_run_at=None,
-            last_air_dry_run_at=None,
-        )
+    def boost(slug: str, until: datetime, *, clear_stamps: bool) -> None:
+        cleared = dict.fromkeys(STAMPS) if clear_stamps else {}
+        updated = Zone.objects.filter(slug=slug).update(boost_until=until, **cleared)
         if updated == 0:
             raise ZoneNotFoundError(slug)
 

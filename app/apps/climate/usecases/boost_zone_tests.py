@@ -17,6 +17,7 @@ pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
 WRITTEN_AT = NOW - timedelta(minutes=5)
+SHED_HELD_UNTIL = WRITTEN_AT + timedelta(minutes=30)
 
 
 @pytest.fixture
@@ -29,6 +30,21 @@ def f_writes() -> ZoneWriteGate:
     writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0), wall_clock=WallClockStub(now=NOW))
     writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None)
     return writes
+
+
+@pytest.fixture
+def f_writes_of_a_zone_shed_live(request: pytest.FixtureRequest) -> ZoneWriteGate:
+    since_shed: timedelta = request.param
+    clock = MonotonicClockStub(now=0.0)
+    writes = ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=NOW))
+    writes.override('bathroom-1f', WRITTEN_AT)
+    clock.advance(since_shed.total_seconds())
+    return writes
+
+
+@pytest.fixture
+def f_use_case_of_a_zone_shed_live(f_writes_of_a_zone_shed_live: ZoneWriteGate) -> BoostZoneUseCase:
+    return BoostZoneUseCase(zones=ZoneRepository(), writes=f_writes_of_a_zone_shed_live, dispatcher=EventDispatcher())
 
 
 @pytest.fixture
@@ -71,6 +87,41 @@ def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
         slot=WriteSlot(at=NOW, moment=0.0),
         previous=None,
     )
+
+
+@pytest.mark.parametrize(
+    ('f_writes_of_a_zone_shed_live', 'now', 'expected'),
+    [
+        (timedelta(minutes=5), NOW, (WRITTEN_AT, None)),
+        (
+            timedelta(minutes=30),
+            SHED_HELD_UNTIL,
+            (
+                None,
+                WriteReservation(
+                    zone='bathroom-1f',
+                    slot=WriteSlot(at=SHED_HELD_UNTIL, moment=1800.0),
+                    previous=None,
+                ),
+            ),
+        ),
+    ],
+    ids=['five_minutes_after_the_shed', 'thirty_minutes_after_the_shed'],
+    indirect=['f_writes_of_a_zone_shed_live'],
+)
+@pytest.mark.usefixtures('f_zone')
+def test_boost_keeps_the_write_budget_a_live_shed_spent_until_thirty_minutes_after_it(
+    f_use_case_of_a_zone_shed_live: BoostZoneUseCase,
+    f_writes_of_a_zone_shed_live: ZoneWriteGate,
+    now: datetime,
+    expected: tuple[datetime | None, WriteReservation | None],
+) -> None:
+    f_use_case_of_a_zone_shed_live.execute(BoostZoneInputDTO(zone='bathroom-1f', now=now))
+
+    assert (
+        Zone.objects.get(slug='bathroom-1f').last_command_at,
+        f_writes_of_a_zone_shed_live.reserve('bathroom-1f', now, stamped_at=None),
+    ) == expected
 
 
 def test_boost_unknown_zone_raises(f_use_case: BoostZoneUseCase, f_events: list[DomainEvent]) -> None:
