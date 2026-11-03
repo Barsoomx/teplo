@@ -71,7 +71,8 @@ class LoadRepository:
             if missing:
                 raise LoadNotFoundError(missing[0])
 
-            top = Load.objects.aggregate(top=Max('priority'))['top'] or 0
+            taken = Load.objects.aggregate(top=Max('priority'))['top'] or 0
+            top = max([taken, *(config.priority for config in configs.values())])
             moved = [slug for slug, config in configs.items() if config.priority != priorities[slug]]
             for offset, slug in enumerate(moved, start=1):
                 Load.objects.filter(slug=slug).update(priority=top + offset)

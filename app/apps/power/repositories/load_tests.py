@@ -341,6 +341,44 @@ def test_saved_configs_rotate_three_priorities() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ('configs', 'expected'),
+    [
+        (
+            {
+                'boiler-1f': LoadConfig(priority=5, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+                'kitchen': LoadConfig(priority=4, phase=LoadPhase.L2, nominal_amps=None),
+            },
+            [('hallway', 3), ('kitchen', 4), ('boiler-1f', 5)],
+        ),
+        (
+            {
+                'boiler-1f': LoadConfig(priority=5, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+                'kitchen': LoadConfig(priority=1, phase=LoadPhase.L2, nominal_amps=None),
+            },
+            [('kitchen', 1), ('hallway', 3), ('boiler-1f', 5)],
+        ),
+        (
+            {
+                'boiler-1f': LoadConfig(priority=4, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+                'kitchen': LoadConfig(priority=6, phase=LoadPhase.L2, nominal_amps=None),
+                'hallway': LoadConfig(priority=5, phase=LoadPhase.UNKNOWN, nominal_amps=None),
+            },
+            [('boiler-1f', 4), ('hallway', 5), ('kitchen', 6)],
+        ),
+    ],
+    ids=['two_above_the_highest', 'one_above_the_highest_one_below', 'every_load_above_the_highest'],
+)
+@pytest.mark.usefixtures('f_loads')
+def test_saved_configs_move_loads_to_priorities_above_the_highest_taken(
+    configs: dict[str, LoadConfig],
+    expected: list[tuple[str, int]],
+) -> None:
+    LoadRepository.save_configs(configs)
+
+    assert list(Load.objects.order_by('priority').values_list('slug', 'priority')) == expected
+
+
 def test_saved_config_sets_phase_and_current_and_keeps_the_gate_the_shed_and_learning(
     f_boiler_shed_after_learning: Load,
 ) -> None:
