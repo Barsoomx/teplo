@@ -83,7 +83,7 @@ def capture_samples() -> object:
 def run_heating_cycle() -> object:
     reading = read_clock(clock_trust_source())
     return RunHeatingCycleUseCase.init().execute(
-        RunHeatingCycleInputDTO(now=reading.now, clock_trusted=reading.trusted),
+        RunHeatingCycleInputDTO(now=reading.now, monotonic=reading.monotonic, clock_trusted=reading.trusted),
     )
 
 

@@ -10,7 +10,7 @@ from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.write_gate import ZoneWriteGate
-from apps.core.stubs import MonotonicClockStub, WallClockStub
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
 from apps.power.services.zone_switch import ThermostatZoneSwitch
@@ -23,6 +23,7 @@ WRITTEN_AT = NOW - timedelta(minutes=40)
 HEATING_WRITE_AT = NOW - timedelta(minutes=5)
 HEATING_WRITE_DUE_AT = HEATING_WRITE_AT + timedelta(minutes=30)
 START = 1000.0
+LOADS_READ_AT = START - 60
 
 
 def _switch_off(switch: ThermostatZoneSwitch) -> object:
@@ -30,7 +31,7 @@ def _switch_off(switch: ThermostatZoneSwitch) -> object:
 
 
 def _switch_on(switch: ThermostatZoneSwitch) -> object:
-    return switch.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT)
+    return switch.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT, read_at=LOADS_READ_AT)
 
 
 @pytest.fixture
@@ -55,13 +56,15 @@ def f_clock() -> MonotonicClockStub:
 
 @pytest.fixture
 def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, wall_clock=WallClockStub(now=NOW))
+    return ZoneWriteGate(clock=f_clock)
 
 
 @pytest.fixture
 def f_kitchen_written_by_the_heating_cycle(f_kitchen: Zone, f_writes: ZoneWriteGate) -> Zone:
-    f_writes.reserve('kitchen', HEATING_WRITE_AT, stamped_at=WRITTEN_AT)
-    Zone.objects.filter(pk=f_kitchen.pk).update(last_command_at=HEATING_WRITE_AT)
+    reservation = f_writes.reserve('kitchen', HEATING_WRITE_AT, stamped_at=WRITTEN_AT, read_at=START)
+    assert reservation is not None
+    with f_writes.stamping(reservation):
+        Zone.objects.filter(pk=f_kitchen.pk).update(last_command_at=HEATING_WRITE_AT)
     return f_kitchen
 
 
@@ -132,7 +135,7 @@ def test_switch_on_powers_the_thermostat_on_and_stamps_the_write(
     f_kitchen: Zone,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    switched = f_switch.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT)
+    switched = f_switch.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT, read_at=LOADS_READ_AT)
 
     f_kitchen.refresh_from_db()
     assert (switched, f_thermostat.commands, f_kitchen.last_command_at) == (True, [('power', True)], NOW)
@@ -150,7 +153,7 @@ def test_switch_off_takes_the_zones_write_slot_within_its_budget_and_holds_the_n
 
     assert (
         f_thermostat.commands,
-        f_writes.reserve('kitchen', HEATING_WRITE_DUE_AT, stamped_at=HEATING_WRITE_AT),
+        f_writes.reserve('kitchen', HEATING_WRITE_DUE_AT, stamped_at=HEATING_WRITE_AT, read_at=f_clock()),
     ) == ([('power', False)], None)
 
 
@@ -159,7 +162,7 @@ def test_switch_on_within_the_zones_write_budget_writes_and_stamps_nothing(
     f_kitchen_written_by_the_heating_cycle: Zone,
     f_thermostat: FloorThermostatStub,
 ) -> None:
-    switched = f_switch.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT)
+    switched = f_switch.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT, read_at=LOADS_READ_AT)
 
     f_kitchen_written_by_the_heating_cycle.refresh_from_db()
     assert (switched, f_thermostat.commands, f_kitchen_written_by_the_heating_cycle.last_command_at) == (
@@ -173,6 +176,7 @@ def test_switch_on_within_the_zones_write_budget_writes_and_stamps_nothing(
 def test_failed_switch_still_spends_the_write_budget(
     f_unreachable_switch: ThermostatZoneSwitch,
     f_writes: ZoneWriteGate,
+    f_clock: MonotonicClockStub,
     f_kitchen: Zone,
     switch: Callable[[ThermostatZoneSwitch], object],
 ) -> None:
@@ -182,7 +186,7 @@ def test_failed_switch_still_spends_the_write_budget(
     f_kitchen.refresh_from_db()
     assert (
         f_kitchen.last_command_at,
-        f_writes.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=WRITTEN_AT),
+        f_writes.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=NOW, read_at=f_clock()),
     ) == (NOW, None)
 
 
@@ -197,9 +201,9 @@ def test_switch_that_cannot_find_its_thermostat_writes_nothing_and_spends_no_wri
         switch(f_switch_without_the_thermostat)
 
     f_kitchen.refresh_from_db()
-    assert (f_kitchen.last_command_at, f_writes.reserve('kitchen', NOW, stamped_at=WRITTEN_AT)) == (
+    assert (f_kitchen.last_command_at, f_writes.reserve('kitchen', NOW, stamped_at=WRITTEN_AT, read_at=START)) == (
         WRITTEN_AT,
-        WriteReservation(zone='kitchen', slot=WriteSlot(at=NOW, moment=START), previous=None),
+        WriteReservation(zone='kitchen', slot=WriteSlot(generation=1, at=NOW, moment=START), previous=None),
     )
 
 
@@ -218,11 +222,11 @@ def test_switch_on_writes_nothing_and_gives_the_slot_back_when_the_database_cann
     f_thermostat: FloorThermostatStub,
 ) -> None:
     with pytest.raises(OperationalError):
-        f_switch_without_a_database.switch_on('kitchen', 'thermostat-kitchen', NOW, stamped_at=WRITTEN_AT)
+        _switch_on(f_switch_without_a_database)
 
-    assert (f_thermostat.commands, f_writes.reserve('kitchen', NOW, stamped_at=WRITTEN_AT)) == (
+    assert (f_thermostat.commands, f_writes.reserve('kitchen', NOW, stamped_at=WRITTEN_AT, read_at=START)) == (
         [],
-        WriteReservation(zone='kitchen', slot=WriteSlot(at=NOW, moment=START), previous=None),
+        WriteReservation(zone='kitchen', slot=WriteSlot(generation=2, at=NOW, moment=START), previous=None),
     )
 
 

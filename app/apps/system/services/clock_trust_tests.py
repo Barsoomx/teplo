@@ -6,7 +6,7 @@ from pytest_django import Settings
 from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.system.domain.clock import ClockReading, ClockStatus, ClockStatusCode
 from apps.system.services.clock_trust import NdmsNtpSource, SystemClockSource, clock_trust_source, read_clock
-from apps.system.stubs import ClockStub, SyncingClockStub
+from apps.system.stubs import ClockStub, SteppingMonotonicClockStub, SyncingClockStub
 
 SYNCHRONIZED_OUTPUT = (
     '\x1b[K\n           status: \n              elapsed: 74945\n               server: 1.ntp.netcraze.ru\n'
@@ -15,6 +15,7 @@ SYNCHRONIZED_OUTPUT = (
 BOOT_CLOCK = datetime(2026, 11, 1, 12, 32, tzinfo=UTC)
 CLOCK_STEP = timedelta(hours=5)
 UPTIME = 812.5
+MONOTONIC_READ = timedelta(microseconds=1)
 
 
 def _synchronized(_command: tuple[str, ...]) -> str:
@@ -67,6 +68,11 @@ def f_wall_clock() -> WallClockStub:
 @pytest.fixture
 def f_monotonic_clock() -> MonotonicClockStub:
     return MonotonicClockStub(now=UPTIME)
+
+
+@pytest.fixture
+def f_stepping_monotonic_clock(f_wall_clock: WallClockStub) -> SteppingMonotonicClockStub:
+    return SteppingMonotonicClockStub(now=UPTIME, wall_clock=f_wall_clock, step=MONOTONIC_READ)
 
 
 @pytest.fixture
@@ -146,3 +152,12 @@ def test_reading_carries_an_untrusted_status(
     reading = read_clock(f_unsynchronized_clock, wall_clock=f_wall_clock, monotonic_clock=f_monotonic_clock)
 
     assert reading == ClockReading(now=BOOT_CLOCK, monotonic=UPTIME, trusted=False)
+
+
+def test_reading_takes_the_monotonic_time_before_the_wall_clock_time(
+    f_wall_clock: WallClockStub,
+    f_stepping_monotonic_clock: SteppingMonotonicClockStub,
+) -> None:
+    reading = read_clock(SystemClockSource(), wall_clock=f_wall_clock, monotonic_clock=f_stepping_monotonic_clock)
+
+    assert reading == ClockReading(now=BOOT_CLOCK + MONOTONIC_READ, monotonic=UPTIME, trusted=True)

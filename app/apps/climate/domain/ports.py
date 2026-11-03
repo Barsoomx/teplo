@@ -1,4 +1,5 @@
 from collections.abc import Collection, Mapping, Sequence
+from contextlib import AbstractContextManager
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
@@ -22,6 +23,10 @@ class ZoneStore(Protocol):
     def mark_air_dry_run(self, slug: str, at: datetime) -> None: ...
 
 
+class ZoneBoostStore(Protocol):
+    def boost(self, slug: str, until: datetime, *, clear_stamps: bool) -> None: ...
+
+
 class ZoneLearningStore(Protocol):
     def all_records(self) -> dict[str, ZoneLearningRecord]: ...
 
@@ -39,13 +44,22 @@ class LoadGate(Protocol):
 
 
 class WriteGate(Protocol):
-    def reserve(self, zone: str, at: datetime, *, stamped_at: datetime | None) -> WriteReservation | None: ...
+    def reserve(
+        self,
+        zone: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+    ) -> WriteReservation | None: ...
 
-    def override(self, zone: str, at: datetime) -> None: ...
+    def override(self, zone: str, at: datetime) -> WriteReservation: ...
+
+    def stamping(self, reservation: WriteReservation) -> AbstractContextManager[None]: ...
+
+    def stored(self, reservation: WriteReservation) -> None: ...
 
     def holds(self, reservation: WriteReservation) -> bool: ...
-
-    def cancel(self, reservation: WriteReservation) -> None: ...
 
     def clear(self, zone: str) -> bool: ...
 

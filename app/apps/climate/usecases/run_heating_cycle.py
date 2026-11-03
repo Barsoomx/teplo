@@ -59,6 +59,7 @@ logger = structlog.get_logger(__name__)
 @dataclass(frozen=True, kw_only=True)
 class RunHeatingCycleInputDTO:
     now: datetime
+    monotonic: float
     clock_trusted: bool
 
 
@@ -138,7 +139,13 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         permits = StartPermits(answers=self._gate.ask_starts(_starts(runs), now), gated=self._gate.gated_zones())
         return RunHeatingCycleOutputDTO(
             outcomes={
-                zone.slug: self._run_zone(zone, self._conditions(zone, learning, guarded_zone), cycle, permits)
+                zone.slug: self._run_zone(
+                    zone,
+                    self._conditions(zone, learning, guarded_zone),
+                    cycle,
+                    permits,
+                    read_at=input_dto.monotonic,
+                )
                 for zone in zones
             },
         )
@@ -210,9 +217,11 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         conditions: ZoneConditions,
         cycle: CycleConditions,
         permits: StartPermits,
+        *,
+        read_at: float,
     ) -> ZoneCycleOutcome:
         try:
-            return self._control_zone(zone, conditions, cycle, permits)
+            return self._control_zone(zone, conditions, cycle, permits, read_at=read_at)
         except (OperationalError, ZoneNotFoundError) as error:
             logger.warning(
                 'zone_cycle_failed',
@@ -227,16 +236,18 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         conditions: ZoneConditions,
         cycle: CycleConditions,
         permits: StartPermits,
+        *,
+        read_at: float,
     ) -> ZoneCycleOutcome:
         run = self._plan(zone, conditions, cycle, held=zone.slug in self._gate.held_zones())
-        outcome = self._drive(run, permits, cycle.now)
+        outcome = self._drive(run, permits, cycle.now, read_at=read_at)
         follow_up = follow_zone(zone, run.memory, run.decision, outcome, conditions, cycle)
         follow_up = self._journal_air_dry_run(zone, run.memory, follow_up, cycle.now)
         self._learn(zone, follow_up, conditions.learning, cycle.control)
         self._book.remember_zone(zone.slug, follow_up.memory)
         return outcome
 
-    def _drive(self, run: ZoneRun, permits: StartPermits, now: datetime) -> ZoneCycleOutcome:
+    def _drive(self, run: ZoneRun, permits: StartPermits, now: datetime, *, read_at: float) -> ZoneCycleOutcome:
         if run.drive.outcome is not None:
             return run.drive.outcome
 
@@ -250,25 +261,28 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         if not run.conditions.writes_live:
             return self._journal_dry_run(run.zone, run.drive.change, now)
 
-        return self._issue(run.zone, run.drive.change, now)
+        return self._issue(run.zone, run.drive.change, now, read_at=read_at)
 
     def _journal_dry_run(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
         self._zones.mark_dry_run(zone.slug, now)
         self._event_store.add_event(ZoneCommandIssued(zone=zone.slug, change=change, dry_run=True, occurred_at=now))
         return ZoneCycleOutcome.DRY_RUN
 
-    def _issue(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
-        reservation = self._writes.reserve(zone.slug, now, stamped_at=zone.last_command_at)
+    def _issue(
+        self,
+        zone: ZoneSettings,
+        change: ThermostatChange,
+        now: datetime,
+        *,
+        read_at: float,
+    ) -> ZoneCycleOutcome:
+        reservation = self._writes.reserve(zone.slug, now, stamped_at=zone.last_command_at, read_at=read_at)
         if reservation is None:
             logger.info('zone_write_held', zone=zone.slug)
             return ZoneCycleOutcome.THROTTLED
 
-        try:
+        with self._writes.stamping(reservation):
             self._zones.mark_commanded(zone.slug, now)
-        except OperationalError:
-            self._writes.cancel(reservation)
-            raise
-
         if not self._writes.holds(reservation):
             logger.info('zone_write_held', zone=zone.slug)
             return ZoneCycleOutcome.THROTTLED

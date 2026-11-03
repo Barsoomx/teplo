@@ -40,7 +40,15 @@ class DeviceDirectory(Protocol):
 class ZoneSwitch(Protocol):
     def switch_off(self, zone: str, thermostat: str, at: datetime) -> bool: ...
 
-    def switch_on(self, zone: str, thermostat: str, at: datetime, *, stamped_at: datetime | None) -> bool: ...
+    def switch_on(
+        self,
+        zone: str,
+        thermostat: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+    ) -> bool: ...
 
 
 class ZoneWriteStamps(Protocol):

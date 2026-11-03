@@ -60,7 +60,8 @@ def read_clock(
     monotonic_clock: Callable[[], float] = time.monotonic,
 ) -> ClockReading:
     trusted = source.status().trusted
-    return ClockReading(now=wall_clock(), monotonic=monotonic_clock(), trusted=trusted)
+    monotonic = monotonic_clock()
+    return ClockReading(now=wall_clock(), monotonic=monotonic, trusted=trusted)
 
 
 def _run_command(command: tuple[str, ...]) -> str:

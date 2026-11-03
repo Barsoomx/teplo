@@ -4,6 +4,7 @@ import structlog
 from django.db import OperationalError
 
 from apps.climate.domain.ports import WriteGate
+from apps.climate.domain.write_guard import WriteReservation
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.write_gate import zone_write_gate
 from apps.devices.domain.capabilities import ThermostatProvider
@@ -25,33 +26,38 @@ class ThermostatZoneSwitch:
 
     def switch_off(self, zone: str, thermostat: str, at: datetime) -> bool:
         device = self._thermostats.thermostat(thermostat)
-        self._writes.override(zone, at)
+        shed = self._writes.override(zone, at)
         try:
             device.set_power(False)
         finally:
-            stamped = self._stamped(zone, at)
+            stamped = self._stamped(shed, at)
         return stamped
 
-    def switch_on(self, zone: str, thermostat: str, at: datetime, *, stamped_at: datetime | None) -> bool:
+    def switch_on(
+        self,
+        zone: str,
+        thermostat: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+    ) -> bool:
         device = self._thermostats.thermostat(thermostat)
-        reservation = self._writes.reserve(zone, at, stamped_at=stamped_at)
+        reservation = self._writes.reserve(zone, at, stamped_at=stamped_at, read_at=read_at)
         if reservation is None:
             return False
 
-        try:
+        with self._writes.stamping(reservation):
             self._stamps.mark_commanded(zone, at)
-        except OperationalError:
-            self._writes.cancel(reservation)
-            raise
-
         device.set_power(True)
         return True
 
-    def _stamped(self, zone: str, at: datetime) -> bool:
+    def _stamped(self, shed: WriteReservation, at: datetime) -> bool:
         try:
-            self._stamps.mark_commanded(zone, at)
+            self._stamps.mark_commanded(shed.zone, at)
         except OperationalError as error:
-            logger.warning('zone_write_stamp_failed', zone=zone, at=at.isoformat(), error=str(error))
+            logger.warning('zone_write_stamp_failed', zone=shed.zone, at=at.isoformat(), error=str(error))
             return False
 
+        self._writes.stored(shed)
         return True

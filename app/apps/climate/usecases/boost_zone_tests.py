@@ -11,7 +11,7 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.write_gate import ZoneWriteGate
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO, BoostZoneUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
-from apps.core.stubs import MonotonicClockStub, WallClockStub
+from apps.core.stubs import MonotonicClockStub
 
 pytestmark = pytest.mark.django_db
 
@@ -27,8 +27,8 @@ def f_zone() -> Zone:
 
 @pytest.fixture
 def f_writes() -> ZoneWriteGate:
-    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0), wall_clock=WallClockStub(now=NOW))
-    writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None)
+    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+    writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None, read_at=0.0)
     return writes
 
 
@@ -36,7 +36,7 @@ def f_writes() -> ZoneWriteGate:
 def f_writes_of_a_zone_shed_live(request: pytest.FixtureRequest) -> ZoneWriteGate:
     since_shed: timedelta = request.param
     clock = MonotonicClockStub(now=0.0)
-    writes = ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=NOW))
+    writes = ZoneWriteGate(clock=clock)
     writes.override('bathroom-1f', WRITTEN_AT)
     clock.advance(since_shed.total_seconds())
     return writes
@@ -82,9 +82,9 @@ def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
 ) -> None:
     f_use_case.execute(BoostZoneInputDTO(zone='bathroom-1f', now=NOW))
 
-    assert f_writes.reserve('bathroom-1f', NOW, stamped_at=None) == WriteReservation(
+    assert f_writes.reserve('bathroom-1f', NOW, stamped_at=None, read_at=0.0) == WriteReservation(
         zone='bathroom-1f',
-        slot=WriteSlot(at=NOW, moment=0.0),
+        slot=WriteSlot(generation=2, at=NOW, moment=0.0),
         previous=None,
     )
 
@@ -100,7 +100,7 @@ def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
                 None,
                 WriteReservation(
                     zone='bathroom-1f',
-                    slot=WriteSlot(at=SHED_HELD_UNTIL, moment=1800.0),
+                    slot=WriteSlot(generation=2, at=SHED_HELD_UNTIL, moment=1800.0),
                     previous=None,
                 ),
             ),
@@ -120,7 +120,7 @@ def test_boost_keeps_the_write_budget_a_live_shed_spent_until_thirty_minutes_aft
 
     assert (
         Zone.objects.get(slug='bathroom-1f').last_command_at,
-        f_writes_of_a_zone_shed_live.reserve('bathroom-1f', now, stamped_at=None),
+        f_writes_of_a_zone_shed_live.reserve('bathroom-1f', now, stamped_at=None, read_at=0.0),
     ) == expected
 
 

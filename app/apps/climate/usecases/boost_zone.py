@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from apps.climate.domain.events import ZoneBoosted
-from apps.climate.domain.ports import WriteGate
+from apps.climate.domain.ports import WriteGate, ZoneBoostStore
 from apps.climate.domain.zone import BOOST_DURATION
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.write_gate import zone_write_gate
@@ -25,7 +25,7 @@ class BoostZoneOutputDTO:
 class BoostZoneUseCase(BaseUseCase[BoostZoneInputDTO, BoostZoneOutputDTO]):
     def __init__(
         self,
-        zones: ZoneRepository,
+        zones: ZoneBoostStore,
         writes: WriteGate,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:

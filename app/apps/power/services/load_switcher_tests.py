@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.services.write_gate import ZoneWriteGate
-from apps.core.stubs import MonotonicClockStub, WallClockStub
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import PlugNotSwitchableError
 from apps.devices.domain.readings import PlugState
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
@@ -15,6 +15,7 @@ from apps.power.services.load_switcher import LoadSwitcher
 from apps.power.stubs import PermitStub, ZoneSwitchStub
 
 NOW = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
+LOADS_READ_AT = 0.0
 BOILER = LoadRecord(
     slug='boiler-1f',
     name='Бойлер 1 этаж',
@@ -61,7 +62,7 @@ def f_other_plug() -> SwitchablePlugStub:
 
 @pytest.fixture
 def writes() -> ZoneWriteGate:
-    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0), wall_clock=WallClockStub(now=NOW))
+    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
 
 
 @pytest.fixture
@@ -71,7 +72,7 @@ def f_zones(writes: ZoneWriteGate) -> ZoneSwitchStub:
 
 @pytest.fixture
 def f_zones_written_a_minute_ago(writes: ZoneWriteGate) -> ZoneSwitchStub:
-    writes.reserve('kitchen', NOW - timedelta(minutes=1), stamped_at=None)
+    writes.reserve('kitchen', NOW - timedelta(minutes=1), stamped_at=None, read_at=LOADS_READ_AT)
     return ZoneSwitchStub(writes=writes, error=None)
 
 
@@ -226,7 +227,14 @@ def test_releasing_hands_a_load_back_as_teplo_found_it(
     switches: list[bool],
     switched_on: list[tuple[str, str, datetime]],
 ) -> None:
-    released = f_switcher.release(load, device=load.device_slug, was_on=was_on, cycle_writes=cycle_writes, at=NOW)
+    released = f_switcher.release(
+        load,
+        device=load.device_slug,
+        was_on=was_on,
+        cycle_writes=cycle_writes,
+        at=NOW,
+        read_at=LOADS_READ_AT,
+    )
 
     assert (released, f_plug.switches, f_zones.switched_on) == (outcome, switches, switched_on)
 
@@ -241,6 +249,7 @@ def test_release_of_a_zone_waits_while_the_zones_write_budget_is_spent(
         was_on=None,
         cycle_writes=False,
         at=NOW,
+        read_at=LOADS_READ_AT,
     )
 
     assert (released, f_zones_written_a_minute_ago.switched_on) == (HandBack.WAITING, [])
@@ -276,7 +285,14 @@ def test_release_switches_back_on_the_device_the_shed_switched_off_not_the_one_t
     switches: list[bool],
     switched_on: list[tuple[str, str, datetime]],
 ) -> None:
-    released = f_switcher_of_two_plugs.release(load, device=device, was_on=was_on, cycle_writes=False, at=NOW)
+    released = f_switcher_of_two_plugs.release(
+        load,
+        device=device,
+        was_on=was_on,
+        cycle_writes=False,
+        at=NOW,
+        read_at=LOADS_READ_AT,
+    )
 
     assert (released, f_plug.switches, f_other_plug.switches, f_zones.switched_on) == (
         HandBack.SWITCHED_ON,

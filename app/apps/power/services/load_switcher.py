@@ -44,6 +44,7 @@ class LoadSwitcher:
         was_on: bool | None,
         cycle_writes: bool,
         at: datetime,
+        read_at: float,
     ) -> HandBack:
         if load.zone_slug is None:
             if was_on is not True:
@@ -55,7 +56,7 @@ class LoadSwitcher:
         if cycle_writes:
             return HandBack.UNTOUCHED
 
-        if not self._zones.switch_on(load.zone_slug, device, at, stamped_at=load.last_command_at):
+        if not self._zones.switch_on(load.zone_slug, device, at, stamped_at=load.last_command_at, read_at=read_at):
             return HandBack.WAITING
 
         return HandBack.SWITCHED_ON

@@ -220,6 +220,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                     was_on=shed.was_on,
                     cycle_writes=self._cycle_writes(state.loads, record, shed),
                     at=now,
+                    read_at=state.loads.read_at,
                 )
             except DomainError as error:
                 return self._restore_failed(shedding, record, shed, error, now)

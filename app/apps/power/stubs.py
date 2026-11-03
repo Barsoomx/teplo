@@ -139,28 +139,40 @@ class ZoneSwitchStub:
         if self._error is not None:
             raise self._error
 
-        self._writes.override(zone, at)
+        shed = self._writes.override(zone, at)
         self._switched_off.append((zone, thermostat, at))
+        if self._stamped:
+            self._writes.stored(shed)
         return self._stamped
 
-    def switch_on(self, zone: str, thermostat: str, at: datetime, *, stamped_at: datetime | None) -> bool:
+    def switch_on(
+        self,
+        zone: str,
+        thermostat: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+    ) -> bool:
         if self._error is not None:
             raise self._error
 
-        reservation = self._writes.reserve(zone, at, stamped_at=stamped_at)
+        reservation = self._writes.reserve(zone, at, stamped_at=stamped_at, read_at=read_at)
         if reservation is None:
             return False
 
-        if self._refused_on_stamps < len(self._on_stamp_errors):
-            self._refused_on_stamps += 1
-            self._writes.cancel(reservation)
-            raise self._on_stamp_errors[self._refused_on_stamps - 1]
-
+        with self._writes.stamping(reservation):
+            self._stamp_on()
         if self._on_error is not None:
             raise self._on_error
 
         self._switched_on.append((zone, thermostat, at))
         return True
+
+    def _stamp_on(self) -> None:
+        if self._refused_on_stamps < len(self._on_stamp_errors):
+            self._refused_on_stamps += 1
+            raise self._on_stamp_errors[self._refused_on_stamps - 1]
 
 
 class ZoneWriteStampsStub:

@@ -24,3 +24,14 @@ class SyncingClockStub:
     def status(self) -> ClockStatus:
         self._wall_clock.advance(self._step)
         return ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='stub')
+
+
+class SteppingMonotonicClockStub:
+    def __init__(self, now: float, wall_clock: WallClockStub, step: timedelta) -> None:
+        self._now = now
+        self._wall_clock = wall_clock
+        self._step = step
+
+    def __call__(self) -> float:
+        self._wall_clock.advance(self._step)
+        return self._now
