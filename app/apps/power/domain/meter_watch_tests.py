@@ -13,6 +13,7 @@ from apps.power.domain.meter_watch import (
     choose_limp_restore,
     limp_sheds,
     meter_condition,
+    silent_phase_allows,
     watch_meter,
 )
 from apps.power.domain.shedding import Shed
@@ -269,3 +270,29 @@ def test_lost_meter_brings_a_floor_back_as_a_fresh_meter_would_while_the_phase_i
     expected: Shed | None,
 ) -> None:
     assert _limp_restore([KITCHEN_SHED], loads, calm=calm, currents=currents) == expected
+
+
+@pytest.mark.parametrize(
+    ('shed_for', 'calming', 'overloaded', 'expected'),
+    [
+        (None, frozenset(), frozenset(), True),
+        (None, EVERY_PHASE, frozenset({LoadPhase.L2}), False),
+        (ShedReason.OVERLOAD, frozenset({LoadPhase.L2}), frozenset(), True),
+        (ShedReason.OVERLOAD, frozenset({LoadPhase.L1, LoadPhase.L3}), frozenset(), False),
+        (ShedReason.METER_LOST, frozenset(), frozenset(), True),
+    ],
+    ids=[
+        'not_overloaded',
+        'overloaded_when_it_went_silent',
+        'shed_for_an_overload_on_it_and_calm_when_it_went_silent',
+        'shed_for_an_overload_on_it_and_above_the_restore_threshold_when_it_went_silent',
+        'shed_by_limp_mode',
+    ],
+)
+def test_silent_phase_allows_a_floor_unless_it_went_silent_overloaded_or_not_calm_after_an_overload(
+    shed_for: ShedReason | None,
+    calming: frozenset[LoadPhase],
+    overloaded: frozenset[LoadPhase],
+    expected: bool,
+) -> None:
+    assert silent_phase_allows(LoadPhase.L2, shed_for=shed_for, calming=calming, overloaded=overloaded) is expected

@@ -14,6 +14,7 @@ from apps.power.domain.shedding import (
     can_hand_back,
     choose_restore,
     choose_shed,
+    drawing_since,
     in_view,
     new_shed,
     relief,
@@ -309,6 +310,23 @@ def test_zone_shed_is_handed_back_a_write_interval_after_a_write_whose_stamp_may
     expected: bool,
 ) -> None:
     assert can_hand_back(shed, AT, WRITE_INTERVAL) is expected
+
+
+@pytest.mark.parametrize(
+    ('reading', 'expected'),
+    [
+        (None, False),
+        (LoadReading(read_at=AT - 70, drawing=True, closed=True, current=None), False),
+        (LoadReading(read_at=AT, drawing=False, closed=False, current=None), False),
+        (LoadReading(read_at=AT, drawing=True, closed=True, current=None), True),
+    ],
+    ids=['thermostat_unavailable', 'read_heating_before_the_shed', 'read_idle_since', 'read_heating_since'],
+)
+def test_floor_draws_since_its_shed_once_a_reading_taken_after_it_shows_it_heating(
+    reading: LoadReading | None,
+    expected: bool,
+) -> None:
+    assert drawing_since(KITCHEN_SHED, reading) is expected
 
 
 @pytest.mark.parametrize(

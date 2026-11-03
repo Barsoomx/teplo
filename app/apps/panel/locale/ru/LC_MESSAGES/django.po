@@ -574,6 +574,9 @@ msgstr "Фазометр молчит, а на этой фазе уже грее
 msgid "The phase meter is silent and the phase was overloaded when it went silent"
 msgstr "Фазометр молчит, а фаза замолчала перегруженной"
 
+msgid "The phase meter is silent and the phase was above the restore threshold when it went silent"
+msgstr "Фазометр молчит, а фаза замолчала выше порога возврата"
+
 #, python-format
 msgid "%(name)s: learned phase %(phase)s, %(amps)s A"
 msgstr "%(name)s: выучил фазу %(phase)s, %(amps)s А"

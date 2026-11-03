@@ -135,6 +135,10 @@ def can_hand_back(shed: Shed, at: float, write_interval: timedelta) -> bool:
     return elapsed(shed.unstamped_write_at, at, write_interval)
 
 
+def drawing_since(shed: Shed, reading: LoadReading | None) -> bool:
+    return reading is not None and reading.read_at > shed.at and reading.drawing
+
+
 def switched_back_on(shed: Shed, reading: LoadReading | None) -> bool:
     if not shed.live or shed.was_on is not True or reading is None:
         return False

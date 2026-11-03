@@ -10,7 +10,7 @@ from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LiveShed, Loa
 from apps.power.domain.meter_watch import MeterWatch
 from apps.power.domain.phase_learning import LearningState
 from apps.power.domain.phase_samples import SAMPLE_SPAN, PhaseSample
-from apps.power.domain.phase_watch import PhaseAmps, PhaseWatch, overloaded_phases
+from apps.power.domain.phase_watch import PhaseAmps, PhaseWatch, calming_phases, overloaded_phases
 from apps.power.domain.shedding import Shed, UnconfirmedShed, in_view, relief
 from apps.power.domain.view import GuardView
 
@@ -75,6 +75,7 @@ class ShedState:
     failed: Mapping[str, float] = field(default_factory=dict)
     unconfirmed: Mapping[str, UnconfirmedShed] = field(default_factory=dict)
     overridden: Mapping[str, LoadPhase] = field(default_factory=dict)
+    handed_back: Mapping[str, Shed] = field(default_factory=dict)
     unsaved: Mapping[str, LiveShed | None] = field(default_factory=dict)
     save_failed_at: float | None = None
 
@@ -176,6 +177,7 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
         ),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
         overloaded=overloaded_phases(state.phases.watches, live=live),
+        calming=calming_phases(state.phases.watches, live=live),
     )
 
 
@@ -188,6 +190,7 @@ def start_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
         ),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
         overloaded=overloaded_phases(state.phases.watches, live=live),
+        calming=calming_phases(state.phases.watches, live=live),
     )
 
 

@@ -30,13 +30,14 @@ from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition, choose_limp_restore, limp_sheds, meter_condition
 from apps.power.domain.moments import elapsed
-from apps.power.domain.phase_watch import PhaseWatch, calm_phases, calming_phases, shed_due, with_shed
+from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
 from apps.power.domain.shedding import (
     Shed,
     can_hand_back,
     choose_restore,
     choose_shed,
+    drawing_since,
     new_shed,
     resumed_shed,
     shed_confirmed,
@@ -109,7 +110,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             watches, shedding = self._shed_overloads(state, watches, shedding, live=live, at=at, now=now)
             shedding = self._shed_limp(state, shedding, live=live, at=at, now=now)
             shedding = self._restored(state, shedding, live=live, at=at, now=now)
-        shedding = self._saved(shedding, at)
+        shedding = self._saved(_still_handed_back(state, shedding), at)
         self._book.remember(replace(state, phases=replace(state.phases, watches=watches), shedding=shedding))
         return ShedPhaseLoadsOutputDTO(
             shed=tuple(slug for slug in shedding.sheds if slug not in resumed.sheds),
@@ -367,7 +368,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 return self._lookup_failed(restored, record, LoadCommand.RESTORE, error)
 
             logger.info('load_restored', load=record.slug)
-            restored = _stored(restored, record.slug, None)
+            restored = _handed_back(_stored(restored, record.slug, None), record, shed)
 
         self._event_store.add_event(
             _restore_event(
@@ -407,7 +408,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 sheds,
                 view.loads,
                 calm=calm,
-                calming=calming_phases(state.phases.watches, live=live),
+                calming=view.calming,
                 overloaded=view.overloaded,
                 currents=view.currents,
                 last_restore_at=last_restore_at,
@@ -638,6 +639,26 @@ def _without(shedding: ShedState, slugs: Collection[str]) -> ShedState:
 
 def _stored(shedding: ShedState, slug: str, stored: LiveShed | None) -> ShedState:
     return replace(shedding, unsaved={**shedding.unsaved, slug: stored})
+
+
+def _handed_back(shedding: ShedState, record: LoadRecord, shed: Shed) -> ShedState:
+    if record.kind is not LoadKind.ZONE or shed.reason is not ShedReason.OVERLOAD:
+        return shedding
+
+    return replace(shedding, handed_back={**shedding.handed_back, record.slug: shed})
+
+
+def _still_handed_back(state: GuardState, shedding: ShedState) -> ShedState:
+    return replace(
+        shedding,
+        handed_back={
+            slug: shed
+            for slug, shed in shedding.handed_back.items()
+            if slug not in shedding.sheds
+            and state.loads.record(slug) is not None
+            and not drawing_since(shed, _reading(state, slug))
+        },
+    )
 
 
 def _shed_event(

@@ -88,7 +88,11 @@ def _requests(
 
         live = starts_live(state.loads.control, record, writes_live=start.writes_live)
         if live or state.phases.meter.seen:
-            requests[start.zone] = StartRequest(load=by_slug[record.slug], live=live)
+            requests[start.zone] = StartRequest(
+                load=by_slug[record.slug],
+                live=live,
+                handed_back=state.shedding.handed_back.get(record.slug),
+            )
     return requests
 
 

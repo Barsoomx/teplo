@@ -98,6 +98,19 @@ def choose_limp_restore(
     return next(iter(ready), None)
 
 
+def silent_phase_allows(
+    phase: LoadPhase,
+    *,
+    shed_for: ShedReason | None,
+    calming: frozenset[LoadPhase],
+    overloaded: frozenset[LoadPhase],
+) -> bool:
+    if phase in overloaded:
+        return False
+
+    return shed_for is not ShedReason.OVERLOAD or phase in calming
+
+
 def _phase_allows_restore(
     shed: Shed,
     amps: Decimal,
@@ -111,7 +124,4 @@ def _phase_allows_restore(
     if shed.phase in currents:
         return shed.phase in calm and currents[shed.phase] + amps <= ceiling
 
-    if shed.phase in overloaded:
-        return False
-
-    return shed.reason is not ShedReason.OVERLOAD or shed.phase in calming
+    return silent_phase_allows(shed.phase, shed_for=shed.reason, calming=calming, overloaded=overloaded)

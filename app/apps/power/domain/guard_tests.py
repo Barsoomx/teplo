@@ -112,15 +112,15 @@ def f_state_with_a_live_and_a_dry_run_shed() -> GuardState:
 
 
 @pytest.fixture
-def f_state_with_overloaded_phases(f_state_with_a_live_and_a_dry_run_shed: GuardState) -> GuardState:
+def f_state_with_watched_phases(f_state_with_a_live_and_a_dry_run_shed: GuardState) -> GuardState:
     return replace(
         f_state_with_a_live_and_a_dry_run_shed,
         phases=replace(
             f_state_with_a_live_and_a_dry_run_shed.phases,
             watches={
-                LoadPhase.L1: PhaseWatch(),
+                LoadPhase.L1: PhaseWatch(live=OverloadWatch(calm_since=AT - 10)),
                 LoadPhase.L2: PhaseWatch(live=OverloadWatch(overloaded=True)),
-                LoadPhase.L3: PhaseWatch(dry_run=OverloadWatch(overloaded=True)),
+                LoadPhase.L3: PhaseWatch(dry_run=OverloadWatch(overloaded=True, calm_since=AT - 10)),
             },
         ),
     )
@@ -243,19 +243,26 @@ def test_start_view_credits_no_live_shed_whose_drop_the_meter_has_not_shown(
 
 
 @pytest.mark.parametrize(
-    ('live', 'overloaded'),
-    [(True, frozenset({LoadPhase.L2})), (False, frozenset({LoadPhase.L3}))],
+    ('live', 'overloaded', 'calming'),
+    [
+        (True, frozenset({LoadPhase.L2}), frozenset({LoadPhase.L1})),
+        (False, frozenset({LoadPhase.L3}), frozenset({LoadPhase.L3})),
+    ],
     ids=['live_view', 'dry_run_view'],
 )
-def test_views_name_the_phases_overloaded_in_their_view(
-    f_state_with_overloaded_phases: GuardState,
+def test_views_name_the_phases_overloaded_and_calming_in_their_view(
+    f_state_with_watched_phases: GuardState,
     live: bool,
     overloaded: frozenset[LoadPhase],
+    calming: frozenset[LoadPhase],
 ) -> None:
-    assert (
-        guard_view(f_state_with_overloaded_phases, f_state_with_overloaded_phases.shedding, live=live).overloaded,
-        start_view(f_state_with_overloaded_phases, f_state_with_overloaded_phases.shedding, live=live).overloaded,
-    ) == (overloaded, overloaded)
+    view = guard_view(f_state_with_watched_phases, f_state_with_watched_phases.shedding, live=live)
+    starting = start_view(f_state_with_watched_phases, f_state_with_watched_phases.shedding, live=live)
+
+    assert ((view.overloaded, view.calming), (starting.overloaded, starting.calming)) == (
+        (overloaded, calming),
+        (overloaded, calming),
+    )
 
 
 def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it_with_the_moment_it_was_read() -> None:

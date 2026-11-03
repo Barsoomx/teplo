@@ -100,6 +100,7 @@ def _remember(
     shedding: ShedState | None = None,
     silent: frozenset[LoadPhase] | None = None,
     overloaded: frozenset[LoadPhase] = frozenset(),
+    calming: frozenset[LoadPhase] = frozenset(),
 ) -> None:
     loads = GuardLoads(
         records=(BOILER, HALLWAY, KITCHEN, LIVING_ROOM),
@@ -120,13 +121,7 @@ def _remember(
                 meter=meter,
                 currents=currents,
                 read_at=dict.fromkeys(currents, AT),
-                watches={
-                    phase: PhaseWatch(
-                        live=OverloadWatch(overloaded=phase in overloaded),
-                        dry_run=OverloadWatch(overloaded=phase in overloaded),
-                    )
-                    for phase in MEASURED_PHASES
-                },
+                watches={phase: _watch(phase in overloaded, phase in calming) for phase in MEASURED_PHASES},
             ),
             readings={} if readings is None else readings,
             shedding=ShedState() if shedding is None else shedding,
@@ -136,6 +131,11 @@ def _remember(
 
 def _unread(meter: MeterWatch) -> frozenset[LoadPhase]:
     return frozenset() if meter.stale_since is None else frozenset(MEASURED_PHASES)
+
+
+def _watch(overloaded: bool, calming: bool) -> PhaseWatch:
+    overload = OverloadWatch(overloaded=overloaded, calm_since=AT - 10 if calming else None)
+    return PhaseWatch(live=overload, dry_run=overload)
 
 
 def _would_wait(phase: LoadPhase, amps: str | None, reason: StartRefusal) -> StartWouldWaitDryRun:
@@ -189,6 +189,29 @@ def f_lost_meter_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate:
 def f_partly_lost_meter_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     management_live, silent, overloaded = request.param
     _remember(f_book, management_live=management_live, meter=LOST, l2='13.0', silent=silent, overloaded=overloaded)
+    return f_gate
+
+
+@pytest.fixture
+def f_handed_back_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
+    shed = Shed(
+        load='kitchen',
+        phase=LoadPhase.L2,
+        amps=Decimal('8.0'),
+        live=True,
+        reason=ShedReason.OVERLOAD,
+        was_on=None,
+        at=AT - 600,
+        settled_at=AT - 595,
+    )
+    _remember(
+        f_book,
+        management_live=True,
+        meter=LOST,
+        silent=frozenset({LoadPhase.L2}),
+        calming=request.param,
+        shedding=ShedState(handed_back={'kitchen': shed}),
+    )
     return f_gate
 
 
@@ -388,6 +411,19 @@ def test_lost_meter_starts_a_floor_only_where_its_phase_allows_it(
     answer: StartAnswer,
 ) -> None:
     assert f_partly_lost_meter_gate.ask_starts([KITCHEN_START], NOW) == {'kitchen': answer}
+
+
+@pytest.mark.parametrize(
+    ('f_handed_back_gate', 'answer'),
+    [(frozenset({LoadPhase.L2}), GRANTED), (frozenset(), WAITS)],
+    ids=['its_phase_went_silent_calm', 'its_phase_went_silent_above_the_restore_threshold'],
+    indirect=['f_handed_back_gate'],
+)
+def test_lost_meter_starts_a_floor_handed_back_from_an_overload_only_if_the_phase_went_silent_calm(
+    f_handed_back_gate: GuardLoadGate,
+    answer: StartAnswer,
+) -> None:
+    assert f_handed_back_gate.ask_starts([KITCHEN_START], NOW) == {'kitchen': answer}
 
 
 def test_dry_run_shed_makes_no_room_for_a_live_start(f_dry_run_shed_gate: GuardLoadGate, f_book: GuardBook) -> None:

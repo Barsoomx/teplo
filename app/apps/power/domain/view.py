@@ -11,3 +11,4 @@ class GuardView:
     currents: Mapping[LoadPhase, Decimal]
     loads: tuple[LoadStatus, ...]
     overloaded: frozenset[LoadPhase] = frozenset()
+    calming: frozenset[LoadPhase] = frozenset()

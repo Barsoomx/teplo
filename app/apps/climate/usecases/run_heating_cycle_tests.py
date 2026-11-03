@@ -2820,9 +2820,14 @@ def test_start_on_a_phase_that_went_silent_overloaded_with_load_management_off_i
     ('l2', 'outcome', 'commands'),
     [
         ('30.0', ZoneCycleOutcome.WAITING, [('power', False)]),
+        ('22.0', ZoneCycleOutcome.WAITING, [('power', False)]),
         ('15.0', ZoneCycleOutcome.APPLIED, [('power', False), ('power', True)]),
     ],
-    ids=['phase_overloaded_again_when_it_went_silent', 'phase_calm_when_it_went_silent'],
+    ids=[
+        'phase_overloaded_again_when_it_went_silent',
+        'phase_above_the_restore_threshold_when_it_went_silent',
+        'phase_calm_when_it_went_silent',
+    ],
 )
 def test_floor_restored_on_a_lost_meter_is_started_by_the_cycle_only_if_its_phase_allows_it_by_then(
     f_kitchen_shed_while_the_third_clamp_is_silent: GuardedHouse,

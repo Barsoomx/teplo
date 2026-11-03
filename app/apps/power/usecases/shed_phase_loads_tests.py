@@ -38,7 +38,7 @@ from apps.power.domain.events import (
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
-from apps.power.domain.shedding import UnconfirmedShed
+from apps.power.domain.shedding import Shed, UnconfirmedShed
 from apps.power.domain.view import GuardView
 from apps.power.factories import PlugLoadFactory, ZoneLoadFactory
 from apps.power.repositories.load import LoadRepository
@@ -348,6 +348,11 @@ def _unconfirmed_sheds(house: House) -> dict[str, UnconfirmedShed]:
     return {} if state is None else dict(state.shedding.unconfirmed)
 
 
+def _handed_back(house: House) -> dict[str, Shed]:
+    state = house.book.state()
+    return {} if state is None else dict(state.shedding.handed_back)
+
+
 def _load_off(house: House) -> None:
     house.loads.edit([replace(record, live=False) for record in house.loads.records], frozenset())
 
@@ -374,6 +379,10 @@ def _zone_load_off(house: House) -> None:
 
 def _plug_read_off(house: House, device: str, second: int) -> None:
     house.plugs.record_state(device, _plug(on=False, second=second))
+
+
+def _thermostat_read_heating(house: House, device: str, second: int) -> None:
+    house.thermostats.record_state(device, replace(_heating(), read_at=_moment(second)))
 
 
 def _thermostat_read_off(house: House, device: str, second: int) -> None:
@@ -717,6 +726,12 @@ def f_dry_run_floors_house() -> House:
 
 
 @pytest.fixture
+def f_dry_run_floors_after_an_overload(f_dry_run_floors_house: House) -> House:
+    _seconds(f_dry_run_floors_house.guard, 4, '26.0')
+    return f_dry_run_floors_house
+
+
+@pytest.fixture
 def f_dry_run_floors_after_the_meter_reported(f_dry_run_floors_house: House) -> House:
     _seconds(f_dry_run_floors_house.guard, 3, '10.0')
     return f_dry_run_floors_house
@@ -971,6 +986,43 @@ def test_restore_on_a_meter_that_drops_out_every_minute_waits_for_two_minutes_of
                 occurred_at=_moment(145),
             ),
         ],
+    )
+
+
+def test_zone_restored_after_an_overload_keeps_the_phase_it_was_shed_for_until_it_heats_again(
+    f_live_floors_house_after_a_shed: House,
+) -> None:
+    calm = _seconds(f_live_floors_house_after_a_shed.guard, 125, '10.0')
+    handed_back = _handed_back(f_live_floors_house_after_a_shed)
+    _thermostat_read_heating(f_live_floors_house_after_a_shed, 'thermostat-kitchen', 129)
+    _seconds(f_live_floors_house_after_a_shed.guard, 1, '10.0')
+
+    assert (_restored_at(calm, 5), handed_back, _handed_back(f_live_floors_house_after_a_shed)) == (
+        [(125, ('kitchen',))],
+        {
+            'kitchen': Shed(
+                load='kitchen',
+                phase=LoadPhase.L2,
+                amps=Decimal('8.0'),
+                live=True,
+                reason=ShedReason.OVERLOAD,
+                was_on=None,
+                at=START + 4,
+                settled_at=START + 9,
+            ),
+        },
+        {},
+    )
+
+
+def test_dry_run_restore_of_a_zone_shed_for_an_overload_hands_nothing_back(
+    f_dry_run_floors_after_an_overload: House,
+) -> None:
+    outputs = _seconds(f_dry_run_floors_after_an_overload.guard, 125, '10.0')
+
+    assert (_restored_at(outputs, 5), _handed_back(f_dry_run_floors_after_an_overload)) == (
+        [(125, ('kitchen',))],
+        {},
     )
 
 

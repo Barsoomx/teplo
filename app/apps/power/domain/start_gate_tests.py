@@ -7,8 +7,9 @@ import pytest
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.headroom import PhaseOverrun
 from apps.power.domain.load_status import LoadStatus
-from apps.power.domain.loads import LoadKind, LoadPhase
+from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
+from apps.power.domain.shedding import Shed
 from apps.power.domain.start_gate import (
     StartDecision,
     StartRefusal,
@@ -50,6 +51,18 @@ LIVING_ROOM = replace(KITCHEN, slug='living-room', priority=7, phase=LoadPhase.L
 GRANTED_LIVING_ROOM = StartDecision(load='living-room', refusal=None, overrun=None)
 UNKNOWN_KITCHEN = replace(KITCHEN, phase=LoadPhase.UNKNOWN)
 L3_SILENT = {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: Decimal('15.0')}
+L1_SILENT = {LoadPhase.L2: Decimal('15.0'), LoadPhase.L3: Decimal('9.0')}
+KITCHEN_SHED = Shed(
+    load='kitchen',
+    phase=LoadPhase.L1,
+    amps=Decimal('8.0'),
+    live=True,
+    reason=ShedReason.OVERLOAD,
+    was_on=None,
+    at=AT - 600,
+    settled_at=AT - 595,
+)
+NOT_CALM = StartDecision(load='kitchen', refusal=StartRefusal.PHASE_NOT_CALM, overrun=None)
 
 
 def _decide(
@@ -60,6 +73,8 @@ def _decide(
     last_permit_at: float | None = None,
     currents: dict[LoadPhase, Decimal] | None = None,
     overloaded: frozenset[LoadPhase] = frozenset(),
+    calming: frozenset[LoadPhase] = frozenset(),
+    handed_back: Shed | None = None,
 ) -> StartDecision:
     return decide_start(
         load,
@@ -68,10 +83,12 @@ def _decide(
             currents=_currents(meter) if currents is None else currents,
             loads=(load,) if loads is None else tuple(loads),
             overloaded=overloaded,
+            calming=calming,
         ),
         last_permit_at=last_permit_at,
         at=AT,
         thresholds=THRESHOLDS,
+        handed_back=handed_back,
     )
 
 
@@ -244,6 +261,43 @@ def test_lost_meter_starts_no_floor_on_a_phase_that_went_silent_overloaded(
     expected: StartDecision,
 ) -> None:
     assert _decide(load, MeterCondition.LOST, currents=L3_SILENT, overloaded=overloaded) == expected
+
+
+@pytest.mark.parametrize(
+    ('handed_back', 'calming', 'expected'),
+    [
+        (KITCHEN_SHED, frozenset({LoadPhase.L1}), GRANTED),
+        (KITCHEN_SHED, frozenset({LoadPhase.L2, LoadPhase.L3}), NOT_CALM),
+        (replace(KITCHEN_SHED, reason=ShedReason.METER_LOST), frozenset(), GRANTED),
+        (None, frozenset(), GRANTED),
+    ],
+    ids=[
+        'shed_for_an_overload_its_phase_read_calm',
+        'shed_for_an_overload_its_phase_read_above_the_restore_threshold',
+        'shed_by_limp_mode',
+        'not_handed_back',
+    ],
+)
+def test_lost_meter_starts_a_floor_handed_back_from_an_overload_only_as_its_restore_would_bring_it_back(
+    handed_back: Shed | None,
+    calming: frozenset[LoadPhase],
+    expected: StartDecision,
+) -> None:
+    decision = _decide(KITCHEN, MeterCondition.LOST, currents=L1_SILENT, calming=calming, handed_back=handed_back)
+
+    assert decision == expected
+
+
+@pytest.mark.parametrize(
+    ('meter', 'currents'),
+    [(MeterCondition.FRESH, CURRENTS), (MeterCondition.LOST, L3_SILENT)],
+    ids=['fresh_meter', 'its_phase_still_reports'],
+)
+def test_floor_handed_back_from_an_overload_starts_on_a_phase_that_reports_on_its_room_alone(
+    meter: MeterCondition,
+    currents: dict[LoadPhase, Decimal],
+) -> None:
+    assert _decide(KITCHEN, meter, currents=currents, handed_back=KITCHEN_SHED) == GRANTED
 
 
 def test_lost_meter_starts_floors_thirty_seconds_apart() -> None:
