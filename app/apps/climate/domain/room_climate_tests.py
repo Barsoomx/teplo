@@ -11,6 +11,7 @@ BEDROOM = RoomClimateConfig(
     setback_target=Decimal('19.5'),
     backup_below=Decimal('19.0'),
     backup_hysteresis=Decimal('0.30'),
+    guest_room=False,
 )
 
 
@@ -26,8 +27,9 @@ BEDROOM = RoomClimateConfig(
             backup_below=Decimal('5.0'),
             backup_hysteresis=Decimal('2.00'),
         ),
+        replace(BEDROOM, guest_room=True),
     ],
-    ids=['as_seeded', 'night_at_comfort', 'ends_of_the_ranges'],
+    ids=['as_seeded', 'night_at_comfort', 'ends_of_the_ranges', 'guest_room'],
 )
 def test_room_settings_in_order_pass(config: RoomClimateConfig) -> None:
     assert room_climate_problems(config, has_backup=True) == ()
@@ -80,12 +82,13 @@ def test_problems_refuse_values_out_of_range(config: RoomClimateConfig, fields: 
     )
 
 
-def test_normalized_rounds_targets_to_tenths_and_hysteresis_to_hundredths() -> None:
+def test_normalized_rounds_targets_to_tenths_and_hysteresis_to_hundredths_and_keeps_the_guest_room() -> None:
     config = RoomClimateConfig(
         comfort_target=Decimal('21'),
         setback_target=Decimal('19.45'),
         backup_below=Decimal('18.04'),
         backup_hysteresis=Decimal('0.305'),
+        guest_room=True,
     )
 
     normalized = config.normalized()
@@ -95,4 +98,5 @@ def test_normalized_rounds_targets_to_tenths_and_hysteresis_to_hundredths() -> N
         str(normalized.setback_target),
         str(normalized.backup_below),
         str(normalized.backup_hysteresis),
-    ) == ('21.0', '19.5', '18.0', '0.31')
+        normalized.guest_room,
+    ) == ('21.0', '19.5', '18.0', '0.31', True)

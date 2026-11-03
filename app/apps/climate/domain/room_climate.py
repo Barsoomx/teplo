@@ -1,14 +1,23 @@
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.backup_heat import BackupHeat
 from apps.climate.domain.climate_config import OFFSET_MAX, OFFSET_MIN, hundredths
+from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.zone import AirTargets, ComfortWindow
 from apps.climate.domain.zone_config import SETPOINT_MAX, SETPOINT_MIN, tenths
 from apps.core.domain.settings import SettingProblem
 
 ROOM = 'room'
 BACKUP_MARGIN = Decimal('0.5')
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoomOverride:
+    target: Decimal
+    until: datetime
+    source: CommandSource
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -19,6 +28,9 @@ class RoomClimateSettings:
     targets: AirTargets
     windows: tuple[ComfortWindow, ...]
     backup: BackupHeat
+    guest_room: bool
+    override: RoomOverride | None
+    adjustable: bool
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -27,6 +39,7 @@ class RoomClimateConfig:
     setback_target: Decimal
     backup_below: Decimal
     backup_hysteresis: Decimal
+    guest_room: bool
 
     def normalized(self) -> 'RoomClimateConfig':
         return RoomClimateConfig(
@@ -34,6 +47,7 @@ class RoomClimateConfig:
             setback_target=tenths(self.setback_target),
             backup_below=tenths(self.backup_below),
             backup_hysteresis=hundredths(self.backup_hysteresis),
+            guest_room=self.guest_room,
         )
 
 

@@ -144,3 +144,20 @@ def test_settings_page_lists_each_room_with_the_cards_of_its_zones_and_then_the_
         content.count('Резервный обогрев'),
         m_settings_use_case.init.call_count,
     ) == (False, True, True, True, 2, True, 1, True, 2, 1)
+
+
+def test_settings_page_marks_the_guest_rooms_and_sets_the_hour_guests_leave(
+    f_russian_client: Client,
+    m_settings_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/settings/')
+
+    content = response.content.decode()
+    assert (
+        content.count('name="guest_room"'),
+        content.count('Гостевая комната'),
+        'name="guests_end_hour" value="14"' in content,
+        'Гости до, час' in content,
+        'name="guests_until"' in content,
+        m_settings_use_case.init.call_count,
+    ) == (2, 2, True, True, False, 1)

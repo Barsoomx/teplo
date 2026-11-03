@@ -12,6 +12,7 @@ DEFAULTS = ClimateConfig(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
+    guests_end_hour=14,
 )
 
 
@@ -26,10 +27,12 @@ DEFAULTS = ClimateConfig(
             air_min_band=Decimal('0.10'),
             learned_mornings_needed=1,
             preheat_lead_cap_minutes=480,
+            guests_end_hour=23,
         ),
         replace(DEFAULTS, air_start_offset=Decimal('1.00'), air_min_band=Decimal('1.00')),
+        replace(DEFAULTS, guests_end_hour=0),
     ],
-    ids=['defaults', 'ends_of_the_ranges', 'widest_band'],
+    ids=['defaults', 'ends_of_the_ranges', 'widest_band', 'guests_until_midnight'],
 )
 def test_climate_settings_within_their_ranges_pass(config: ClimateConfig) -> None:
     assert climate_config_problems(config) == ()
@@ -44,14 +47,17 @@ def test_climate_settings_within_their_ranges_pass(config: ClimateConfig) -> Non
         (replace(DEFAULTS, air_start_offset=Decimal('2.00'), air_min_band=Decimal('1.01')), ('air_min_band',)),
         (replace(DEFAULTS, learned_mornings_needed=0), ('learned_mornings_needed',)),
         (replace(DEFAULTS, preheat_lead_cap_minutes=481), ('preheat_lead_cap_minutes',)),
+        (replace(DEFAULTS, guests_end_hour=24), ('guests_end_hour',)),
+        (replace(DEFAULTS, guests_end_hour=-1), ('guests_end_hour',)),
         (
             replace(
                 DEFAULTS,
+                guests_end_hour=30,
                 preheat_lead_cap_minutes=500,
                 learned_mornings_needed=0,
                 air_start_offset=Decimal('2.50'),
             ),
-            ('air_start_offset', 'learned_mornings_needed', 'preheat_lead_cap_minutes'),
+            ('air_start_offset', 'learned_mornings_needed', 'preheat_lead_cap_minutes', 'guests_end_hour'),
         ),
     ],
     ids=[
@@ -61,6 +67,8 @@ def test_climate_settings_within_their_ranges_pass(config: ClimateConfig) -> Non
         'band_too_wide',
         'mornings',
         'lead_cap',
+        'guests_end_hour_past_the_day',
+        'guests_end_hour_below_midnight',
         'several',
     ],
 )

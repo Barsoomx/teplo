@@ -8,8 +8,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from django.test import Client
+from freezegun import freeze_time
 
+from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.modes import ControlPath, ScheduleMode
+from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
@@ -32,6 +35,10 @@ BROKER_DETAIL = 'mqtt connection refused: not authorised'
 CUT = datetime(2026, 10, 31, 20, 24, 40, tzinfo=ZoneInfo('Europe/Moscow'))
 COMFORT_AT = datetime(2026, 10, 29, 6, 30, tzinfo=ZoneInfo('Europe/Moscow'))
 ANSWERS = ('overload', 'grid', 'unknown')
+MOSCOW = ZoneInfo('Europe/Moscow')
+PANEL_NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
+GUESTS_LEAVE = datetime(2026, 11, 5, 14, 0, tzinfo=MOSCOW)
+OPEN_SPACE = 'Гостиная, кухня и прихожая'
 
 
 @pytest.fixture
@@ -221,6 +228,66 @@ def m_overloaded_outage_overview_use_case(
 ) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = overloaded_outage_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_guests_overview_use_case(
+    request: pytest.FixtureRequest,
+    house_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    guest_rooms, guests_until = request.param
+    overview = replace(house_overview, guest_rooms=guest_rooms, guests_until=guests_until)
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = overview
+        yield use_case
+
+
+@pytest.fixture
+def m_intent_overview_use_case(
+    request: pytest.FixtureRequest,
+    house_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    reason, target, until, adjustable = request.param
+    intent = RoomIntent(
+        room='open-space',
+        reason=reason,
+        target=target,
+        until=until,
+        forced=reason in (IntentReason.OVERRIDE, IntentReason.GUESTS),
+    )
+    ground, upstairs = house_overview.floors
+    [open_space] = ground.rooms
+    bedroom, office = upstairs.rooms
+    bedroom_intent = RoomIntent(
+        room='bedroom',
+        reason=IntentReason.SETBACK,
+        target=Decimal('19.5'),
+        until=None,
+        forced=False,
+    )
+    floors = (
+        replace(ground, rooms=(replace(open_space, intent=intent, adjustable=adjustable, guest_room=True),)),
+        replace(upstairs, rooms=(replace(bedroom, intent=bedroom_intent), office)),
+    )
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(house_overview, floors=floors)
+        yield use_case
+
+
+@pytest.fixture
+def m_pending_overview_use_case(
+    request: pytest.FixtureRequest,
+    panel_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    power, pending = request.param
+    kitchen = replace(panel_overview.zones[0], power=power, target_setpoint=Decimal('30.0'), pending=pending)
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(
+            panel_overview,
+            zones=(kitchen,),
+            unplaced_zones=(kitchen,),
+        )
         yield use_case
 
 
@@ -576,3 +643,167 @@ def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> N
     response = f_anonymous_client.get('/')
 
     assert (response.status_code, response['Location']) == (302, '/login/?next=/')
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_guests_overview_use_case', 'texts'),
+    [
+        (
+            ((OPEN_SPACE,), None),
+            (True, 'title="Гостевые комнаты: Гостиная, кухня и прихожая"', 'Гости<', 'hx-vals=\'{"nights": 1}\''),
+        ),
+        (((OPEN_SPACE,), GUESTS_LEAVE), (True, 'Гости до 14:00 завтра', 'Гости уехали', 'hx-vals=\'{"nights": 0}\'')),
+        (((), None), (False, 'Гостевые комнаты', 'Гости<', '/guests/')),
+    ],
+    ids=['offered', 'staying', 'no_guest_room'],
+    indirect=['m_guests_overview_use_case'],
+)
+def test_dashboard_switches_guests_on_and_off_in_the_house_facts(
+    f_russian_client: Client,
+    m_guests_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    texts: tuple[bool, str, str, str],
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    shown, *markers = texts
+    facts = content[content.index('class="house"') : content.index('</ul>', content.index('class="house"'))]
+    assert (
+        'fact fact-guests' in facts,
+        [marker in facts for marker in markers],
+        m_guests_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (shown, [shown] * len(markers), 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_intent_overview_use_case', 'chip', 'back'),
+    [
+        (
+            (IntentReason.OVERRIDE, Decimal('22.5'), PANEL_NOW + timedelta(hours=2), True),
+            'Вручную 22,5° до 18:40',
+            True,
+        ),
+        ((IntentReason.GUESTS, Decimal('22.0'), GUESTS_LEAVE, True), 'Гости до 14:00 завтра', False),
+        ((IntentReason.COMFORT, Decimal('22.0'), PANEL_NOW + timedelta(hours=7), True), None, False),
+    ],
+    ids=['manual', 'guests', 'schedule'],
+    indirect=['m_intent_overview_use_case'],
+)
+def test_dashboard_names_why_a_room_holds_its_target_and_offers_the_schedule_back_from_a_manual_one(
+    f_russian_client: Client,
+    m_intent_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    chip: str | None,
+    back: bool,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    open_space_at = content.index('id="room-open-space"')
+    header = content[open_space_at : content.index('</header>', open_space_at)]
+    room = content[open_space_at : content.index('</section>', open_space_at)]
+    assert (
+        'class="chip intent"' in header,
+        chip is None or chip in header,
+        'Вернуть расписание' in room,
+        'hx-post="/rooms/open-space/override/clear/"' in room,
+        m_intent_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (chip is not None, True, back, back, 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_intent_overview_use_case', 'target', 'colder', 'warmer'),
+    [
+        ((IntentReason.COMFORT, Decimal('22.0'), None, True), 'Цель 22,0°', True, True),
+        ((IntentReason.OVERRIDE, Decimal('10.0'), PANEL_NOW + timedelta(hours=1), True), 'Цель 10,0°', False, True),
+        ((IntentReason.OVERRIDE, Decimal('30.0'), PANEL_NOW + timedelta(hours=1), True), 'Цель 30,0°', True, False),
+    ],
+    ids=['both_ways', 'at_the_lowest', 'at_the_highest'],
+    indirect=['m_intent_overview_use_case'],
+)
+def test_dashboard_steps_an_adjustable_room_by_half_a_degree_within_its_range(
+    f_russian_client: Client,
+    m_intent_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    target: str,
+    colder: bool,
+    warmer: bool,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    row_at = content.index('class="room-target"')
+    row = content[row_at : content.index('</div>', row_at)]
+    colder_button = row[row.index('aria-label="Холоднее на 0,5°"') : row.index('>−<')]
+    warmer_button = row[row.index('aria-label="Теплее на 0,5°"') : row.index('>+<')]
+    assert (
+        target in row,
+        'hx-post="/rooms/open-space/override/"' in row,
+        ('hx-vals=\'{"step": "down"}\'' in colder_button, ' disabled' not in colder_button),
+        ('hx-vals=\'{"step": "up"}\'' in warmer_button, ' disabled' not in warmer_button),
+        content.count('class="room-target"'),
+        m_intent_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, True, (True, colder), (True, warmer), 1, 1, 1)
+
+
+@pytest.mark.parametrize(
+    'm_intent_overview_use_case',
+    [(IntentReason.COMFORT, Decimal('22.0'), None, False)],
+    ids=['open_space_without_an_air_reading'],
+    indirect=True,
+)
+def test_dashboard_offers_no_steps_in_a_room_that_takes_no_override(
+    f_russian_client: Client,
+    m_intent_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'room-target' in content,
+        'Холоднее' in content,
+        m_intent_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (False, False, 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_pending_overview_use_case', 'caption'),
+    [
+        (
+            (True, PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW + timedelta(minutes=12))),
+            'Пол, цель 30°. На термостате 28°, 30° — не раньше 16:52',
+        ),
+        (
+            (True, PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW)),
+            'Пол, цель 30°. На термостате 28°, 30° — в ближайшую минуту',
+        ),
+        ((False, PendingWrite(kind=PendingKind.HELD, at=None)), 'Пол, цель 30°. Пол отключён управлением нагрузкой'),
+        ((False, PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW)), 'Пол, цель 30°. Термостат выключен'),
+        ((True, PendingWrite(kind=PendingKind.WATCHING, at=None)), 'Пол, цель 30°. На термостате 28°'),
+    ],
+    ids=['next_write_later', 'next_write_now', 'held_by_load_management', 'switched_off', 'watching'],
+    indirect=['m_pending_overview_use_case'],
+)
+def test_dashboard_says_when_a_floor_gets_its_target(
+    f_russian_client: Client,
+    m_pending_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    caption: str,
+) -> None:
+    response = f_russian_client.get('/')
+
+    assert (
+        f'<p class="readout-caption">{caption}</p>' in response.content.decode(),
+        m_pending_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, 1, 1)

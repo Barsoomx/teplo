@@ -21,6 +21,7 @@ class UpdateClimateSettingsInputDTO:
     air_min_band: Decimal
     learned_mornings_needed: int
     preheat_lead_cap_minutes: int
+    guests_end_hour: int
     now: datetime
 
 
@@ -62,6 +63,7 @@ class UpdateClimateSettingsUseCase(BaseUseCase[UpdateClimateSettingsInputDTO, Up
             air_min_band=input_dto.air_min_band,
             learned_mornings_needed=input_dto.learned_mornings_needed,
             preheat_lead_cap_minutes=input_dto.preheat_lead_cap_minutes,
+            guests_end_hour=input_dto.guests_end_hour,
         ).normalized()
         problems = climate_config_problems(config)
         if problems:

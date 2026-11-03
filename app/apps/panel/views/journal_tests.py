@@ -6,6 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from django.test import Client
+from freezegun import freeze_time
 
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_journal_timeline import (
@@ -528,6 +529,23 @@ SETTINGS_ENTRIES: tuple[tuple[str, str, dict[str, object]], ...] = (
         'Бойлер 1 этаж',
         {'object': 'load', 'name': 'Бойлер 1 этаж', 'field': 'phase', 'old': 'unknown', 'new': 'l2'},
     ),
+    (
+        'open-space',
+        'open-space',
+        {'object': 'room', 'name': 'Гостиная, кухня и прихожая', 'field': 'guest_room', 'old': False, 'new': True},
+    ),
+    ('', '', {'object': 'climate_settings', 'name': '', 'field': 'guests_end_hour', 'old': 14, 'new': 9}),
+)
+OPEN_SPACE = {'room': 'open-space', 'name': 'Гостиная, кухня и прихожая'}
+INTENT_ENTRIES: tuple[tuple[str, str, dict[str, object]], ...] = (
+    ('guests_set', '', {'until': '2026-10-30T11:00:00Z', 'nights': 1, 'source': 'telegram'}),
+    ('guests_cleared', '', {'source': 'panel'}),
+    (
+        'room_overridden',
+        'open-space',
+        {**OPEN_SPACE, 'target': '22.5', 'until': '2026-10-29T15:40:00Z', 'source': 'panel'},
+    ),
+    ('room_override_cleared', 'open-space', {**OPEN_SPACE, 'source': 'panel'}),
 )
 
 
@@ -548,6 +566,30 @@ def m_settings_timeline_use_case() -> Iterator[MagicMock]:
                             created_at=MORNING - timedelta(minutes=minutes),
                         )
                         for minutes, (subject, name, payload) in enumerate(SETTINGS_ENTRIES)
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
+@pytest.fixture
+def m_intents_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=tuple(
+                        TimelineEntry(
+                            kind=kind,
+                            subject=subject,
+                            subject_name='Гостиная' if subject else '',
+                            device_kind=None,
+                            payload=payload,
+                            created_at=MORNING - timedelta(minutes=minutes),
+                        )
+                        for minutes, (kind, subject, payload) in enumerate(INTENT_ENTRIES)
                     ),
                 ),
             ),
@@ -753,8 +795,35 @@ def test_journal_words_the_settings_changed_in_the_panel(
             'Кухня, суббота: комфорт 08:00–23:30 → нет' in content,
             'Управление нагрузкой: порог отключения 24 А → 25 А' in content,
             'Бойлер 1 этаж: фаза неизвестна → L2' in content,
+            'Гостиная, кухня и прихожая: теперь гостевая комната' in content,
+            'Климат: гости до 14:00 → 09:00' in content,
         ],
         content.count('#settings-2'),
         'неизвестное событие' in content.lower(),
         m_settings_timeline_use_case.init.call_count,
-    ) == ([True] * 4, 5, False, 1)
+    ) == ([True] * 6, 7, False, 1)
+
+
+@freeze_time('2026-10-29T15:00:00Z')
+def test_journal_words_guests_and_manual_targets_by_the_names_they_were_journaled_with(
+    f_russian_client: Client,
+    m_intents_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        [
+            text in content
+            for text in (
+                'Гости до 14:00 завтра',
+                'Режим гостей выключен',
+                'Гостиная, кухня и прихожая: вручную 22,5° до 18:40',
+                'Гостиная, кухня и прихожая: снова по расписанию',
+            )
+        ],
+        content.count('Из Telegram'),
+        'Гостиная:' in content,
+        'неизвестное событие' in content.lower(),
+        m_intents_timeline_use_case.init.call_count,
+    ) == ([True] * 4, 1, False, False, 1)

@@ -8,7 +8,9 @@ import pytest
 from django.utils import translation
 from freezegun import freeze_time
 
-from apps.climate.domain.modes import ScheduleMode
+from apps.climate.domain.drive import PendingKind, PendingWrite
+from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
+from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.week_plan import DayPeriod
 from apps.core.domain.errors import DomainError, SecretMissingError
 from apps.devices.domain.errors import (
@@ -28,11 +30,13 @@ from apps.panel.templatetags.panel_format import (
     alert_text,
     backup_heat_text,
     clock_note,
+    command_note,
     command_summary,
     day_minute,
     day_word,
     duration,
     failure_note,
+    guests_text,
     icon,
     load_amps,
     load_command_text,
@@ -42,21 +46,25 @@ from apps.panel.templatetags.panel_format import (
     load_shed_note,
     load_shed_text,
     local_time,
+    next_write_text,
     optimal_start_text,
     outage_overload_note,
     outage_question,
     period_text,
     phase_event_text,
     power_outage_text,
+    room_override_text,
     second_floor_guard_text,
     settings_change_text,
     start_wait_note,
     start_wait_text,
+    steps_down,
+    steps_up,
     weekday_name,
     weekday_short,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.panel.usecases.get_panel_overview import LoadOverview
+from apps.panel.usecases.get_panel_overview import LoadOverview, ZoneOverview, ZoneRegime
 from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
@@ -126,6 +134,43 @@ BOILER_LOAD = LoadOverview(
     state=LoadState.DRAWING,
     live=False,
 )
+
+
+PANEL_NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
+KITCHEN = ZoneOverview(
+    slug='kitchen',
+    name='Кухня',
+    kind=ZoneKind.FLOOR,
+    mode=ScheduleMode.COMFORT,
+    available=True,
+    error_code=None,
+    error=None,
+    floor_temperature=Decimal('24.5'),
+    power=True,
+    setpoint=Decimal('28.0'),
+    target_setpoint=Decimal('30.0'),
+    boosted=False,
+    live_control=True,
+    air_control_live=False,
+    path=ControlPath.FLOOR,
+    air_target=None,
+    regime=ZoneRegime.COMFORT,
+    lead=None,
+    boost_until=None,
+    next_change=None,
+    air=None,
+)
+OPEN_SPACE = {'room': 'open-space', 'name': 'Гостиная, кухня и прихожая'}
+
+
+def _intent(target: str) -> RoomIntent:
+    return RoomIntent(
+        room='open-space',
+        reason=IntentReason.OVERRIDE,
+        target=Decimal(target),
+        until=PANEL_NOW,
+        forced=True,
+    )
 
 
 def _entry(kind: str, payload: dict[str, object], name: str = 'Кухня') -> TimelineEntry:
@@ -1006,6 +1051,36 @@ def test_weekday_names_follow_the_language() -> None:
             ),
             'Климат: защита второго этажа ниже 19° → 18,5°',
         ),
+        (
+            _settings_entry(
+                'open-space',
+                'open-space',
+                {
+                    'object': 'room',
+                    'name': 'Гостиная, кухня и прихожая',
+                    'field': 'guest_room',
+                    'old': False,
+                    'new': True,
+                },
+            ),
+            'Гостиная, кухня и прихожая: теперь гостевая комната',
+        ),
+        (
+            _settings_entry(
+                'bathroom-1f',
+                'Санузел 1 этаж: пол',
+                {'object': 'room', 'name': 'Санузел 1 этаж', 'field': 'guest_room', 'old': True, 'new': False},
+            ),
+            'Санузел 1 этаж: больше не гостевая комната',
+        ),
+        (
+            _settings_entry(
+                '',
+                '',
+                {'object': 'climate_settings', 'name': '', 'field': 'guests_end_hour', 'old': 14, 'new': 9},
+            ),
+            'Климат: гости до 14:00 → 09:00',
+        ),
     ],
     ids=[
         'setpoint',
@@ -1025,7 +1100,110 @@ def test_weekday_names_follow_the_language() -> None:
         'backup_heat_threshold',
         'backup_heat_hysteresis',
         'old_guard_entry',
+        'made_a_guest_room',
+        'no_longer_a_guest_room',
+        'guests_end_hour',
     ],
 )
 def test_settings_change_text_words_what_changed(entry: TimelineEntry, expected: str) -> None:
     assert settings_change_text(entry) == expected
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('zone', 'expected'),
+    [
+        (
+            replace(KITCHEN, pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW + timedelta(minutes=12))),
+            'На термостате 28°, 30° — не раньше 16:52',
+        ),
+        (
+            replace(KITCHEN, pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW + timedelta(hours=8))),
+            'На термостате 28°, 30° — не раньше 00:40 завтра',
+        ),
+        (
+            replace(KITCHEN, pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW)),
+            'На термостате 28°, 30° — в ближайшую минуту',
+        ),
+        (replace(KITCHEN, pending=PendingWrite(kind=PendingKind.WATCHING, at=None)), ''),
+        (replace(KITCHEN, pending=PendingWrite(kind=PendingKind.HOLDS, at=None)), ''),
+        (KITCHEN, ''),
+    ],
+    ids=['later_today', 'after_midnight', 'now', 'watching', 'holds', 'unknown'],
+)
+def test_next_write_text_names_the_setpoint_and_the_earliest_write(zone: ZoneOverview, expected: str) -> None:
+    assert next_write_text(zone) == expected
+
+
+@pytest.mark.parametrize(
+    ('target', 'down', 'up'),
+    [('22.0', True, True), ('10.5', True, True), ('10.4', False, True), ('10.0', False, True), ('30.0', True, False)],
+)
+def test_steps_stay_within_the_range_of_an_override(target: str, down: bool, up: bool) -> None:
+    assert (steps_down(_intent(target)), steps_up(_intent(target))) == (down, up)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        ('guests_set', {'until': '2026-11-05T11:00:00Z', 'nights': 1, 'source': 'panel'}, 'Гости до 14:00 завтра'),
+        ('guests_set', {'until': '2026-11-06T11:00:00Z', 'nights': 2, 'source': 'panel'}, 'Гости до 14:00 6 ноября'),
+        ('guests_set', {'nights': 1}, 'Кухня: неизвестное событие'),
+        ('guests_cleared', {'source': 'telegram'}, 'Режим гостей выключен'),
+    ],
+    ids=['until_tomorrow', 'for_two_nights', 'unreadable', 'cleared'],
+)
+def test_guests_text_says_until_when_guests_stay(kind: str, payload: dict[str, object], expected: str) -> None:
+    assert guests_text(_entry(kind, payload)) == expected
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        (
+            'room_overridden',
+            {**OPEN_SPACE, 'target': '22.5', 'until': '2026-11-04T15:40:00Z', 'source': 'panel'},
+            'Гостиная, кухня и прихожая: вручную 22,5° до 18:40',
+        ),
+        (
+            'room_overridden',
+            {**OPEN_SPACE, 'target': '23.0', 'until': '2026-11-04T21:10:00Z', 'source': 'telegram'},
+            'Гостиная, кухня и прихожая: вручную 23,0° до 00:10 завтра',
+        ),
+        ('room_override_cleared', {**OPEN_SPACE, 'source': 'panel'}, 'Гостиная, кухня и прихожая: снова по расписанию'),
+        ('room_overridden', {'room': 'open-space', 'target': '22.5'}, 'Гостиная: неизвестное событие'),
+    ],
+    ids=['manual_target', 'manual_target_past_midnight', 'back_to_the_schedule', 'without_a_name'],
+)
+def test_room_override_text_names_the_room_by_its_journaled_name(
+    kind: str,
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    assert room_override_text(_entry(kind, payload, name='Гостиная')) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [('telegram', 'Из Telegram'), ('panel', ''), (None, '')],
+    ids=['telegram', 'panel', 'none'],
+)
+def test_command_note_names_a_command_that_came_from_telegram(source: str | None, expected: str) -> None:
+    assert command_note(_entry('guests_set', {'source': source})) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_intent_texts_follow_the_active_language() -> None:
+    entry = _entry('room_override_cleared', {**OPEN_SPACE, 'source': 'telegram'})
+
+    assert (room_override_text(entry), guests_text(_entry('guests_cleared', {})), command_note(entry)) == (
+        'Гостиная, кухня и прихожая: back to the schedule',
+        'Guests mode is off',
+        'From Telegram',
+    )

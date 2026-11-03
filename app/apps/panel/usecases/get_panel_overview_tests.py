@@ -5,9 +5,11 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
+from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.optimal_start import PreheatStart
+from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.climate.factories import (
     ClimateSettingsFactory,
@@ -22,6 +24,7 @@ from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
+from apps.climate.services.room_intents import RoomIntentReader
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import PlugState, TemperatureReading, ThermostatMode, ThermostatState
@@ -72,6 +75,7 @@ EVENING_CUT = datetime(2026, 10, 28, 20, 24, tzinfo=MOSCOW)
 MARKED_CUT = EVENING_CUT - timedelta(days=1)
 NIGHT_CUT = datetime(2026, 10, 29, 3, 10, tzinfo=MOSCOW)
 GUARD_AT = 1000.0
+GUESTS_LEAVE = datetime(2026, 10, 30, 14, 0, tzinfo=MOSCOW)
 BOILER_SHED = Shed(
     load='boiler-1f',
     phase=LoadPhase.L2,
@@ -122,10 +126,14 @@ def _learned_house(air: str) -> TemperatureStateStore:
     return temperatures
 
 
+def _intents(book: ControlBook) -> RoomIntentReader:
+    return RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=book)
+
+
 def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(book),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -162,7 +170,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
     )
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -189,7 +197,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
     store.record_failure('thermostat-hallway', error_code='device_unavailable', error='timeout')
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -219,7 +227,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
     ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -249,7 +257,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
     ComfortPeriodFactory.create_batch(7, zone=zone, start=time(6, 30), end=time(23, 30))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -274,7 +282,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
     ZoneFactory.create(slug='living-room', name='Гостиная', thermostat__slug='thermostat-living-room')
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -322,7 +330,7 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
     plug_store.record_failure('plug-boiler-2f', error_code='device_unavailable', error='timeout')
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -395,7 +403,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
     monotonic.advance(12.5)
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -424,7 +432,7 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
     )
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -522,7 +530,7 @@ def f_room_comfort_use_case() -> GetPanelOverviewUseCase:
 def f_outages_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -637,7 +645,7 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
     guard_book.note_waiting(frozenset({'kitchen'}))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        rooms=RoomClimateRepository(),
+        intents=_intents(ControlBook()),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -703,6 +711,166 @@ def f_house_use_case() -> GetPanelOverviewUseCase:
     return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), ControlBook())
 
 
+@pytest.fixture
+def f_intent_use_case() -> GetPanelOverviewUseCase:
+    ground = FloorFactory.create(slug='floor-1', name='1 этаж', level=1)
+    upstairs = FloorFactory.create(slug='floor-2', name='2 этаж', level=2)
+    open_space = RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая', floor=ground)
+    climate = RoomClimateFactory.create(
+        room=open_space,
+        guest_room=True,
+        override_target=Decimal('22.5'),
+        override_until=MORNING + timedelta(hours=1),
+        override_source='panel',
+    )
+    ComfortPeriodFactory.create_batch(7, zone=None, room_climate=climate, start=time(6, 30), end=time(23, 30))
+    RoomClimateFactory.create(room=RoomFactory.create(slug='bedroom', name='Спальня', floor=upstairs, position=1))
+    RoomFactory.create(slug='office', name='Кабинет', floor=upstairs, position=2)
+    ZoneFactory.create(
+        slug='kitchen',
+        name='Кухня',
+        thermostat__slug='thermostat-kitchen',
+        air_sensor=_sensor('air-kitchen', room=open_space),
+        room=open_space,
+    )
+    ClimateSettingsFactory.create(guests_until=GUESTS_LEAVE)
+    return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), ControlBook())
+
+
+@pytest.fixture
+def f_pending_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
+    setpoint, last_command_at, shed = request.param
+    kitchen = _zone('kitchen', 'Кухня', live_control=True, last_command_at=last_command_at)
+    thermostats = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
+    thermostats.record_state(
+        'thermostat-kitchen',
+        ThermostatState(
+            power=not shed,
+            mode=ThermostatMode.HOLD,
+            setpoint=Decimal(setpoint),
+            floor_temperature=Decimal('24.5'),
+            heating=False,
+            read_at=MORNING,
+        ),
+    )
+    ZoneLoadFactory.create(slug='kitchen', name='Кухня', zone=kitchen, priority=5, live=True)
+    guard_book = GuardBook()
+    if shed:
+        guard_loads = GuardLoads(
+            records=tuple(LoadRepository.all_records()),
+            control=LoadSettingsRepository.control(),
+            live_zones=frozenset({'kitchen'}),
+            meter='phase-meter',
+            read_at=GUARD_AT,
+        )
+        kitchen_shed = replace(BOILER_SHED, load='kitchen', device='thermostat-kitchen', live=True)
+        guard_book.remember(
+            replace(GuardState.started(guard_loads, GUARD_AT), shedding=ShedState(sheds={'kitchen': kitchen_shed})),
+        )
+    return GetPanelOverviewUseCase(
+        zones=ZoneRepository(),
+        intents=_intents(ControlBook()),
+        devices=DeviceRepository(),
+        house=HouseRepository(),
+        climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
+        outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
+        thermostat_store=thermostats,
+        plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
+        temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
+        guard_book=guard_book,
+        clock=ClockStub(trusted=True),
+        dry_run=False,
+    )
+
+
+def test_overview_names_the_intent_of_each_room_its_guests_and_whether_it_takes_overrides(
+    f_intent_use_case: GetPanelOverviewUseCase,
+) -> None:
+    output = f_intent_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert (
+        [(room.slug, room.intent, room.adjustable, room.guest_room) for floor in output.floors for room in floor.rooms],
+        (output.guests_until, output.guest_rooms),
+    ) == (
+        [
+            (
+                'open-space',
+                RoomIntent(
+                    room='open-space',
+                    reason=IntentReason.OVERRIDE,
+                    target=Decimal('22.5'),
+                    until=MORNING + timedelta(hours=1),
+                    forced=True,
+                ),
+                True,
+                True,
+            ),
+            (
+                'bedroom',
+                RoomIntent(
+                    room='bedroom',
+                    reason=IntentReason.SETBACK,
+                    target=Decimal('19.5'),
+                    until=None,
+                    forced=False,
+                ),
+                False,
+                False,
+            ),
+            ('office', None, False, False),
+        ],
+        (GUESTS_LEAVE, ('Гостиная, кухня и прихожая',)),
+    )
+
+
+def test_overview_drives_a_zone_to_the_target_its_room_forces_without_a_schedule_change_to_name(
+    f_intent_use_case: GetPanelOverviewUseCase,
+) -> None:
+    kitchen = f_intent_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).zones[0]
+
+    assert (kitchen.regime, kitchen.mode, kitchen.target_setpoint, kitchen.next_change) == (
+        ZoneRegime.COMFORT,
+        ScheduleMode.COMFORT,
+        Decimal('30.0'),
+        None,
+    )
+
+
+def test_overview_leaves_out_guests_gone_or_set_beyond_four_days(f_intent_use_case: GetPanelOverviewUseCase) -> None:
+    gone = f_intent_use_case.execute(GetPanelOverviewInputDTO(now=GUESTS_LEAVE))
+    far = f_intent_use_case.execute(GetPanelOverviewInputDTO(now=GUESTS_LEAVE - timedelta(days=4, minutes=1)))
+
+    assert (gone.guests_until, far.guests_until, gone.guest_rooms) == (None, None, ('Гостиная, кухня и прихожая',))
+
+
+@pytest.mark.parametrize(
+    ('f_pending_use_case', 'pending'),
+    [
+        (('28.0', None, False), PendingWrite(kind=PendingKind.HOLDS, at=None)),
+        (
+            ('22.0', MORNING - timedelta(minutes=10), False),
+            PendingWrite(kind=PendingKind.NEXT_WRITE, at=MORNING + timedelta(minutes=20)),
+        ),
+        (('22.0', None, False), PendingWrite(kind=PendingKind.NEXT_WRITE, at=MORNING)),
+        (('22.0', MORNING - timedelta(minutes=10), True), PendingWrite(kind=PendingKind.HELD, at=None)),
+    ],
+    ids=['thermostat_holds_its_target', 'next_write_in_twenty_minutes', 'next_write_now', 'floor_shed'],
+    indirect=['f_pending_use_case'],
+)
+def test_overview_names_when_each_floor_gets_its_target(
+    f_pending_use_case: GetPanelOverviewUseCase,
+    pending: PendingWrite,
+) -> None:
+    zone = f_pending_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).zones[0]
+
+    assert zone.pending == pending
+
+
 def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUseCase) -> None:
     output = f_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
 
@@ -731,6 +899,7 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
             at=datetime(2026, 10, 29, 23, 30, tzinfo=MOSCOW),
         ),
         air=None,
+        pending=PendingWrite(kind=PendingKind.WATCHING, at=None),
     )
     assert output == GetPanelOverviewOutputDTO(
         zones=(kitchen,),
@@ -773,6 +942,7 @@ def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: Get
         boost_until=None,
         next_change=None,
         air=None,
+        pending=PendingWrite(kind=PendingKind.UNREACHED, at=None),
     )
     assert output == GetPanelOverviewOutputDTO(
         zones=(hallway,),

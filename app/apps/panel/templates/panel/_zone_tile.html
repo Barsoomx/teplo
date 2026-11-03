@@ -18,7 +18,7 @@
       {% endif %}
     </div>
     {% if zone.available %}
-    <p class="readout-caption">{% if zone.target_setpoint is None %}{% translate 'Floor, heating off' %}{% else %}{% blocktranslate with target=zone.target_setpoint|floatformat:'-1' %}Floor, target {{ target }}°{% endblocktranslate %}{% if zone.power is False %}. {% translate 'Thermostat is off' %}{% elif zone.setpoint != zone.target_setpoint %}. {% blocktranslate with setpoint=zone.setpoint|floatformat:'-1' %}Thermostat set to {{ setpoint }}°{% endblocktranslate %}{% endif %}{% endif %}</p>
+    <p class="readout-caption">{% if zone.target_setpoint is None %}{% translate 'Floor, heating off' %}{% else %}{% blocktranslate with target=zone.target_setpoint|floatformat:'-1' %}Floor, target {{ target }}°{% endblocktranslate %}{% if zone.power is False %}. {% if zone.pending.kind == 'held' %}{% translate 'Load management keeps the floor off' %}{% else %}{% translate 'Thermostat is off' %}{% endif %}{% elif zone.setpoint != zone.target_setpoint %}. {% with next_write=zone|next_write_text %}{% if next_write %}{{ next_write }}{% else %}{% blocktranslate with setpoint=zone.setpoint|floatformat:'-1' %}Thermostat set to {{ setpoint }}°{% endblocktranslate %}{% endif %}{% endwith %}{% endif %}{% endif %}</p>
     {% if zone.regime == 'boost' %}
     <p class="next next-boost">{% blocktranslate with until=zone.boost_until|time:'H:i' %}Boost until {{ until }}{% endblocktranslate %}</p>
     {% elif zone.next_change %}

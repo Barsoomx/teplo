@@ -13,12 +13,15 @@ MIN_BAND_MAX = Decimal('1.00')
 PREHEAT_LEAD_CAP_MAX_MINUTES = 480
 MORNINGS_NEEDED_MIN = 1
 MORNINGS_NEEDED_MAX = 32767
+GUESTS_END_HOUR = 14
+GUESTS_END_HOUR_MAX = 23
 FIELDS = (
     'air_start_offset',
     'initial_early_stop_offset',
     'air_min_band',
     'learned_mornings_needed',
     'preheat_lead_cap_minutes',
+    'guests_end_hour',
 )
 
 
@@ -29,6 +32,7 @@ class ClimateConfig:
     air_min_band: Decimal
     learned_mornings_needed: int
     preheat_lead_cap_minutes: int
+    guests_end_hour: int
 
     def normalized(self) -> 'ClimateConfig':
         return ClimateConfig(
@@ -37,6 +41,7 @@ class ClimateConfig:
             air_min_band=hundredths(self.air_min_band),
             learned_mornings_needed=self.learned_mornings_needed,
             preheat_lead_cap_minutes=self.preheat_lead_cap_minutes,
+            guests_end_hour=self.guests_end_hour,
         )
 
 
@@ -63,6 +68,7 @@ def climate_config_problems(config: ClimateConfig) -> tuple[SettingProblem, ...]
     integers = (
         ('learned_mornings_needed', config.learned_mornings_needed, MORNINGS_NEEDED_MIN, MORNINGS_NEEDED_MAX),
         ('preheat_lead_cap_minutes', config.preheat_lead_cap_minutes, 0, PREHEAT_LEAD_CAP_MAX_MINUTES),
+        ('guests_end_hour', config.guests_end_hour, 0, GUESTS_END_HOUR_MAX),
     )
     out_of_range = [field for field, value, lowest, highest in decimals if not lowest <= value <= highest]
     out_of_range.extend(field for field, number, lowest, highest in integers if not lowest <= number <= highest)

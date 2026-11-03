@@ -18,6 +18,7 @@ BEDROOM = RoomClimateConfigRecord(
         setback_target=Decimal('19.5'),
         backup_below=Decimal('19.0'),
         backup_hysteresis=Decimal('0.30'),
+        guest_room=False,
     ),
     air_sensor_slug='air-second-floor',
     backup_zone_slug='bathroom-2f',
@@ -52,6 +53,7 @@ def test_room_form_of_a_room_with_backup_heat_reads_its_targets_and_its_backup_h
             'setback_target': Decimal('19.5'),
             'backup_below': Decimal('18.5'),
             'backup_hysteresis': Decimal('0.5'),
+            'guest_room': False,
         },
     )
 
@@ -61,9 +63,20 @@ def test_room_form_of_a_room_without_backup_heat_leaves_its_backup_fields_out() 
 
     assert (form.is_valid(), list(form.fields), form.cleaned_data) == (
         True,
-        ['comfort_target', 'setback_target'],
-        {'comfort_target': Decimal('21'), 'setback_target': Decimal('19.5')},
+        ['comfort_target', 'setback_target', 'guest_room'],
+        {'comfort_target': Decimal('21'), 'setback_target': Decimal('19.5'), 'guest_room': False},
     )
+
+
+@pytest.mark.parametrize(
+    ('posted', 'guest_room'),
+    [({'guest_room': 'on'}, True), ({}, False)],
+    ids=['ticked', 'unticked'],
+)
+def test_room_form_reads_the_guest_room_checkbox(posted: dict[str, str], guest_room: bool) -> None:
+    form = RoomSettingsForm.for_room(OPEN_SPACE, QueryDict(urlencode({**POSTED, **posted})))
+
+    assert (form.is_valid(), form.cleaned_data['guest_room']) == (True, guest_room)
 
 
 @pytest.mark.parametrize(
@@ -91,4 +104,6 @@ def test_unbound_room_form_shows_the_stored_settings_under_ids_of_the_room() -> 
         form['backup_hysteresis'].value(),
         form['setback_target'].auto_id,
         'backup_live' in form.fields,
-    ) == (Decimal('20.5'), Decimal('0.30'), 'room-bedroom-setback_target', False)
+        form['guest_room'].value(),
+        form['guest_room'].auto_id,
+    ) == (Decimal('20.5'), Decimal('0.30'), 'room-bedroom-setback_target', False, False, 'room-bedroom-guest_room')

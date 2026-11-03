@@ -14,6 +14,7 @@ from apps.devices.models import Device
 from apps.power.models import Load
 
 SHED_ZONE_FIELDS = ('slug', 'thermostat')
+OVERRIDE_FIELDS = ('override_target', 'override_until', 'override_source')
 GUARD_FIELDS = (
     'second_floor_sensor',
     'second_floor_guard_zone',
@@ -101,9 +102,10 @@ class RoomClimateAdmin(admin.ModelAdmin):
         'backup_zone',
         'backup_below',
         'backup_live',
+        'guest_room',
     )
     list_editable = ('backup_live',)
-    readonly_fields = ('room',)
+    readonly_fields = ('room', *OVERRIDE_FIELDS)
     inlines = (RoomComfortPeriodInline,)
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
@@ -128,6 +130,7 @@ class ClimateSettingsAdmin(admin.ModelAdmin):
     form = ClimateSettingsAdminForm
     list_display = ('__str__', 'outdoor_sensor')
     exclude = GUARD_FIELDS
+    readonly_fields = ('guests_until',)
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
         return not ClimateSettings.objects.exists()

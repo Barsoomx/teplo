@@ -5,6 +5,7 @@ from django import forms
 from django.http import QueryDict
 
 from apps.climate.domain.climate_config import (
+    GUESTS_END_HOUR_MAX,
     MIN_BAND_MAX,
     MIN_BAND_MIN,
     MORNINGS_NEEDED_MAX,
@@ -34,6 +35,7 @@ class ClimateSettingsForm(forms.Form):
     air_min_band = forms.DecimalField(min_value=MIN_BAND_MIN, max_value=MIN_BAND_MAX, max_digits=3, decimal_places=2)
     learned_mornings_needed = forms.IntegerField(min_value=MORNINGS_NEEDED_MIN, max_value=MORNINGS_NEEDED_MAX)
     preheat_lead_cap_minutes = forms.IntegerField(min_value=0, max_value=PREHEAT_LEAD_CAP_MAX_MINUTES)
+    guests_end_hour = forms.IntegerField(min_value=0, max_value=GUESTS_END_HOUR_MAX)
 
     @classmethod
     def for_settings(cls, record: ClimateConfigRecord, data: QueryDict | None = None) -> 'ClimateSettingsForm':

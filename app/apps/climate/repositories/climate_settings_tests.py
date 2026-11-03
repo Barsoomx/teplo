@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -10,6 +10,7 @@ from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.optimal_start import OptimalStartSettings
+from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.factories import ClimateSettingsFactory, ZoneFactory
 from apps.climate.models import ClimateSettings
@@ -26,7 +27,9 @@ DEFAULT_CONFIG = ClimateConfig(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
+    guests_end_hour=14,
 )
+GUESTS_LEAVE = datetime(2026, 11, 5, 11, 0, tzinfo=UTC)
 GUARD_FIELDS = (
     'second_floor_sensor',
     'second_floor_guard_zone',
@@ -81,7 +84,13 @@ def f_guarded_settings() -> ClimateSettings:
         second_floor_guard_live=True,
         learned_mornings_needed=5,
         air_min_band=Decimal('0.25'),
+        guests_end_hour=12,
     )
+
+
+@pytest.fixture
+def f_guests_settings() -> ClimateSettings:
+    return ClimateSettingsFactory.create(guests_until=GUESTS_LEAVE, guests_end_hour=12)
 
 
 def test_sensors_name_the_outdoor_sensor_and_not_the_old_second_floor_sensor(f_sensors: list[Device]) -> None:
@@ -124,7 +133,7 @@ def test_config_record_without_climate_settings_takes_the_defaults() -> None:
 def test_config_record_reads_the_stored_settings(f_guarded_settings: ClimateSettings) -> None:
     assert ClimateSettingsRepository.config_record() == ClimateConfigRecord(
         id=f_guarded_settings.pk,
-        config=replace(DEFAULT_CONFIG, learned_mornings_needed=5, air_min_band=Decimal('0.25')),
+        config=replace(DEFAULT_CONFIG, learned_mornings_needed=5, air_min_band=Decimal('0.25'), guests_end_hour=12),
     )
 
 
@@ -177,6 +186,53 @@ def test_saved_config_without_stored_settings_creates_them_with_the_old_guard_of
 def test_saved_config_refuses_to_write_an_old_guard_column(field: str) -> None:
     with pytest.raises(KeyError):
         ClimateSettingsRepository.save_config(DEFAULT_CONFIG, (field,))
+
+
+def test_without_climate_settings_no_guests_stay_and_they_would_leave_at_two() -> None:
+    assert ClimateSettingsRepository.guests() == GuestsRecord(until=None, end_hour=14)
+
+
+@pytest.mark.usefixtures('f_guests_settings')
+def test_guests_read_their_end_and_the_hour_they_leave() -> None:
+    assert ClimateSettingsRepository.guests() == GuestsRecord(until=GUESTS_LEAVE, end_hour=12)
+
+
+@pytest.mark.parametrize('until', [GUESTS_LEAVE + timedelta(days=1), None], ids=['set', 'cleared'])
+def test_saved_guests_round_trip_and_leave_the_other_settings_alone(
+    f_guests_settings: ClimateSettings,
+    until: datetime | None,
+) -> None:
+    ClimateSettingsRepository.save_guests(until)
+
+    stored = ClimateSettings.objects.get(pk=f_guests_settings.pk)
+    assert (ClimateSettingsRepository.guests(), stored.learned_mornings_needed, ClimateSettings.objects.count()) == (
+        GuestsRecord(until=until, end_hour=12),
+        3,
+        1,
+    )
+
+
+def test_saved_guests_without_stored_settings_create_them() -> None:
+    ClimateSettingsRepository.save_guests(GUESTS_LEAVE)
+
+    stored = ClimateSettings.objects.get()
+    assert (stored.guests_until, stored.guests_end_hour, stored.air_start_offset) == (GUESTS_LEAVE, 14, Decimal('0.30'))
+
+
+def test_guests_for_update_take_the_write_lock_before_they_are_read(f_guests_settings: ClimateSettings) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        guests = ClimateSettingsRepository.guests_for_update()
+
+    assert (guests.until, [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]) == (
+        f_guests_settings.guests_until,
+        ['UPDATE', 'SELECT'],
+    )
+
+
+def test_saved_config_writes_the_guests_end_hour(f_guarded_settings: ClimateSettings) -> None:
+    ClimateSettingsRepository.save_config(replace(DEFAULT_CONFIG, guests_end_hour=11), ('guests_end_hour',))
+
+    assert ClimateSettings.objects.get(pk=f_guarded_settings.pk).guests_end_hour == 11
 
 
 def test_config_record_for_update_takes_the_write_lock_before_it_reads_the_settings(

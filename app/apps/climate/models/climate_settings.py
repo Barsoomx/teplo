@@ -5,6 +5,8 @@ from django.db import models
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.climate_config import (
+    GUESTS_END_HOUR,
+    GUESTS_END_HOUR_MAX,
     MIN_BAND_MAX,
     MIN_BAND_MIN,
     MORNINGS_NEEDED_MIN,
@@ -86,6 +88,12 @@ class ClimateSettings(models.Model):
         validators=OFFSET_VALIDATORS,
     )
     second_floor_guard_live = models.BooleanField(default=False)
+    guests_until = models.DateTimeField(null=True, blank=True)
+    guests_end_hour = models.PositiveSmallIntegerField(
+        default=GUESTS_END_HOUR,
+        db_default=GUESTS_END_HOUR,
+        validators=[MaxValueValidator(GUESTS_END_HOUR_MAX)],
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

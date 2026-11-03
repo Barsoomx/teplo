@@ -8,7 +8,13 @@ from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecor
 from apps.climate.domain.comfort_windows import RoomWeek
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
-from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord, RoomClimateSettings
+from apps.climate.domain.room_climate import (
+    RoomClimateConfig,
+    RoomClimateConfigRecord,
+    RoomClimateSettings,
+    RoomOverride,
+)
+from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.write_guard import WriteReservation
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
@@ -89,6 +95,20 @@ class ClimateConfigStore(Protocol):
 
 class RoomClimateStore(Protocol):
     def all_settings(self) -> list[RoomClimateSettings]: ...
+
+
+class RoomOverrideStore(Protocol):
+    def comfort_for_update(self, slug: str) -> RoomClimateSettings: ...
+
+    def save_override(self, slug: str, override: RoomOverride | None) -> None: ...
+
+
+class GuestsStore(Protocol):
+    def guests(self) -> GuestsRecord: ...
+
+    def guests_for_update(self) -> GuestsRecord: ...
+
+    def save_guests(self, until: datetime | None) -> None: ...
 
 
 class RoomClimateConfigStore(Protocol):

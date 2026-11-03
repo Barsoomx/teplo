@@ -1,11 +1,12 @@
 from collections.abc import Collection
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.optimal_start import OptimalStartSettings
+from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.models import ClimateSettings
 from apps.core.repositories.write_lock import lock_for_update
@@ -49,6 +50,7 @@ class ClimateSettingsRepository:
                 air_min_band=climate_settings.air_min_band,
                 learned_mornings_needed=climate_settings.learned_mornings_needed,
                 preheat_lead_cap_minutes=climate_settings.preheat_lead_cap_minutes,
+                guests_end_hour=climate_settings.guests_end_hour,
             ),
         )
 
@@ -70,6 +72,26 @@ class ClimateSettingsRepository:
             return
 
         ClimateSettings.objects.filter(pk=stored.pk).update(**changes)
+
+    @staticmethod
+    def guests() -> GuestsRecord:
+        stored = ClimateSettings.objects.order_by('pk').first()
+        climate_settings = ClimateSettings() if stored is None else stored
+        return GuestsRecord(until=climate_settings.guests_until, end_hour=climate_settings.guests_end_hour)
+
+    @staticmethod
+    def guests_for_update() -> GuestsRecord:
+        lock_for_update(ClimateSettings.objects.all())
+        return ClimateSettingsRepository.guests()
+
+    @staticmethod
+    def save_guests(until: datetime | None) -> None:
+        stored = ClimateSettings.objects.order_by('pk').first()
+        if stored is None:
+            ClimateSettings.objects.create(guests_until=until)
+            return
+
+        ClimateSettings.objects.filter(pk=stored.pk).update(guests_until=until)
 
 
 def _stored_or_default() -> ClimateSettings:

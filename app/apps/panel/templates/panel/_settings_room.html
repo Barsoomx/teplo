@@ -8,6 +8,9 @@
     </div>
     {% endif %}
     {% include 'panel/_form_errors.html' with form=room_form %}
+    <div class="field-grid">
+      <label class="check">{{ room_form.guest_room }}<span>{% translate 'Guest room' %}</span></label>
+    </div>
     <fieldset class="field-group">
       <legend class="field-group-title">{% translate 'Air, °C' %}</legend>
       <div class="field-grid">

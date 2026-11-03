@@ -245,6 +245,7 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 - The cron watchdog restarts teplo when its process dies or exceeds 300 MB RSS and trims the log above 5 MB. After `S90teplo stop` it leaves teplo stopped until the next `start`.
 - Secrets and settings are read at start: restart after editing them.
 - Day to day, the panel's schedule page (`/schedule/`) sets each room's comfort windows and its settings page (`/settings/`) each room's air targets and backup heat, the zones' setpoints, the climate and load thresholds and the shedding order; neither needs a restart. The heating cycle and the load guard pick a change up within a minute, and a thermostat takes a new setpoint or schedule at its zone's next allowed write, at most one change per 30 minutes. Each change is journaled, e.g. «Кухня: пол в комфорте 28° → 27,5°» or «Спальня: воздух в комфорте 20,5° → 21°». The gates `live control`, `air control live`, a room's `backup live`, `load management live` and a load's `live` are switched only in the admin, as described below: the settings page shows each read-only with a link to its admin page, and `TEPLO_DRY_RUN` stays in `teplo.env`.
+- Guests and room targets need no gate. «Гости» in the dashboard's house facts keeps the guest rooms at comfort until 14:00 after the coming night, the hour set under Climate on the settings page («Гости до, час»), and «Гости уехали» ends it; a room is a guest room by the checkbox on its card, and the site data makes the open space one. The −/+ of a room whose floors read the air, the open space, move its target by 0.5 °C for 2 hours, and «Вернуть расписание» ends that early. Both reach a floor through its usual gates, at the zone's next allowed write within its 30-minute budget: in floor mode a target above the schedule's takes the floor one setpoint up, night to comfort or comfort to boost, and one below takes it to the night setpoint. The floor's tile says which setpoint it takes and from when, or that load management holds it off, and the journal lists each change, e.g. «Гостиная, кухня и прихожая: вручную 22,5° до 18:40».
 - The floors and rooms come from the site data and are edited in the admin (`/admin/house/floor/`, `/admin/house/room/`). A plug or a sensor that serves no zone takes its room on its own page in `/admin/devices/device/`; a zone's thermostat and air sensor follow the room set on the zone's page in `/admin/climate/zone/`. The site data puts the water heater 1F and washing machine plugs in «Санузел 1 этаж»; if they stand elsewhere, set their room on their pages. The dashboard shows a room once it holds a zone, an air sensor or a plug. Each room's comfort, its air sensor and its backup heat live in `/admin/climate/roomclimate/`, which the site data fills: a room climate takes no air sensor that serves a zone or stands in another room.
 
 ## Enable live control
@@ -281,6 +282,12 @@ Air control, optimal start and the bedroom's backup heat ship in dry-run (`docs/
 ## Roll back
 
 An older release does not know the migrations of a newer one, so undo them before it runs, from the release you leave and the newest first.
+
+Rolling back past guests and room overrides takes one step. `migrate climate 0010` undoes the site's `0010_guest_rooms` first, then drops the guest rooms, the overrides and the guests' end and hour:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate climate 0010'
+```
 
 Rolling back past the room comfort takes one step. `migrate climate 0009` undoes the site's `0009_room_comfort` first: it copies each room's comfort windows and air targets back onto its zones, the bedroom's backup heat back into the climate settings as the second-floor guard, and deletes the windows only a room held and the room climates; then it undoes the schema:
 

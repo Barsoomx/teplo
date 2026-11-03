@@ -49,6 +49,7 @@ def _plan(
     learning: ZoneLearningRecord = UNLEARNED,
     clock_trusted: bool = True,
     dry_run: bool = False,
+    forced_target: Decimal | None = None,
 ) -> AirPlan:
     return plan_air(
         zone,
@@ -61,6 +62,7 @@ def _plan(
         now=now,
         clock_trusted=clock_trusted,
         dry_run=dry_run,
+        forced_target=forced_target,
     )
 
 
@@ -126,6 +128,28 @@ def test_plan_idles_at_night_air_target(f_zone: ZoneSettings) -> None:
         state=AirState.IDLE,
         thermostat=IDLE,
     )
+
+
+@pytest.mark.parametrize(
+    ('now', 'clock_trusted', 'forced', 'air', 'expected'),
+    [
+        (NIGHT, True, Decimal('22.5'), '19.4', (ScheduleMode.NIGHT, Decimal('22.5'), AirState.HEAT, HEAT)),
+        (MORNING, True, Decimal('21.0'), '21.6', (ScheduleMode.COMFORT, Decimal('21.0'), AirState.IDLE, IDLE)),
+        (NIGHT, False, Decimal('20.0'), '21.0', (ScheduleMode.NIGHT, Decimal('20.0'), AirState.IDLE, IDLE)),
+    ],
+    ids=['above_the_night_target', 'below_the_comfort_target', 'on_an_untrusted_clock'],
+)
+def test_forced_target_replaces_the_scheduled_target(
+    f_zone: ZoneSettings,
+    now: datetime,
+    clock_trusted: bool,
+    forced: Decimal,
+    air: str,
+    expected: tuple[ScheduleMode, Decimal, AirState, ThermostatTarget],
+) -> None:
+    plan = _plan(f_zone, now, air, clock_trusted=clock_trusted, forced_target=forced)
+
+    assert (plan.mode, plan.target, plan.state, plan.thermostat) == expected
 
 
 def test_plan_holds_comfort_air_target_and_held_preheat_while_clock_untrusted(

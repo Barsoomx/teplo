@@ -23,6 +23,11 @@ class ControlPath(StrEnum):
     AIR_DRY_RUN = 'air_dry_run'
 
 
+class CommandSource(StrEnum):
+    PANEL = 'panel'
+    TELEGRAM = 'telegram'
+
+
 class ZoneCycleOutcome(StrEnum):
     UNCHANGED = 'unchanged'
     APPLIED = 'applied'

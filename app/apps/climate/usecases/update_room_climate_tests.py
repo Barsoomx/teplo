@@ -30,12 +30,14 @@ BEDROOM = RoomClimateConfig(
     setback_target=Decimal('19.5'),
     backup_below=Decimal('19.0'),
     backup_hysteresis=Decimal('0.30'),
+    guest_room=False,
 )
 OPEN_SPACE = RoomClimateConfig(
     comfort_target=Decimal('22.0'),
     setback_target=Decimal('19.5'),
     backup_below=Decimal('19.0'),
     backup_hysteresis=Decimal('0.30'),
+    guest_room=False,
 )
 BEDROOM_EDIT = UpdateRoomClimateInputDTO(
     room='bedroom',
@@ -43,6 +45,7 @@ BEDROOM_EDIT = UpdateRoomClimateInputDTO(
     setback_target=Decimal('19.5'),
     backup_below=Decimal('19.0'),
     backup_hysteresis=Decimal('0.30'),
+    guest_room=False,
     now=NOW,
 )
 OPEN_SPACE_EDIT = replace(
@@ -54,7 +57,14 @@ OPEN_SPACE_EDIT = replace(
 )
 
 
-def _change(field: str, old: str, new: str, *, subject: str = 'bedroom', name: str = 'Спальня') -> SettingChange:
+def _change(
+    field: str,
+    old: str | bool,
+    new: str | bool,
+    *,
+    subject: str = 'bedroom',
+    name: str = 'Спальня',
+) -> SettingChange:
     return SettingChange(target='room', subject=subject, name=name, field=field, old=old, new=new)
 
 
@@ -89,6 +99,19 @@ def f_rooms() -> RoomClimateConfigStoreStub:
 
 
 @pytest.fixture
+def f_rooms_with_a_guest_room(
+    request: pytest.FixtureRequest,
+    f_rooms: RoomClimateConfigStoreStub,
+) -> RoomClimateConfigStoreStub:
+    return RoomClimateConfigStoreStub(
+        records=[
+            replace(record, config=replace(record.config, guest_room=request.param))
+            for record in f_rooms.config_records()
+        ],
+    )
+
+
+@pytest.fixture
 def f_recorder() -> SettingsRecorderStub:
     return SettingsRecorderStub(error=None)
 
@@ -105,6 +128,15 @@ def f_use_case(
     f_transaction: TransactionStub,
 ) -> UpdateRoomClimateUseCase:
     return UpdateRoomClimateUseCase(rooms=f_rooms, recorder=f_recorder, transaction=f_transaction)
+
+
+@pytest.fixture
+def f_guest_room_use_case(
+    f_rooms_with_a_guest_room: RoomClimateConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+    f_transaction: TransactionStub,
+) -> UpdateRoomClimateUseCase:
+    return UpdateRoomClimateUseCase(rooms=f_rooms_with_a_guest_room, recorder=f_recorder, transaction=f_transaction)
 
 
 @pytest.fixture
@@ -172,6 +204,34 @@ def test_changed_room_targets_and_backup_heat_are_saved_and_journaled_with_the_r
             ),
         ],
         [(changes, NOW)],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_rooms_with_a_guest_room', 'guest_room'),
+    [(False, True), (True, False)],
+    ids=['made_a_guest_room', 'no_longer_a_guest_room'],
+    indirect=['f_rooms_with_a_guest_room'],
+)
+def test_guest_room_switch_is_saved_and_journaled_like_any_room_setting(
+    f_guest_room_use_case: UpdateRoomClimateUseCase,
+    f_rooms_with_a_guest_room: RoomClimateConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+    guest_room: bool,
+) -> None:
+    output = f_guest_room_use_case.execute(replace(OPEN_SPACE_EDIT, guest_room=guest_room))
+
+    change = _change(
+        'guest_room',
+        not guest_room,
+        guest_room,
+        subject='open-space',
+        name='Гостиная, кухня и прихожая',
+    )
+    assert (output.changes, f_rooms_with_a_guest_room.saved, f_recorder.records) == (
+        (change,),
+        [('open-space', replace(OPEN_SPACE, guest_room=guest_room), ('guest_room',))],
+        [((change,), NOW)],
     )
 
 

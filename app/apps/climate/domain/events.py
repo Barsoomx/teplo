@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.change import ThermostatChange
-from apps.climate.domain.modes import AirState, ScheduleMode
+from apps.climate.domain.modes import AirState, CommandSource, ScheduleMode
 from apps.core.domain.events import DomainEvent
 
 
@@ -59,3 +59,31 @@ class BackupHeatDryRun(DomainEvent):
     active: bool
     air: Decimal | None
     setpoint: Decimal
+
+
+@dataclass(frozen=True, kw_only=True)
+class GuestsSet(DomainEvent):
+    until: datetime
+    nights: int
+    source: CommandSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class GuestsCleared(DomainEvent):
+    source: CommandSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoomOverridden(DomainEvent):
+    room: str
+    name: str
+    target: Decimal
+    until: datetime
+    source: CommandSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class RoomOverrideCleared(DomainEvent):
+    room: str
+    name: str
+    source: CommandSource

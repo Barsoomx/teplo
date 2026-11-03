@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import time
+from datetime import UTC, datetime, time
 from decimal import Decimal
 
 import pytest
@@ -7,7 +7,13 @@ from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.backup_heat import BackupHeat
-from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord, RoomClimateSettings
+from apps.climate.domain.modes import CommandSource, ZoneKind
+from apps.climate.domain.room_climate import (
+    RoomClimateConfig,
+    RoomClimateConfigRecord,
+    RoomClimateSettings,
+    RoomOverride,
+)
 from apps.climate.domain.zone import AirTargets, ComfortWindow
 from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.models import RoomClimate
@@ -24,7 +30,10 @@ BEDROOM_CONFIG = RoomClimateConfig(
     setback_target=Decimal('19.5'),
     backup_below=Decimal('19.0'),
     backup_hysteresis=Decimal('0.30'),
+    guest_room=False,
 )
+UNTIL = datetime(2026, 11, 4, 15, 40, tzinfo=UTC)
+OVERRIDE = RoomOverride(target=Decimal('22.5'), until=UNTIL, source=CommandSource.TELEGRAM)
 
 
 @pytest.fixture
@@ -56,6 +65,7 @@ def f_open_space() -> RoomClimate:
             floor=FloorFactory.create(name='1 этаж', level=1),
         ),
         setback_target=Decimal('19.0'),
+        guest_room=True,
     )
     ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=1, start=time(7, 0), end=time(22, 0))
     ComfortPeriodFactory.create(zone=None, room_climate=climate, weekday=0, start=time(6, 30), end=time(23, 30))
@@ -75,6 +85,9 @@ def test_all_settings_read_targets_windows_air_sensor_and_backup_in_floor_order(
                 ComfortWindow(weekday=1, start=time(7, 0), end=time(22, 0)),
             ),
             backup=BackupHeat(zone_slug=None, below=Decimal('19.0'), hysteresis=Decimal('0.30'), live=False),
+            guest_room=True,
+            override=None,
+            adjustable=False,
         ),
         RoomClimateSettings(
             slug='bedroom',
@@ -83,8 +96,100 @@ def test_all_settings_read_targets_windows_air_sensor_and_backup_in_floor_order(
             targets=AirTargets(comfort=Decimal('20.5'), night=Decimal('19.5')),
             windows=(),
             backup=BackupHeat(zone_slug='bathroom-2f', below=Decimal('19.0'), hysteresis=Decimal('0.30'), live=True),
+            guest_room=False,
+            override=None,
+            adjustable=False,
         ),
     ]
+
+
+@pytest.fixture
+def f_zoned_open_space(request: pytest.FixtureRequest, f_open_space: RoomClimate) -> RoomClimate:
+    for slug, kind, sensor in request.param:
+        ZoneFactory.create(
+            slug=slug,
+            kind=kind,
+            room=f_open_space.room,
+            air_sensor=None
+            if sensor is None
+            else DeviceFactory.create(
+                slug=sensor,
+                kind=DeviceKind.TEMPERATURE_SENSOR,
+                driver=DeviceDriver.ESPHOME_TEMPERATURE,
+            ),
+        )
+    return f_open_space
+
+
+@pytest.fixture
+def f_overridden_open_space(f_open_space: RoomClimate) -> RoomClimate:
+    RoomClimateRepository.save_override('open-space', OVERRIDE)
+    return f_open_space
+
+
+@pytest.mark.usefixtures('f_bedroom')
+@pytest.mark.parametrize(
+    ('f_zoned_open_space', 'adjustable'),
+    [
+        ((('kitchen', ZoneKind.AIR, 'air-kitchen'),), True),
+        ((('kitchen', ZoneKind.AIR, 'air-kitchen'), ('hallway', ZoneKind.AIR, 'air-hallway')), True),
+        ((('kitchen', ZoneKind.AIR, None),), False),
+        ((('bathroom-1f', ZoneKind.FLOOR, None),), False),
+        ((), False),
+    ],
+    ids=['an_air_zone_with_its_sensor', 'two_of_them', 'air_zone_without_a_sensor', 'floor_zone', 'no_zone'],
+    indirect=['f_zoned_open_space'],
+)
+def test_a_room_is_adjustable_while_one_of_its_zones_reads_the_air(
+    f_zoned_open_space: RoomClimate,
+    adjustable: bool,
+) -> None:
+    assert [(room.slug, room.adjustable) for room in RoomClimateRepository.all_settings()] == [
+        (f_zoned_open_space.room.slug, adjustable),
+        ('bedroom', False),
+    ]
+
+
+@pytest.mark.usefixtures('f_bedroom', 'f_overridden_open_space')
+def test_override_saved_for_a_room_is_read_back_with_its_source() -> None:
+    assert [(room.slug, room.override) for room in RoomClimateRepository.all_settings()] == [
+        ('open-space', OVERRIDE),
+        ('bedroom', None),
+    ]
+
+
+@pytest.mark.usefixtures('f_bedroom')
+def test_cleared_override_leaves_no_target_end_or_source(f_overridden_open_space: RoomClimate) -> None:
+    RoomClimateRepository.save_override('open-space', None)
+
+    stored = RoomClimate.objects.get(pk=f_overridden_open_space.pk)
+    assert (
+        (stored.override_target, stored.override_until, stored.override_source),
+        RoomClimateRepository.all_settings()[0].override,
+    ) == ((None, None, ''), None)
+
+
+def test_saving_an_override_of_an_unknown_room_raises() -> None:
+    with pytest.raises(RoomNotFoundError):
+        RoomClimateRepository.save_override('attic', OVERRIDE)
+
+
+@pytest.mark.usefixtures('f_bedroom', 'f_overridden_open_space')
+def test_comfort_for_update_takes_the_write_lock_before_it_reads_the_room() -> None:
+    with CaptureQueriesContext(connection) as queries:
+        room = RoomClimateRepository.comfort_for_update('open-space')
+
+    assert (
+        (room.slug, room.guest_room, room.override, room.adjustable, len(room.windows)),
+        [query['sql'].split(' ', 1)[0] for query in queries.captured_queries][:2],
+    ) == (('open-space', True, OVERRIDE, False, 2), ['UPDATE', 'SELECT'])
+
+
+def test_comfort_for_update_of_a_room_without_a_room_climate_raises() -> None:
+    RoomFactory.create(slug='office')
+
+    with pytest.raises(RoomNotFoundError):
+        RoomClimateRepository.comfort_for_update('office')
 
 
 @pytest.mark.usefixtures('f_open_space')
@@ -120,6 +225,16 @@ def test_config_for_update_of_an_unknown_room_raises() -> None:
 
     with pytest.raises(RoomNotFoundError):
         RoomClimateRepository.config_for_update('office')
+
+
+@pytest.mark.usefixtures('f_bedroom')
+def test_config_record_reads_and_save_config_writes_the_guest_room() -> None:
+    RoomClimateRepository.save_config('bedroom', replace(BEDROOM_CONFIG, guest_room=True), ('guest_room',))
+
+    assert (
+        RoomClimateRepository.config_for_update('bedroom').config.guest_room,
+        RoomClimate.objects.get(room__slug='bedroom').guest_room,
+    ) == (True, True)
 
 
 def test_save_config_writes_only_the_named_fields(f_bedroom: RoomClimate) -> None:

@@ -3,7 +3,11 @@ from dataclasses import asdict
 from apps.climate.domain.events import (
     AirControlDryRun,
     BackupHeatDryRun,
+    GuestsCleared,
+    GuestsSet,
     OptimalStartDryRun,
+    RoomOverridden,
+    RoomOverrideCleared,
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
@@ -106,6 +110,26 @@ def journal_backup_heat_dry_run(event: BackupHeatDryRun) -> None:
         payload=_payload(event),
         created_at=event.occurred_at,
     )
+
+
+@domain_event_handler(GuestsSet)
+def journal_guests_set(event: GuestsSet) -> None:
+    _journal('guests_set', '', event)
+
+
+@domain_event_handler(GuestsCleared)
+def journal_guests_cleared(event: GuestsCleared) -> None:
+    _journal('guests_cleared', '', event)
+
+
+@domain_event_handler(RoomOverridden)
+def journal_room_overridden(event: RoomOverridden) -> None:
+    _journal('room_overridden', event.room, event)
+
+
+@domain_event_handler(RoomOverrideCleared)
+def journal_room_override_cleared(event: RoomOverrideCleared) -> None:
+    _journal('room_override_cleared', event.room, event)
 
 
 @domain_event_handler(AlertRaised)

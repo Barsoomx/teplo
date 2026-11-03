@@ -29,6 +29,7 @@ class ClimateSettingsView(LoginRequiredMixin, View):
                         air_min_band=data['air_min_band'],
                         learned_mornings_needed=data['learned_mornings_needed'],
                         preheat_lead_cap_minutes=data['preheat_lead_cap_minutes'],
+                        guests_end_hour=data['guests_end_hour'],
                         now=timezone.now(),
                     ),
                 )

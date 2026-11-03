@@ -31,6 +31,17 @@ def write_allowed(
     return last_command_at is None or last_command_at > now or now - last_command_at >= min_interval
 
 
+def next_write_at(
+    last_write_at: datetime | None,
+    now: datetime,
+    min_interval: timedelta = MIN_WRITE_INTERVAL,
+) -> datetime:
+    if last_write_at is None or write_allowed(last_write_at, now, min_interval):
+        return now
+
+    return last_write_at + min_interval
+
+
 def slot_free(
     slot: WriteSlot | None,
     *,

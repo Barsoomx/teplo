@@ -3,6 +3,7 @@ from decimal import Decimal
 from django.db import models
 from django.utils.translation import gettext_lazy
 
+from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_climate import BACKUP_MARGIN
 from apps.climate.models.climate_settings import OFFSET_VALIDATORS, TEMPERATURE_SENSORS
 from apps.climate.models.zone import SETPOINT_VALIDATORS
@@ -57,6 +58,22 @@ class RoomClimate(models.Model):
         validators=OFFSET_VALIDATORS,
     )
     backup_live = models.BooleanField(default=False)
+    guest_room = models.BooleanField(default=False, db_default=False)
+    override_target = models.DecimalField(
+        max_digits=3,
+        decimal_places=1,
+        null=True,
+        blank=True,
+        validators=SETPOINT_VALIDATORS,
+    )
+    override_until = models.DateTimeField(null=True, blank=True)
+    override_source = models.CharField(
+        max_length=16,
+        choices=[(source.value, source.value) for source in CommandSource],
+        blank=True,
+        default='',
+        db_default='',
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

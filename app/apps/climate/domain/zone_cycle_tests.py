@@ -25,6 +25,7 @@ from apps.climate.domain.zone_cycle import (
     follow_zone,
     hold_air_dry_run,
 )
+from apps.climate.domain.zone_intent import NO_INTENT, ZoneIntent
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
@@ -69,15 +70,19 @@ def _conditions(
     air: str | None,
     *,
     learning: ZoneLearningRecord = UNLEARNED,
-    guarded: bool = False,
+    intent: ZoneIntent = NO_INTENT,
     writes_live: bool = True,
 ) -> ZoneConditions:
     return ZoneConditions(
         air=None if air is None else Decimal(air),
         learning=learning,
-        guarded=guarded,
+        intent=intent,
         writes_live=writes_live,
     )
+
+
+def _forced(target: str, *, backup: bool = False) -> ZoneIntent:
+    return ZoneIntent(target=Decimal(target), backup=backup, learns=False)
 
 
 def _follow(
@@ -246,18 +251,128 @@ def test_live_air_zone_drives_air_actuation(f_live_zone: ZoneSettings) -> None:
 
 
 @pytest.mark.parametrize(
-    ('guarded', 'target'),
-    [(True, COMFORT), (False, ThermostatTarget(power=True, setpoint=Decimal('22.0')))],
-    ids=['guard_raises_night_to_comfort', 'unguarded_keeps_night'],
+    ('intent', 'target'),
+    [
+        (ZoneIntent(target=None, backup=True, learns=True), COMFORT),
+        (NO_INTENT, ThermostatTarget(power=True, setpoint=Decimal('22.0'))),
+    ],
+    ids=['backup_heat_raises_night_to_comfort', 'without_backup_heat_night_stays'],
 )
-def test_guard_raises_guarded_zone_to_its_comfort_floor_setpoint(
+def test_backup_heat_raises_its_zone_to_its_comfort_floor_setpoint(
     f_floor_zone: ZoneSettings,
-    guarded: bool,
+    intent: ZoneIntent,
     target: ThermostatTarget,
 ) -> None:
-    decision = decide_zone(f_floor_zone, ZoneMemory(), _conditions(None, guarded=guarded), _cycle(NIGHT))
+    decision = decide_zone(f_floor_zone, ZoneMemory(), _conditions(None, intent=intent), _cycle(NIGHT))
 
     assert decision.target == target
+
+
+@pytest.mark.parametrize(
+    ('intent', 'target'),
+    [
+        (_forced('21.0', backup=True), COMFORT),
+        (_forced('21.0'), ThermostatTarget(power=True, setpoint=Decimal('22.0'))),
+    ],
+    ids=['backup_heat_raises_it_back_to_comfort', 'without_backup_heat_it_stays_at_night'],
+)
+def test_backup_raises_a_floor_an_override_stepped_down(
+    f_floor_zone: ZoneSettings,
+    intent: ZoneIntent,
+    target: ThermostatTarget,
+) -> None:
+    decision = decide_zone(f_floor_zone, ZoneMemory(), _conditions(None, intent=intent), _cycle(MORNING))
+
+    assert (decision.mode, decision.target) == (ScheduleMode.NIGHT, target)
+
+
+@pytest.mark.parametrize(
+    ('air', 'forced', 'expected'),
+    [
+        ('21.9', '23.0', (ScheduleMode.COMFORT, Decimal('23.0'), AirState.HEAT, HEAT)),
+        ('19.4', '19.0', (ScheduleMode.NIGHT, Decimal('19.0'), AirState.IDLE, IDLE)),
+    ],
+    ids=['above_the_schedule_heats_in_comfort', 'below_the_night_target_idles_at_night'],
+)
+def test_forced_target_drives_air_mode_and_its_mode(
+    f_live_zone: ZoneSettings,
+    air: str,
+    forced: str,
+    expected: tuple[ScheduleMode, Decimal, AirState, ThermostatTarget],
+) -> None:
+    decision = decide_zone(f_live_zone, ZoneMemory(), _conditions(air, intent=_forced(forced)), _cycle(MORNING))
+
+    plan = decision.plan
+    assert (
+        decision.path,
+        (decision.mode, None if plan is None else plan.target, None if plan is None else plan.state, decision.target),
+    ) == (ControlPath.AIR, expected)
+
+
+def test_forced_target_reaches_air_mode_in_dry_run_while_floor_mode_drives_the_thermostat(
+    f_zone: ZoneSettings,
+) -> None:
+    decision = decide_zone(f_zone, ZoneMemory(), _conditions('21.9', intent=_forced('23.0')), _cycle(MORNING))
+
+    plan = decision.plan
+    assert (
+        decision.path,
+        decision.mode,
+        decision.target,
+        None if plan is None else (plan.target, plan.state, plan.thermostat),
+    ) == (ControlPath.AIR_DRY_RUN, ScheduleMode.COMFORT, BOOST, (Decimal('23.0'), AirState.HEAT, HEAT))
+
+
+def test_forced_target_withholds_the_morning_a_preheat_would_start(f_zone: ZoneSettings) -> None:
+    memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.NIGHT)
+
+    follow_up = _follow(
+        f_zone,
+        memory,
+        _conditions('20.0', intent=_forced('22.0')),
+        _cycle(FIXED_START),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.memory.mode, follow_up.memory.morning) == (ScheduleMode.PREHEAT, None)
+
+
+def test_forced_target_drops_a_morning_in_progress(f_zone: ZoneSettings, f_morning: Morning) -> None:
+    memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.PREHEAT, morning=f_morning)
+
+    follow_up = _follow(
+        f_zone,
+        memory,
+        _conditions('20.4', intent=_forced('22.0')),
+        _cycle(FIXED_START + timedelta(hours=1)),
+        ZoneCycleOutcome.UNCHANGED,
+    )
+
+    assert (follow_up.morning, follow_up.memory.morning) == (None, None)
+
+
+def test_forced_target_starts_no_early_stop_watch(f_live_zone: ZoneSettings, f_heating_memory: ZoneMemory) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_heating_memory,
+        _conditions('21.9', intent=_forced('22.0')),
+        _cycle(MORNING),
+        ZoneCycleOutcome.APPLIED,
+    )
+
+    assert (follow_up.memory.air_state, follow_up.memory.stop, follow_up.stop) == (AirState.IDLE, None, None)
+
+
+def test_forced_target_drops_an_early_stop_watch(f_live_zone: ZoneSettings, f_watched_memory: ZoneMemory) -> None:
+    follow_up = _follow(
+        f_live_zone,
+        f_watched_memory,
+        _conditions('21.9', intent=_forced('22.0')),
+        _cycle(MORNING + timedelta(minutes=30)),
+        ZoneCycleOutcome.UNCHANGED,
+    )
+
+    assert (follow_up.memory.stop, follow_up.stop) == (None, None)
 
 
 @pytest.mark.parametrize(

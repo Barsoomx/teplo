@@ -12,6 +12,7 @@ from apps.panel.views.api.v1.sensors import SensorsApiView
 from apps.panel.views.api.v1.zones import ZonesApiView
 from apps.panel.views.boost_zone import BoostZoneView
 from apps.panel.views.change_comfort_window import ChangeComfortWindowView
+from apps.panel.views.clear_room_override import ClearRoomOverrideView
 from apps.panel.views.climate_settings import ClimateSettingsView
 from apps.panel.views.copy_comfort_day import CopyComfortDayView
 from apps.panel.views.copy_comfort_week import CopyComfortWeekView
@@ -22,9 +23,11 @@ from apps.panel.views.journal_outage_cause import JournalOutageCauseView
 from apps.panel.views.load_settings import LoadSettingsView
 from apps.panel.views.loads_settings import LoadsSettingsView
 from apps.panel.views.mark_outage_cause import MarkOutageCauseView
+from apps.panel.views.override_room import OverrideRoomView
 from apps.panel.views.phases_partial import PhasesPartialView
 from apps.panel.views.room_settings import RoomSettingsView
 from apps.panel.views.schedule_page import SchedulePageView
+from apps.panel.views.set_guests import SetGuestsView
 from apps.panel.views.settings_page import SettingsPageView
 from apps.panel.views.zone_settings import ZoneSettingsView
 from apps.panel.views.zones_partial import ZonesPartialView
@@ -37,6 +40,9 @@ urlpatterns = [
     path('', DashboardView.as_view(), name='dashboard'),
     path('zones/', ZonesPartialView.as_view(), name='zones'),
     path('zones/<slug:slug>/boost/', BoostZoneView.as_view(), name='boost-zone'),
+    path('guests/', SetGuestsView.as_view(), name='set-guests'),
+    path('rooms/<slug:slug>/override/', OverrideRoomView.as_view(), name='override-room'),
+    path('rooms/<slug:slug>/override/clear/', ClearRoomOverrideView.as_view(), name='clear-room-override'),
     path('phases/', PhasesPartialView.as_view(), name='phases'),
     path('outages/<int:outage_id>/cause/', MarkOutageCauseView.as_view(), name='mark-outage-cause'),
     path('schedule/', SchedulePageView.as_view(), name='schedule'),

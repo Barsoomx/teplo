@@ -35,6 +35,7 @@ class RoomSettingsView(LoginRequiredMixin, View):
                         setback_target=data['setback_target'],
                         backup_below=data.get('backup_below'),
                         backup_hysteresis=data.get('backup_hysteresis'),
+                        guest_room=data['guest_room'],
                         now=timezone.now(),
                     ),
                 )

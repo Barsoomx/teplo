@@ -1,12 +1,23 @@
 {% load i18n panel_format %}<section class="room" aria-labelledby="room-{{ room.slug }}">
   <header class="room-head">
     <h3 class="room-name" id="room-{{ room.slug }}">{{ room.name }}</h3>
+    {% with intent=room.intent %}{% if intent.reason == 'override' or intent.reason == 'guests' %}
+    <p class="room-chips">{% with time=intent.until|time:'H:i' day=intent.until|day_word %}{% if intent.reason == 'override' %}<span class="chip intent">{% icon 'clock' %}{% blocktranslate with target=intent.target|floatformat:1 %}Manual {{ target }}° until {{ time }}{% endblocktranslate %}{% if day %} {{ day }}{% endif %}</span>{% else %}<span class="chip intent">{% icon 'moon' %}{% blocktranslate %}Guests until {{ time }}{% endblocktranslate %}{% if day %} {{ day }}{% endif %}</span>{% endif %}{% endwith %}</p>
+    {% endif %}{% endwith %}
     {% with comfort=room.comfort %}{% if comfort.backup_zone %}{% if comfort.backup_active %}
     <p class="room-chips"><span class="chip backup">{% icon 'flame' %}{% blocktranslate with zone=comfort.backup_zone_name %}Backup heat: {{ zone }}{% endblocktranslate %}</span>{% if overview.dry_run or not comfort.backup_live %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}</p>
     {% else %}
     <p class="room-note">{% blocktranslate with below=comfort.backup_below|floatformat:1 zone=comfort.backup_zone_name %}Backup heat below {{ below }}°: {{ zone }}{% endblocktranslate %}</p>
     {% endif %}{% endif %}{% endwith %}
   </header>
+  {% if room.adjustable and room.intent %}{% with intent=room.intent %}
+  <div class="room-target">
+    <button class="room-step" type="button" aria-label="{% translate 'Colder by 0.5°' %}" hx-post="{% url 'panel:override-room' room.slug %}" hx-vals='{"step": "down"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this"{% if not intent|steps_down %} disabled{% endif %}>−</button>
+    <p class="room-target-value">{% blocktranslate with target=intent.target|floatformat:1 %}Target {{ target }}°{% endblocktranslate %}</p>
+    <button class="room-step" type="button" aria-label="{% translate 'Warmer by 0.5°' %}" hx-post="{% url 'panel:override-room' room.slug %}" hx-vals='{"step": "up"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this"{% if not intent|steps_up %} disabled{% endif %}>+</button>
+    {% if intent.reason == 'override' %}<button class="button button-quiet" type="button" hx-post="{% url 'panel:clear-room-override' room.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% translate 'Back to the schedule' %}</button>{% endif %}
+  </div>
+  {% endwith %}{% endif %}
   {% if room.zones %}
   <div class="tiles">
     {% for zone in room.zones %}{% include 'panel/_zone_tile.html' with heading_level=4 %}{% endfor %}

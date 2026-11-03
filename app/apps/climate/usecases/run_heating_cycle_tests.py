@@ -41,6 +41,7 @@ from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
+from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.write_gate import ZoneWriteGate
 from apps.climate.stubs import ContendedLockStub, LoadGateStub, ZoneLearningStoreStub, ZoneStoreStub
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneUseCase
@@ -97,6 +98,7 @@ FIXED_START = datetime(2026, 10, 29, 3, 30, tzinfo=MOSCOW)
 OPTIMAL_START = datetime(2026, 10, 29, 3, 50, tzinfo=MOSCOW)
 CAPPED_START = COMFORT_AT - timedelta(hours=4)
 BOOST_END = MORNING + timedelta(hours=2)
+GUESTS_LEAVE = datetime(2026, 10, 29, 14, 0, tzinfo=MOSCOW)
 STEPPED_FORWARD = MORNING + timedelta(hours=2)
 FRESH = timedelta(0)
 MINUTE = timedelta(minutes=1)
@@ -378,7 +380,7 @@ def _use_case(
 ) -> RunHeatingCycleUseCase:
     return RunHeatingCycleUseCase(
         zones=ZoneRepository() if zones is None else zones,
-        rooms=RoomClimateRepository(),
+        intents=RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=book),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository() if learning is None else learning,
         store=store,
@@ -488,6 +490,29 @@ def _house_settings(*, backup_live: bool = False) -> RoomClimate:
         backup_zone=_backup_zone(),
         backup_live=backup_live,
     )
+
+
+def _open_space(**fields: object) -> RoomClimate:
+    climate = RoomClimateFactory.create(
+        room=RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая'),
+        **fields,
+    )
+    ComfortPeriodFactory.create_batch(7, zone=None, room_climate=climate, start=time(6, 30), end=time(23, 30))
+    return climate
+
+
+def _open_space_zone(climate: RoomClimate, **fields: object) -> Zone:
+    return ZoneFactory.create(
+        slug='living-room',
+        thermostat__slug=LIVING_ROOM,
+        live_control=True,
+        room=climate.room,
+        **fields,
+    )
+
+
+def _overridden_open_space(target: str, until: datetime) -> RoomClimate:
+    return _open_space(override_target=Decimal(target), override_until=until, override_source='panel')
 
 
 def _learned(zone: Zone, *, mornings: int = 3, rate: str = '0.800') -> ZoneLearning:
@@ -2048,6 +2073,178 @@ def test_two_rooms_keep_their_backup_heat_apart(
         [],
         (True, False),
     )
+
+
+@pytest.fixture
+def f_guests_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    guest_room, guests_until = request.param
+    _open_space_zone(_open_space(guest_room=guest_room), kind=ZoneKind.FLOOR)
+    ClimateSettingsFactory.create(guests_until=guests_until)
+    store.record_state(LIVING_ROOM, _state('22.0'))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
+def f_overridden_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    now, target, setpoint = request.param
+    _open_space_zone(_overridden_open_space(target, now + timedelta(hours=1)), kind=ZoneKind.FLOOR)
+    store.record_state(LIVING_ROOM, _state(setpoint))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
+def f_recently_written_overridden_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _open_space_zone(
+        _overridden_open_space('22.5', MORNING + timedelta(hours=1)),
+        kind=ZoneKind.FLOOR,
+        last_command_at=MORNING - timedelta(minutes=10),
+    )
+    store.record_state(LIVING_ROOM, _state('28.0'))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
+def f_expired_override_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _open_space_zone(_overridden_open_space('20.0', request.param), kind=ZoneKind.FLOOR)
+    store.record_state(LIVING_ROOM, _state('28.0'))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
+def f_overridden_air_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    climate = _open_space() if request.param is None else _overridden_open_space(request.param, MORNING + HALF_HOUR)
+    _open_space_zone(climate, air_sensor=_sensor('air-living-room'), air_control_live=True)
+    store.record_state(LIVING_ROOM, _state('18.0'))
+    temperatures.record_state('air-living-room', _reading('21.9'))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.mark.parametrize(
+    ('f_guests_cycle', 'outcome', 'commands'),
+    [
+        ((True, GUESTS_LEAVE), ZoneCycleOutcome.APPLIED, [('setpoint', Decimal('28.0'))]),
+        ((False, GUESTS_LEAVE), ZoneCycleOutcome.UNCHANGED, []),
+        ((True, NIGHT - MINUTE), ZoneCycleOutcome.UNCHANGED, []),
+        ((True, NIGHT + timedelta(days=4, minutes=1)), ZoneCycleOutcome.UNCHANGED, []),
+    ],
+    ids=['guest_room_at_comfort', 'other_room_at_night', 'guests_gone', 'guests_beyond_four_days_ignored'],
+    indirect=['f_guests_cycle'],
+)
+def test_guests_hold_a_guest_room_floor_at_comfort_through_the_night(
+    f_guests_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    outcome: ZoneCycleOutcome,
+    commands: list[tuple[str, Decimal]],
+) -> None:
+    output = f_guests_cycle.execute(_at(NIGHT))
+
+    assert (output.outcomes, f_living_room_thermostat.commands) == ({'living-room': outcome}, commands)
+
+
+@pytest.mark.parametrize(
+    ('f_overridden_cycle', 'now', 'commands'),
+    [
+        ((NIGHT, '20.0', '22.0'), NIGHT, [('setpoint', Decimal('28.0'))]),
+        ((MORNING, '22.5', '28.0'), MORNING, [('setpoint', Decimal('30.0'))]),
+        ((MORNING, '21.5', '28.0'), MORNING, [('setpoint', Decimal('22.0'))]),
+        ((MORNING, '22.0', '28.0'), MORNING, []),
+    ],
+    ids=['night_up_to_comfort', 'comfort_up_to_boost', 'comfort_down_to_night', 'equal_keeps_comfort'],
+    indirect=['f_overridden_cycle'],
+)
+def test_override_above_the_schedule_raises_the_floor_one_setpoint_and_below_lowers_it(
+    f_overridden_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    now: datetime,
+    commands: list[tuple[str, Decimal]],
+) -> None:
+    f_overridden_cycle.execute(_at(now))
+
+    assert f_living_room_thermostat.commands == commands
+
+
+def test_override_reaches_the_floor_at_its_next_allowed_write_only(
+    f_recently_written_overridden_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    held = f_recently_written_overridden_cycle.execute(_at(MORNING))
+    written = f_recently_written_overridden_cycle.execute(_at(MORNING + timedelta(minutes=20)))
+
+    assert (held.outcomes, written.outcomes, f_living_room_thermostat.commands, f_events) == (
+        {'living-room': ZoneCycleOutcome.THROTTLED},
+        {'living-room': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('30.0'))],
+        [_issued('living-room', '30.0', MORNING + timedelta(minutes=20))],
+    )
+
+
+@pytest.mark.parametrize(
+    'f_expired_override_cycle',
+    [NIGHT - MINUTE, NIGHT + timedelta(hours=2, minutes=1)],
+    ids=['override_over', 'override_ending_beyond_two_hours_after_the_clock_moved_back'],
+    indirect=True,
+)
+def test_expired_override_returns_the_floor_to_its_schedule(
+    f_expired_override_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_expired_override_cycle.execute(_at(NIGHT))
+
+    assert (output.outcomes, f_living_room_thermostat.commands) == (
+        {'living-room': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('22.0'))],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_overridden_air_cycle', 'commands'),
+    [('23.0', [('setpoint', Decimal('30.0'))]), (None, [])],
+    ids=['override_above_the_air_heats', 'schedule_holds_idle'],
+    indirect=['f_overridden_air_cycle'],
+)
+def test_live_air_zone_heats_to_an_override_target(
+    f_overridden_air_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+    commands: list[tuple[str, Decimal]],
+) -> None:
+    f_overridden_air_cycle.execute(_at(MORNING))
+
+    assert f_living_room_thermostat.commands == commands
 
 
 def test_floor_mode_preheat_teaches_air_zone_its_morning(f_morning_cycle: RunHeatingCycleUseCase) -> None:

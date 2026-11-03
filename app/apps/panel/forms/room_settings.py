@@ -15,6 +15,7 @@ class RoomSettingsForm(forms.Form):
     setback_target = setpoint_field()
     backup_below = setpoint_field()
     backup_hysteresis = offset_field()
+    guest_room = forms.BooleanField(required=False)
 
     @classmethod
     def for_room(cls, record: RoomClimateConfigRecord, data: QueryDict | None = None) -> 'RoomSettingsForm':

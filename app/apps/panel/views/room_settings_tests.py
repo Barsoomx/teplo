@@ -30,6 +30,7 @@ BEDROOM_EDIT = UpdateRoomClimateInputDTO(
     setback_target=Decimal('19.5'),
     backup_below=Decimal('19.0'),
     backup_hysteresis=Decimal('0.30'),
+    guest_room=False,
     now=NOW,
 )
 RAISED = SettingChange(target='room', subject='bedroom', name='Спальня', field='comfort_target', old='20.5', new='21.0')
@@ -90,6 +91,27 @@ def test_saved_room_settings_go_to_the_use_case_and_the_card_says_when_they_take
         '<html' in content,
         m_settings_use_case.init.call_count,
     ) == (200, BEDROOM_EDIT, True, True, False, 2)
+
+
+@pytest.mark.parametrize(
+    ('posted', 'guest_room'),
+    [({'guest_room': 'on'}, True), ({}, False)],
+    ids=['ticked', 'unticked'],
+)
+def test_guest_room_checkbox_reaches_the_use_case(
+    f_client: Client,
+    m_settings_use_case: MagicMock,
+    m_update_use_case: MagicMock,
+    posted: dict[str, str],
+    guest_room: bool,
+) -> None:
+    f_client.post(URL, {**POSTED, **posted})
+
+    executed = m_update_use_case.init.return_value.execute.call_args.args[0]
+    assert (replace(executed, now=NOW), m_settings_use_case.init.call_count) == (
+        replace(BEDROOM_EDIT, guest_room=guest_room),
+        2,
+    )
 
 
 def test_room_settings_as_stored_say_nothing_changed(

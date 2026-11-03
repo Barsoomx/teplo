@@ -14,6 +14,16 @@
   {% else %}
   <li class="fact">{% icon 'zap' %}{% translate 'teplo controls the floors' %}</li>
   {% endif %}
+  {% if overview.guest_rooms %}
+  <li class="fact fact-guests">
+    {% if overview.guests_until %}
+    <span class="chip intent">{% icon 'moon' %}{% with time=overview.guests_until|time:'H:i' day=overview.guests_until|day_word %}{% blocktranslate %}Guests until {{ time }}{% endblocktranslate %}{% if day %} {{ day }}{% endif %}{% endwith %}</span>
+    <button class="button button-quiet" type="button" hx-post="{% url 'panel:set-guests' %}" hx-vals='{"nights": 0}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% translate 'Guests have left' %}</button>
+    {% else %}
+    {% with rooms=overview.guest_rooms|join:', ' %}<button class="button" type="button" title="{% blocktranslate %}Guest rooms: {{ rooms }}{% endblocktranslate %}" hx-post="{% url 'panel:set-guests' %}" hx-vals='{"nights": 1}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% icon 'moon' %}{% translate 'Guests' %}</button>{% endwith %}
+    {% endif %}
+  </li>
+  {% endif %}
   {% if overview.clock.trusted %}
   <li class="fact">{% icon 'clock' %}{% blocktranslate %}{{ house_time }}, clock synced{% endblocktranslate %}</li>
   {% else %}

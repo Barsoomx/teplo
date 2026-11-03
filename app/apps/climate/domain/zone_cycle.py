@@ -7,7 +7,7 @@ from apps.climate.domain.air_policy import resolve_control_path
 from apps.climate.domain.backup_heat import apply_backup_heat
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.events import AirControlDryRun, OptimalStartDryRun
-from apps.climate.domain.floor_policy import ThermostatTarget, decide_floor_target
+from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import Morning, ZoneLearningRecord
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import FOLLOWED, AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
@@ -22,9 +22,9 @@ from apps.climate.domain.observation import (
     observe_stop,
     start_stop_watch,
 )
-from apps.climate.domain.schedule import resolve_mode
 from apps.climate.domain.write_guard import write_allowed
 from apps.climate.domain.zone import ZoneSettings
+from apps.climate.domain.zone_intent import ZoneIntent, decide_floor_mode, forced_air_mode
 
 MINUTE = timedelta(minutes=1)
 
@@ -41,7 +41,7 @@ class CycleConditions:
 class ZoneConditions:
     air: Decimal | None
     learning: ZoneLearningRecord
-    guarded: bool
+    intent: ZoneIntent
     writes_live: bool
 
 
@@ -70,12 +70,14 @@ def decide_zone(
 ) -> ZoneDecision:
     path = resolve_control_path(zone, air_available=conditions.air is not None)
     plan = None if conditions.air is None else _plan(zone, memory, path, conditions.air, conditions, cycle)
+    forced = conditions.intent.target
     if plan is not None and path is ControlPath.AIR:
-        mode, target = plan.mode, plan.thermostat
+        mode = plan.mode if forced is None else forced_air_mode(zone, forced)
+        target = plan.thermostat
     else:
-        mode = resolve_mode(zone.windows, cycle.now, zone.preheat_lead)
-        target = decide_floor_target(zone, mode, cycle.now, clock_trusted=cycle.clock_trusted)
-    return ZoneDecision(path=path, plan=plan, mode=mode, target=_guarded(zone, target, conditions))
+        floor = decide_floor_mode(zone, forced, cycle.now, clock_trusted=cycle.clock_trusted)
+        mode, target = floor.mode, floor.target
+    return ZoneDecision(path=path, plan=plan, mode=mode, target=_backed_up(zone, target, conditions))
 
 
 def follow_zone(
@@ -195,11 +197,12 @@ def _plan(
         now=cycle.now,
         clock_trusted=cycle.clock_trusted,
         dry_run=path is ControlPath.AIR_DRY_RUN,
+        forced_target=conditions.intent.target,
     )
 
 
-def _guarded(zone: ZoneSettings, target: ThermostatTarget, conditions: ZoneConditions) -> ThermostatTarget:
-    return apply_backup_heat(target, zone.setpoints) if conditions.guarded else target
+def _backed_up(zone: ZoneSettings, target: ThermostatTarget, conditions: ZoneConditions) -> ThermostatTarget:
+    return apply_backup_heat(target, zone.setpoints) if conditions.intent.backup else target
 
 
 def _follow_air(
@@ -220,7 +223,12 @@ def _follow_air(
         watch = start_stop_watch(
             current,
             state,
-            applied=outcome is ZoneCycleOutcome.APPLIED and cycle.clock_trusted and decision.target == idle,
+            applied=(
+                outcome is ZoneCycleOutcome.APPLIED
+                and cycle.clock_trusted
+                and decision.target == idle
+                and conditions.intent.learns
+            ),
             heat_target=heat_target,
             target=plan.target,
             offset=plan.early_stop_offset,
@@ -234,7 +242,7 @@ def _follow_air(
             StopReading(
                 at=cycle.now,
                 air=plan.air,
-                watching=conditions.writes_live and cycle.clock_trusted and not zone.is_boosted(cycle.now),
+                watching=_learns(zone, conditions, cycle),
                 heating=state is AirState.HEAT,
             ),
         )
@@ -260,7 +268,7 @@ def _follow_air_dry_run(
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
     follow_up = replace(follow_up, optimal_start=_optimal_start(zone, memory, plan, cycle.now))
-    target = _guarded(zone, plan.thermostat, conditions)
+    target = _backed_up(zone, plan.thermostat, conditions)
     if outcome is ZoneCycleOutcome.DEVICE_UNAVAILABLE:
         return hold_air_dry_run(follow_up, memory)
 
@@ -325,11 +333,15 @@ def _morning_reading(
         target=zone.air_targets.comfort,
         air=conditions.air,
         outdoor=cycle.outdoor,
-        heating=(
-            conditions.writes_live and zone.heating_enabled and cycle.clock_trusted and not zone.is_boosted(cycle.now)
-        ),
+        heating=zone.heating_enabled and _learns(zone, conditions, cycle),
         outcome=outcome,
         air_state=_followed_air_state(memory, decision, outcome),
+    )
+
+
+def _learns(zone: ZoneSettings, conditions: ZoneConditions, cycle: CycleConditions) -> bool:
+    return (
+        conditions.writes_live and conditions.intent.learns and cycle.clock_trusted and not zone.is_boosted(cycle.now)
     )
 
 

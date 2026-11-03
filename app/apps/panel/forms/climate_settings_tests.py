@@ -15,6 +15,7 @@ POSTED = {
     'air_min_band': '0.15',
     'learned_mornings_needed': '5',
     'preheat_lead_cap_minutes': '210',
+    'guests_end_hour': '12',
 }
 STORED = ClimateConfigRecord(
     id=None,
@@ -24,6 +25,7 @@ STORED = ClimateConfigRecord(
         air_min_band=Decimal('0.20'),
         learned_mornings_needed=3,
         preheat_lead_cap_minutes=240,
+        guests_end_hour=14,
     ),
 )
 
@@ -45,6 +47,7 @@ def test_climate_settings_form_reads_every_setting() -> None:
             'air_min_band': Decimal('0.15'),
             'learned_mornings_needed': 5,
             'preheat_lead_cap_minutes': 210,
+            'guests_end_hour': 12,
         },
     )
 
@@ -59,6 +62,9 @@ def test_climate_settings_form_reads_every_setting() -> None:
         ('air_min_band', '1.01'),
         ('learned_mornings_needed', '0'),
         ('preheat_lead_cap_minutes', '481'),
+        ('guests_end_hour', '24'),
+        ('guests_end_hour', '-1'),
+        ('guests_end_hour', '13.5'),
     ],
 )
 def test_climate_setting_out_of_its_range_is_refused_at_its_field(field: str, value: str) -> None:
@@ -117,4 +123,6 @@ def test_unbound_form_shows_the_stored_settings_and_no_backup_heat() -> None:
         form['learned_mornings_needed'].value(),
         form['air_start_offset'].auto_id,
         [field for field in form.fields if 'guard' in field],
-    ) == (Decimal('0.30'), Decimal('0.20'), 3, 'climate-air_start_offset', [])
+        form['guests_end_hour'].value(),
+        'guests_until' in form.fields,
+    ) == (Decimal('0.30'), Decimal('0.20'), 3, 'climate-air_start_offset', [], 14, False)

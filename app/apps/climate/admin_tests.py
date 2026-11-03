@@ -36,6 +36,7 @@ CLIMATE_POSTED = {
     'air_min_band': '0.20',
     'preheat_lead_cap_minutes': '240',
     'learned_mornings_needed': '3',
+    'guests_end_hour': '14',
 }
 BEDROOM_POSTED = {
     'comfort_target': '20.5',
@@ -378,6 +379,19 @@ def test_climate_settings_page_leaves_out_the_second_floor_guard_fields(
     )
 
 
+def test_climate_settings_page_shows_the_guests_end_without_posting_it_back(
+    f_climate_settings_admin: ClimateSettingsAdmin,
+    f_request: HttpRequest,
+) -> None:
+    form = f_climate_settings_admin.get_form(f_request)
+
+    assert (
+        f_climate_settings_admin.get_readonly_fields(f_request),
+        'guests_until' in form.base_fields,
+        'guests_end_hour' in form.base_fields,
+    ) == (('guests_until',), False, True)
+
+
 def test_room_climate_admin_changes_the_rows_the_site_data_created_without_adding_or_deleting_any(
     f_room_climate_admin: RoomClimateAdmin,
     f_request: HttpRequest,
@@ -388,7 +402,20 @@ def test_room_climate_admin_changes_the_rows_the_site_data_created_without_addin
         f_room_climate_admin.has_change_permission(f_request, f_bedroom_climate),
         f_room_climate_admin.has_delete_permission(f_request, f_bedroom_climate),
         f_room_climate_admin.get_readonly_fields(f_request, f_bedroom_climate),
-    ) == (False, True, False, ('room',))
+    ) == (False, True, False, ('room', 'override_target', 'override_until', 'override_source'))
+
+
+def test_room_climate_page_shows_the_override_without_posting_it_back_and_edits_the_guest_room(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+    f_bedroom_climate: RoomClimate,
+) -> None:
+    form = f_room_climate_admin.get_form(f_request, f_bedroom_climate, change=True)
+
+    assert (
+        {'override_target', 'override_until', 'override_source'} & set(form.base_fields),
+        'guest_room' in form.base_fields,
+    ) == (set(), True)
 
 
 @pytest.mark.parametrize(

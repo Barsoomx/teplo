@@ -26,6 +26,7 @@ POSTED = {
     'air_min_band': '0.20',
     'learned_mornings_needed': '5',
     'preheat_lead_cap_minutes': '210',
+    'guests_end_hour': '12',
 }
 DEAD_GUARD = {
     'second_floor_guard_threshold': '18.5',
@@ -110,6 +111,7 @@ def test_saved_climate_settings_go_to_the_use_case_without_the_old_second_floor_
             air_min_band=Decimal('0.20'),
             learned_mornings_needed=5,
             preheat_lead_cap_minutes=210,
+            guests_end_hour=12,
             now=NOW,
         ),
         [],
@@ -151,6 +153,24 @@ def test_climate_setting_out_of_range_is_refused_before_the_use_case(
         m_update_use_case.init.call_count,
         m_settings_use_case.init.call_count,
     ) == (200, True, 0, 1)
+
+
+@pytest.mark.parametrize('hour', ['24', '-1', ''], ids=['past_the_day', 'before_midnight', 'missing'])
+def test_guests_end_hour_outside_the_day_is_refused_before_the_use_case(
+    f_russian_client: Client,
+    m_settings_use_case: MagicMock,
+    m_update_use_case: MagicMock,
+    hour: str,
+) -> None:
+    response = f_russian_client.post('/settings/climate/', {**POSTED, 'guests_end_hour': hour})
+
+    assert (
+        response.status_code,
+        list(response.context['climate_form'].errors),
+        'id="climate-guests_end_hour"' in response.content.decode(),
+        m_update_use_case.init.call_count,
+        m_settings_use_case.init.call_count,
+    ) == (200, ['guests_end_hour'], True, 0, 1)
 
 
 def test_start_offset_below_the_min_band_is_refused_at_its_field_before_the_use_case(

@@ -8,12 +8,16 @@ from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.events import (
     AirControlDryRun,
     BackupHeatDryRun,
+    GuestsCleared,
+    GuestsSet,
     OptimalStartDryRun,
+    RoomOverridden,
+    RoomOverrideCleared,
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
 )
-from apps.climate.domain.modes import AirState, ScheduleMode
+from apps.climate.domain.modes import AirState, CommandSource, ScheduleMode
 from apps.core.domain.events import DomainEvent
 from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.kinds import DeviceKind
@@ -46,6 +50,8 @@ from apps.telemetry.event_handlers import (
     journal_device_availability,
     journal_ev_charging_started,
     journal_ev_charging_stopped,
+    journal_guests_cleared,
+    journal_guests_set,
     journal_load_command_failure,
     journal_load_phase_learned,
     journal_load_restored,
@@ -56,6 +62,8 @@ from apps.telemetry.event_handlers import (
     journal_optimal_start_dry_run,
     journal_phase_calm,
     journal_phase_overload,
+    journal_room_overridden,
+    journal_room_override_cleared,
     journal_start_would_wait_dry_run,
     journal_zone_boost,
     journal_zone_command,
@@ -521,6 +529,70 @@ def test_cleared_alert_is_journaled() -> None:
     ],
 )
 def test_guard_decision_is_journaled_at_once_with_its_raw_values(
+    handler: Callable[..., None],
+    event: DomainEvent,
+    expected: tuple[str, str, object, datetime],
+) -> None:
+    handler(event)
+
+    assert _entry() == expected
+
+
+@pytest.mark.parametrize(
+    ('handler', 'event', 'expected'),
+    [
+        (
+            journal_guests_set,
+            GuestsSet(until=NOW + timedelta(hours=8), nights=1, source=CommandSource.PANEL, occurred_at=NOW),
+            ('guests_set', '', {'until': '2026-10-29T14:00:00Z', 'nights': 1, 'source': 'panel'}, NOW),
+        ),
+        (
+            journal_guests_cleared,
+            GuestsCleared(source=CommandSource.TELEGRAM, occurred_at=NOW),
+            ('guests_cleared', '', {'source': 'telegram'}, NOW),
+        ),
+        (
+            journal_room_overridden,
+            RoomOverridden(
+                room='open-space',
+                name='Гостиная, кухня и прихожая',
+                target=Decimal('22.5'),
+                until=NOW + timedelta(hours=2),
+                source=CommandSource.PANEL,
+                occurred_at=NOW,
+            ),
+            (
+                'room_overridden',
+                'open-space',
+                {
+                    'room': 'open-space',
+                    'name': 'Гостиная, кухня и прихожая',
+                    'target': '22.5',
+                    'until': '2026-10-29T08:00:00Z',
+                    'source': 'panel',
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_room_override_cleared,
+            RoomOverrideCleared(
+                room='open-space',
+                name='Гостиная, кухня и прихожая',
+                source=CommandSource.PANEL,
+                occurred_at=NOW,
+            ),
+            (
+                'room_override_cleared',
+                'open-space',
+                {'room': 'open-space', 'name': 'Гостиная, кухня и прихожая', 'source': 'panel'},
+                NOW,
+            ),
+        ),
+    ],
+    ids=['guests_set', 'guests_cleared', 'room_overridden', 'room_override_cleared'],
+)
+def test_owner_intents_are_journaled_with_their_room_as_the_subject(
     handler: Callable[..., None],
     event: DomainEvent,
     expected: tuple[str, str, object, datetime],

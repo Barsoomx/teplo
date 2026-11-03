@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -7,17 +7,20 @@ from enum import StrEnum
 from django.conf import settings
 from django.utils import timezone
 
+from apps.climate.domain.drive import PendingWrite, pending_write
 from apps.climate.domain.learning import ZoneLearningRecord
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.room_climate import RoomClimateSettings
+from apps.climate.domain.room_intent import RoomIntent, RoomIntents, guests_active
 from apps.climate.domain.schedule import ScheduleTransition, next_transition
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import CycleConditions, ZoneConditions, ZoneDecision, decide_zone
+from apps.climate.domain.zone_intent import ZoneIntent
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
-from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook, control_book
+from apps.climate.services.room_intents import RoomIntentReader
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
@@ -98,6 +101,7 @@ class ZoneOverview:
     next_change: ScheduleTransition | None
     air: SensorOverview | None
     room: str | None = None
+    pending: PendingWrite | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -156,6 +160,9 @@ class RoomOverview:
     plugs: tuple[PlugOverview, ...]
     devices: tuple[str, ...]
     comfort: RoomComfortOverview | None = None
+    intent: RoomIntent | None = None
+    adjustable: bool = False
+    guest_room: bool = False
 
     @property
     def shown(self) -> bool:
@@ -187,13 +194,15 @@ class GetPanelOverviewOutputDTO:
     outages: tuple[OutageRecord, ...]
     clock: ClockStatus
     dry_run: bool
+    guests_until: datetime | None = None
+    guest_rooms: tuple[str, ...] = ()
 
 
 class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOverviewOutputDTO]):
     def __init__(
         self,
         zones: ZoneRepository,
-        rooms: RoomClimateRepository,
+        intents: RoomIntentReader,
         devices: DeviceRepository,
         house: HouseRepository,
         climate_settings: ClimateSettingsRepository,
@@ -212,7 +221,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
     ) -> None:
         super().__init__()
         self._zones = zones
-        self._rooms = rooms
+        self._intents = intents
         self._devices = devices
         self._house = house
         self._climate_settings = climate_settings
@@ -233,7 +242,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
     def init(cls) -> 'GetPanelOverviewUseCase':
         return cls(
             zones=ZoneRepository(),
-            rooms=RoomClimateRepository(),
+            intents=RoomIntentReader.init(),
             devices=DeviceRepository(),
             house=HouseRepository(),
             climate_settings=ClimateSettingsRepository(),
@@ -257,7 +266,8 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         control = self._climate_settings.control()
         learning = self._learning.all_records()
         zones = sorted(self._zones.all_settings(), key=lambda zone: zone.name)
-        rooms = self._rooms.all_settings()
+        intents = self._intents.read(now, clock_trusted=clock.trusted)
+        guests = self._climate_settings.guests()
         devices = sorted(self._devices.all_settings(), key=lambda device: device.name)
         sensors = {
             device.slug: self._sensor(device) for device in devices if device.kind == DeviceKind.TEMPERATURE_SENSOR
@@ -265,21 +275,30 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         outdoor_slug = control.sensors.outdoor_slug
         outdoor = None if outdoor_slug is None else sensors.get(outdoor_slug)
         cycle = CycleConditions(now=now, clock_trusted=clock.trusted, control=control, outdoor=_temperature(outdoor))
-        backed_up = self._backed_up(rooms)
+        backed_up = self._intents.backed_up(intents)
+        held = self._guard_book.held_zones()
         zone_overviews = tuple(
             self._zone(
                 zone,
                 _air_sensor(zone, sensors),
                 learning.get(zone.slug, ZoneLearningRecord.unlearned()),
                 cycle,
-                guarded=zone.slug in backed_up,
+                intent=intents.zone_intent(zone, backed_up=backed_up),
+                held=zone.slug in held,
             )
             for zone in zones
         )
         plugs = tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG)
         zone_air = {zone.air_sensor_slug for zone in zones}
         room_sensors = tuple(sensor for slug, sensor in sensors.items() if slug not in zone_air)
-        floors = self._floors(zone_overviews, room_sensors, plugs, devices, self._comforts(rooms, zones))
+        floors = self._floors(
+            zone_overviews,
+            room_sensors,
+            plugs,
+            devices,
+            intents,
+            self._comforts(intents.rooms, zones),
+        )
         placed = frozenset(room.slug for floor in floors for room in floor.rooms)
         return GetPanelOverviewOutputDTO(
             zones=zone_overviews,
@@ -296,6 +315,8 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             outages=tuple(self._overloads.noted(outage) for outage in self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
+            guests_until=guests.until if guests_active(guests.until, now) else None,
+            guest_rooms=tuple(room.name for room in intents.rooms if room.guest_room),
         )
 
     def _floors(
@@ -304,27 +325,31 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         sensors: tuple[SensorOverview, ...],
         plugs: tuple[PlugOverview, ...],
         devices: list[DeviceSettings],
+        intents: RoomIntents,
         comforts: dict[str, RoomComfortOverview],
     ) -> tuple[FloorOverview, ...]:
+        climates = {room.slug: room for room in intents.rooms}
         return tuple(
             FloorOverview(
                 slug=floor.slug,
                 name=floor.name,
                 rooms=tuple(
-                    _room(room, zones, sensors, plugs, devices, comforts.get(room.slug)) for room in floor.rooms
+                    _with_climate(
+                        _room(room, zones, sensors, plugs, devices, comforts.get(room.slug)),
+                        climates.get(room.slug),
+                        intents.of(room.slug),
+                    )
+                    for room in floor.rooms
                 ),
             )
             for floor in self._house.floors()
         )
 
-    def _backed_up(self, rooms: list[RoomClimateSettings]) -> frozenset[str]:
-        return frozenset(
-            room.backup.zone_slug
-            for room in rooms
-            if room.backup.zone_slug is not None and room.backup.live and self._book.backup_active(room.slug)
-        )
-
-    def _comforts(self, rooms: list[RoomClimateSettings], zones: list[ZoneSettings]) -> dict[str, RoomComfortOverview]:
+    def _comforts(
+        self,
+        rooms: tuple[RoomClimateSettings, ...],
+        zones: list[ZoneSettings],
+    ) -> dict[str, RoomComfortOverview]:
         names = {zone.slug: zone.name for zone in zones}
         return {
             room.slug: RoomComfortOverview(
@@ -347,18 +372,16 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         learning: ZoneLearningRecord,
         cycle: CycleConditions,
         *,
-        guarded: bool,
+        intent: ZoneIntent,
+        held: bool,
     ) -> ZoneOverview:
         snapshot = self._thermostat_store.snapshot(zone.thermostat_slug)
-        conditions = ZoneConditions(
-            air=_temperature(air),
-            learning=learning,
-            guarded=guarded,
-            writes_live=zone.live_control and not self._dry_run,
-        )
+        writes_live = zone.live_control and not self._dry_run
+        conditions = ZoneConditions(air=_temperature(air), learning=learning, intent=intent, writes_live=writes_live)
         decision = decide_zone(zone, self._book.zone(zone.slug), conditions, cycle)
+        forced = intent.target is not None
         boosted = zone.is_boosted(cycle.now)
-        regime = _regime(zone, decision.mode, boosted=boosted, clock_trusted=cycle.clock_trusted)
+        regime = _regime(zone, decision.mode, boosted=boosted, clock_trusted=cycle.clock_trusted, forced=forced)
         lead = _schedule_lead(zone, decision)
         state = snapshot.state
         return ZoneOverview(
@@ -382,10 +405,20 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             lead=lead if regime is ZoneRegime.PREHEAT else None,
             boost_until=zone.boost_until if boosted else None,
             next_change=(
-                next_transition(zone.windows, cycle.now, lead) if cycle.clock_trusted and zone.heating_enabled else None
+                next_transition(zone.windows, cycle.now, lead)
+                if cycle.clock_trusted and zone.heating_enabled and not forced
+                else None
             ),
             air=air,
             room=zone.room_slug,
+            pending=pending_write(
+                decision.target,
+                state if snapshot.available else None,
+                last_write_at=zone.last_command_at,
+                now=cycle.now,
+                held=held,
+                writes_live=writes_live,
+            ),
         )
 
     def _load_overviews(self, live_zones: frozenset[str]) -> tuple[LoadOverview, ...]:
@@ -499,6 +532,13 @@ def _room(
     )
 
 
+def _with_climate(room: RoomOverview, climate: RoomClimateSettings | None, intent: RoomIntent | None) -> RoomOverview:
+    if climate is None:
+        return room
+
+    return replace(room, intent=intent, adjustable=climate.adjustable, guest_room=climate.guest_room)
+
+
 def _air_sensor(zone: ZoneSettings, sensors: dict[str, SensorOverview]) -> SensorOverview | None:
     if zone.air_sensor_slug is None:
         return None
@@ -520,14 +560,21 @@ def _schedule_lead(zone: ZoneSettings, decision: ZoneDecision) -> timedelta:
     return decision.plan.schedule_lead
 
 
-def _regime(zone: ZoneSettings, mode: ScheduleMode, *, boosted: bool, clock_trusted: bool) -> ZoneRegime:
+def _regime(
+    zone: ZoneSettings,
+    mode: ScheduleMode,
+    *,
+    boosted: bool,
+    clock_trusted: bool,
+    forced: bool,
+) -> ZoneRegime:
     if not zone.heating_enabled:
         return ZoneRegime.OFF
 
     if boosted:
         return ZoneRegime.BOOST
 
-    if not clock_trusted:
+    if not clock_trusted and not forced:
         return ZoneRegime.COMFORT
 
     return ZoneRegime(mode.value)

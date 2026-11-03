@@ -24,7 +24,7 @@ from apps.climate.domain.learning import (
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.climate.domain.observation import StopWatch
-from apps.climate.domain.ports import LoadGate, RoomClimateStore, WriteGate, ZoneLearningStore, ZoneStore
+from apps.climate.domain.ports import LoadGate, WriteGate, ZoneLearningStore, ZoneStore
 from apps.climate.domain.room_climate import RoomClimateSettings
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import (
@@ -37,11 +37,12 @@ from apps.climate.domain.zone_cycle import (
     follow_zone,
     hold_air_dry_run,
 )
+from apps.climate.domain.zone_intent import ZoneIntent
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
-from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook, control_book
+from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.write_gate import zone_write_gate
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
@@ -84,7 +85,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     def __init__(
         self,
         zones: ZoneStore,
-        rooms: RoomClimateStore,
+        intents: RoomIntentReader,
         climate_settings: ClimateSettingsRepository,
         learning: ZoneLearningStore,
         store: ThermostatStateStore,
@@ -98,7 +99,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     ) -> None:
         super().__init__(dispatcher=dispatcher)
         self._zones = zones
-        self._rooms = rooms
+        self._intents = intents
         self._climate_settings = climate_settings
         self._learning = learning
         self._store = store
@@ -113,7 +114,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
     def init(cls) -> 'RunHeatingCycleUseCase':
         return cls(
             zones=ZoneRepository(),
-            rooms=RoomClimateRepository(),
+            intents=RoomIntentReader.init(),
             climate_settings=ClimateSettingsRepository(),
             learning=ZoneLearningRepository(),
             store=thermostat_state_store,
@@ -130,8 +131,9 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         control = self._climate_settings.control()
         zones = self._zones.all_settings()
         learning = self._learning.all_records()
-        rooms = self._rooms.all_settings()
-        backed_up = self._run_backup(rooms, zones, now)
+        intents = self._intents.read(now, clock_trusted=input_dto.clock_trusted)
+        backed_up = self._run_backup(intents.rooms, zones, now)
+        zone_intents = {zone.slug: intents.zone_intent(zone, backed_up=backed_up) for zone in zones}
         cycle = CycleConditions(
             now=now,
             clock_trusted=input_dto.clock_trusted,
@@ -142,7 +144,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         runs = [
             self._plan(
                 zone,
-                self._conditions(zone, learning, backed_up),
+                self._conditions(zone, learning, zone_intents[zone.slug]),
                 cycle,
                 held=zone.slug in held,
                 read_at=input_dto.monotonic,
@@ -154,7 +156,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             outcomes={
                 zone.slug: self._run_zone(
                     zone,
-                    self._conditions(zone, learning, backed_up),
+                    self._conditions(zone, learning, zone_intents[zone.slug]),
                     cycle,
                     permits,
                     read_at=input_dto.monotonic,
@@ -167,18 +169,18 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         self,
         zone: ZoneSettings,
         learning: dict[str, ZoneLearningRecord],
-        backed_up: frozenset[str],
+        intent: ZoneIntent,
     ) -> ZoneConditions:
         return ZoneConditions(
             air=self._temperature(zone.air_sensor_slug),
             learning=learning.get(zone.slug, ZoneLearningRecord.unlearned()),
-            guarded=zone.slug in backed_up,
+            intent=intent,
             writes_live=zone.live_control and not self._dry_run,
         )
 
     def _run_backup(
         self,
-        rooms: list[RoomClimateSettings],
+        rooms: tuple[RoomClimateSettings, ...],
         zones: list[ZoneSettings],
         now: datetime,
     ) -> frozenset[str]:

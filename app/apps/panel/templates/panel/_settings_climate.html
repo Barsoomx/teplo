@@ -16,6 +16,9 @@
         {% translate 'Longest warm-up, min' as label %}{% include 'panel/_field.html' with field=climate_form.preheat_lead_cap_minutes %}
       </div>
     </fieldset>
+    <div class="field-grid">
+      {% translate 'Guests until, hour' as label %}{% include 'panel/_field.html' with field=climate_form.guests_end_hour %}
+    </div>
     <div class="settings-foot">
       <button class="button" type="submit">{% translate 'Save' %}</button>
       {% if outcome == 'saved' %}<p class="saved" role="status">{% translate 'Saved. The heating cycle reads it within a minute.' %}</p>{% elif outcome == 'unchanged' %}<p class="saved" role="status">{% translate 'Nothing changed' %}</p>{% endif %}

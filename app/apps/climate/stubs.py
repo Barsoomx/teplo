@@ -9,7 +9,13 @@ from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
-from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord
+from apps.climate.domain.room_climate import (
+    RoomClimateConfig,
+    RoomClimateConfigRecord,
+    RoomClimateSettings,
+    RoomOverride,
+)
+from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.house.domain.errors import RoomNotFoundError
@@ -190,6 +196,47 @@ class RoomClimateConfigStoreStub:
             replace(record, config=replace(record.config, **written)) if record.slug == slug else record
             for record in self._records
         ]
+
+
+class RoomOverrideStoreStub:
+    def __init__(self, rooms: list[RoomClimateSettings]) -> None:
+        self._rooms = rooms
+        self._saved: list[tuple[str, RoomOverride | None]] = []
+
+    @property
+    def saved(self) -> list[tuple[str, RoomOverride | None]]:
+        return self._saved
+
+    def comfort_for_update(self, slug: str) -> RoomClimateSettings:
+        room = next((room for room in self._rooms if room.slug == slug), None)
+        if room is None:
+            raise RoomNotFoundError(slug)
+
+        return room
+
+    def save_override(self, slug: str, override: RoomOverride | None) -> None:
+        self._saved.append((slug, override))
+        self._rooms = [replace(room, override=override) if room.slug == slug else room for room in self._rooms]
+
+
+class GuestsStoreStub:
+    def __init__(self, record: GuestsRecord) -> None:
+        self._record = record
+        self._saved: list[datetime | None] = []
+
+    @property
+    def saved(self) -> list[datetime | None]:
+        return self._saved
+
+    def guests(self) -> GuestsRecord:
+        return self._record
+
+    def guests_for_update(self) -> GuestsRecord:
+        return self._record
+
+    def save_guests(self, until: datetime | None) -> None:
+        self._saved.append(until)
+        self._record = replace(self._record, until=until)
 
 
 class ComfortWindowStoreStub:

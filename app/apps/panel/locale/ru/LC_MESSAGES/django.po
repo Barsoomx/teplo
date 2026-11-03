@@ -1057,3 +1057,76 @@ msgstr "Выберите хотя бы одну комнату"
 
 msgid "No rooms yet. Rooms come from the site data."
 msgstr "Комнат пока нет. Они задаются данными сайта."
+
+msgid "Guests"
+msgstr "Гости"
+
+msgid "Guests have left"
+msgstr "Гости уехали"
+
+#, python-format
+msgid "Guests until %(time)s"
+msgstr "Гости до %(time)s"
+
+#, python-format
+msgid "Guest rooms: %(rooms)s"
+msgstr "Гостевые комнаты: %(rooms)s"
+
+#, python-format
+msgid "Manual %(target)s° until %(time)s"
+msgstr "Вручную %(target)s° до %(time)s"
+
+#, python-format
+msgid "Target %(target)s°"
+msgstr "Цель %(target)s°"
+
+msgid "Colder by 0.5°"
+msgstr "Холоднее на 0,5°"
+
+msgid "Warmer by 0.5°"
+msgstr "Теплее на 0,5°"
+
+msgid "Back to the schedule"
+msgstr "Вернуть расписание"
+
+#, python-format
+msgid "Thermostat set to %(setpoint)s°, %(target)s° no sooner than %(time)s"
+msgstr "На термостате %(setpoint)s°, %(target)s° — не раньше %(time)s"
+
+#, python-format
+msgid "Thermostat set to %(setpoint)s°, %(target)s° within the next minute"
+msgstr "На термостате %(setpoint)s°, %(target)s° — в ближайшую минуту"
+
+msgid "Load management keeps the floor off"
+msgstr "Пол отключён управлением нагрузкой"
+
+msgid "Guest room"
+msgstr "Гостевая комната"
+
+msgid "Guests until, hour"
+msgstr "Гости до, час"
+
+msgid "Guests mode is off"
+msgstr "Режим гостей выключен"
+
+msgid "From Telegram"
+msgstr "Из Telegram"
+
+#, python-format
+msgid "%(name)s: manual %(target)s° until %(time)s"
+msgstr "%(name)s: вручную %(target)s° до %(time)s"
+
+#, python-format
+msgid "%(name)s: back to the schedule"
+msgstr "%(name)s: снова по расписанию"
+
+#, python-format
+msgid "%(name)s: a guest room now"
+msgstr "%(name)s: теперь гостевая комната"
+
+#, python-format
+msgid "%(name)s: no longer a guest room"
+msgstr "%(name)s: больше не гостевая комната"
+
+msgid "guests until"
+msgstr "гости до"

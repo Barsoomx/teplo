@@ -5,7 +5,15 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.domain.change import ThermostatChange
-from apps.climate.domain.drive import StartAnswer, StartPermits, ZoneDrive, plan_drive
+from apps.climate.domain.drive import (
+    PendingKind,
+    PendingWrite,
+    StartAnswer,
+    StartPermits,
+    ZoneDrive,
+    pending_write,
+    plan_drive,
+)
 from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
@@ -152,3 +160,54 @@ def test_start_goes_with_the_answer_it_got_and_without_one_only_when_no_live_per
     expected: bool,
 ) -> None:
     assert PERMITS.granted(zone, writes_live=writes_live) is expected
+
+
+@pytest.mark.parametrize(
+    ('target', 'state', 'last_write_at', 'held', 'writes_live', 'expected'),
+    [
+        (COMFORT, IDLE, None, True, True, PendingWrite(kind=PendingKind.HELD, at=None)),
+        (COMFORT, None, None, False, True, PendingWrite(kind=PendingKind.UNREACHED, at=None)),
+        (NIGHT, IDLE, None, False, True, PendingWrite(kind=PendingKind.HOLDS, at=None)),
+        (COMFORT, IDLE, None, False, False, PendingWrite(kind=PendingKind.WATCHING, at=None)),
+        (COMFORT, IDLE, None, False, True, PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW)),
+        (
+            COMFORT,
+            IDLE,
+            NOW - timedelta(minutes=10),
+            False,
+            True,
+            PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=20)),
+        ),
+        (
+            COMFORT,
+            IDLE,
+            NOW - timedelta(minutes=45),
+            False,
+            True,
+            PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW),
+        ),
+        (OFF, SWITCHED_OFF, NOW - timedelta(minutes=10), True, True, PendingWrite(kind=PendingKind.HELD, at=None)),
+    ],
+    ids=[
+        'shed_zone_is_held',
+        'thermostat_unread',
+        'thermostat_already_holds_its_target',
+        'writes_held_back',
+        'write_now',
+        'write_once_thirty_minutes_have_passed',
+        'write_now_long_after_the_last',
+        'shed_zone_is_held_whatever_it_reads',
+    ],
+)
+def test_pending_write_names_when_the_target_reaches_the_thermostat(
+    target: ThermostatTarget,
+    state: ThermostatState | None,
+    last_write_at: datetime | None,
+    held: bool,
+    writes_live: bool,
+    expected: PendingWrite,
+) -> None:
+    assert (
+        pending_write(target, state, last_write_at=last_write_at, now=NOW, held=held, writes_live=writes_live)
+        == expected
+    )

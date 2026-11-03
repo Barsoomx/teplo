@@ -25,6 +25,11 @@ class RoomOverviewSerializer(serializers.Serializer):
     backup_zone = serializers.CharField(source='comfort.backup_zone', allow_null=True)
     backup_live = serializers.SerializerMethodField()
     backup_active = serializers.SerializerMethodField()
+    reason = serializers.CharField(source='intent.reason', allow_null=True)
+    target = serializers.DecimalField(source='intent.target', max_digits=4, decimal_places=1, allow_null=True)
+    until = serializers.DateTimeField(source='intent.until', allow_null=True)
+    guest_room = serializers.BooleanField()
+    adjustable = serializers.BooleanField()
 
     def get_zones(self, room: RoomOverview) -> list[str]:
         return [zone.slug for zone in room.zones]

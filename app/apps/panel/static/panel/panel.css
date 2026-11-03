@@ -247,6 +247,20 @@ body {
   color: var(--ink);
 }
 
+/* Guests mode, in ink only: a chip while guests stay and a button to switch it */
+
+.fact-guests {
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: var(--ink);
+}
+
+.fact-guests .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 /* Air sensors without a tile of their own: a row of readings in ink, as every reading but the floor */
 
 .air-row {
@@ -332,11 +346,52 @@ body {
   font-size: 0.875rem;
 }
 
-/* Backup heat of a room, in ink only: filled while it holds its zone at comfort */
+/* Backup heat, guests and a manual target of a room, in ink only: filled while they hold the room */
 
-.backup {
+.backup,
+.intent {
   background: color-mix(in srgb, var(--ink) 12%, transparent);
   color: var(--ink);
+}
+
+/* A room's own target with half-degree steps, in ink only like every reading but the floor */
+
+.room-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.room-target-value {
+  min-width: 7.5rem;
+  margin: 0;
+  font: 600 1rem/1.2 var(--font-text);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.room-step {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--tile-quiet);
+  color: var(--ink);
+  font: 600 1.25rem/1 var(--font-text);
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.room-step:hover {
+  border-color: var(--ink-muted);
+}
+
+.room-step[disabled] {
+  cursor: not-allowed;
+  opacity: 0.4;
 }
 
 .room .air-sensors {

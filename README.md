@@ -30,6 +30,7 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 
 - **Warm by wake-up.** Weekly comfort periods per zone. At night the floor drops to a night setpoint; three hours before the morning comfort period it starts pre-heating, so the screed is warm when the alarm goes off.
 - **Boost.** One tap holds a zone at its boost setpoint for two hours.
+- **Guests and room targets.** One tap keeps the guest rooms at comfort through the night and until 14:00 after it, for up to three nights. On a room whose floors read the air, −/+ moves its target by half a degree for two hours, and teplo takes the floors a setpoint up or down to follow it, within the same 30-minute write budget.
 - **Gentle on the hardware.** A thermostat gets at most one change per zone per 30 minutes. History is buffered in memory and written to the router's USB flash in batches.
 - **Dry-run first.** Globally or per zone, teplo journals the commands it would send without sending them.
 - **Trusted clock.** The schedule follows the clock only while the router reports NTP as synchronized; with a doubtful clock every zone holds comfort.
@@ -90,7 +91,7 @@ Every minute the heating cycle decides each zone's target and sends only what di
 ```mermaid
 flowchart LR
     mode["Schedule mode<br/>night, pre-heat, comfort"] --> policy["Floor policy<br/>pure Python"]
-    overrides["Boost, clock trust"] --> policy
+    overrides["Boost, guests, room overrides,<br/>clock trust"] --> policy
     policy --> target["Target<br/>power, setpoint"]
     reading["Last reading"] --> change["Change"]
     target --> change

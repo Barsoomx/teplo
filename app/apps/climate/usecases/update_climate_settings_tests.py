@@ -28,6 +28,7 @@ DEFAULTS = ClimateConfig(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
+    guests_end_hour=14,
 )
 EDIT = UpdateClimateSettingsInputDTO(
     air_start_offset=Decimal('0.30'),
@@ -35,6 +36,7 @@ EDIT = UpdateClimateSettingsInputDTO(
     air_min_band=Decimal('0.20'),
     learned_mornings_needed=3,
     preheat_lead_cap_minutes=240,
+    guests_end_hour=14,
     now=NOW,
 )
 
@@ -142,6 +144,21 @@ def test_changed_min_band_is_saved_and_journaled_like_the_other_settings(
     )
 
 
+def test_changed_guests_end_hour_is_saved_and_journaled_like_the_other_settings(
+    f_use_case: UpdateClimateSettingsUseCase,
+    f_climate_settings: ClimateConfigStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> None:
+    output = f_use_case.execute(replace(EDIT, guests_end_hour=12))
+
+    changes = (SettingChange(target='climate_settings', subject='', name='', field='guests_end_hour', old=14, new=12),)
+    assert (output, f_climate_settings.saved, f_recorder.records) == (
+        UpdateClimateSettingsOutputDTO(changes=changes),
+        [(replace(DEFAULTS, guests_end_hour=12), ('guests_end_hour',))],
+        [(changes, NOW)],
+    )
+
+
 def test_climate_settings_as_stored_write_and_journal_nothing(
     f_use_case: UpdateClimateSettingsUseCase,
     f_climate_settings: ClimateConfigStoreStub,
@@ -161,12 +178,15 @@ def test_climate_settings_out_of_range_are_refused(
     f_climate_settings: ClimateConfigStoreStub,
 ) -> None:
     with pytest.raises(SettingsRejectedError) as raised:
-        f_use_case.execute(replace(EDIT, initial_early_stop_offset=Decimal('1.6'), preheat_lead_cap_minutes=500))
+        f_use_case.execute(
+            replace(EDIT, initial_early_stop_offset=Decimal('1.6'), preheat_lead_cap_minutes=500, guests_end_hour=24),
+        )
 
     assert (raised.value.problems, f_climate_settings.saved) == (
         (
             SettingProblem(field='initial_early_stop_offset', code='out_of_range'),
             SettingProblem(field='preheat_lead_cap_minutes', code='out_of_range'),
+            SettingProblem(field='guests_end_hour', code='out_of_range'),
         ),
         [],
     )
@@ -200,6 +220,7 @@ def test_input_carries_no_backup_heat() -> None:
         'air_min_band',
         'learned_mornings_needed',
         'preheat_lead_cap_minutes',
+        'guests_end_hour',
         'now',
     }
 

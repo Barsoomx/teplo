@@ -2,7 +2,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from apps.climate.domain.write_guard import WriteSlot, override_holds, slot_free, write_allowed
+from apps.climate.domain.write_guard import WriteSlot, next_write_at, override_holds, slot_free, write_allowed
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
 MOMENT = 5000.0
@@ -32,6 +32,30 @@ def test_write_allowed_respects_thirty_minutes(last_command_at: datetime | None,
 
 def test_write_allowed_when_clock_moved_back_past_last_command() -> None:
     assert write_allowed(NOW + timedelta(hours=1), NOW) is True
+
+
+@pytest.mark.parametrize(
+    ('last_write_at', 'expected'),
+    [
+        (None, NOW),
+        (NOW - timedelta(minutes=10), NOW + timedelta(minutes=20)),
+        (NOW - timedelta(minutes=30), NOW),
+        (NOW - timedelta(hours=2), NOW),
+        (NOW + timedelta(hours=1), NOW),
+    ],
+    ids=[
+        'never_written',
+        'written_ten_minutes_ago',
+        'written_thirty_minutes_ago',
+        'long_ago',
+        'stamped_after_the_clock',
+    ],
+)
+def test_next_write_comes_once_the_thirty_minutes_after_the_last_have_passed(
+    last_write_at: datetime | None,
+    expected: datetime,
+) -> None:
+    assert next_write_at(last_write_at, NOW) == expected
 
 
 @pytest.mark.parametrize(

@@ -21,6 +21,7 @@ class UpdateRoomClimateInputDTO:
     setback_target: Decimal
     backup_below: Decimal | None
     backup_hysteresis: Decimal | None
+    guest_room: bool
     now: datetime
 
 
@@ -75,4 +76,5 @@ def _edited(current: RoomClimateConfig, edit: UpdateRoomClimateInputDTO) -> Room
         setback_target=edit.setback_target,
         backup_below=current.backup_below if edit.backup_below is None else edit.backup_below,
         backup_hysteresis=current.backup_hysteresis if edit.backup_hysteresis is None else edit.backup_hysteresis,
+        guest_room=edit.guest_room,
     ).normalized()

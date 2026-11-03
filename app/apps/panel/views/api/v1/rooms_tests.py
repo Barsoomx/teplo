@@ -1,16 +1,20 @@
 from collections.abc import Iterator
 from dataclasses import replace
+from datetime import datetime
 from decimal import Decimal
 from unittest import mock
 from unittest.mock import MagicMock
+from zoneinfo import ZoneInfo
 
 import pytest
 from django.test import Client
 
+from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, RoomComfortOverview
 
 pytestmark = pytest.mark.django_db
 
+MANUAL_UNTIL = datetime(2026, 11, 4, 18, 40, tzinfo=ZoneInfo('Europe/Moscow'))
 WITHOUT_ROOM_CLIMATE = {
     'comfort_target': None,
     'setback_target': None,
@@ -18,6 +22,11 @@ WITHOUT_ROOM_CLIMATE = {
     'backup_zone': None,
     'backup_live': False,
     'backup_active': False,
+    'reason': None,
+    'target': None,
+    'until': None,
+    'guest_room': False,
+    'adjustable': False,
 }
 
 
@@ -44,11 +53,36 @@ def comfort_overview(house_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
         backup_zone_name='Санузел 2 этаж',
         backup_active=True,
     )
+    open_space_intent = RoomIntent(
+        room='open-space',
+        reason=IntentReason.OVERRIDE,
+        target=Decimal('22.5'),
+        until=MANUAL_UNTIL,
+        forced=True,
+    )
+    bedroom_intent = RoomIntent(
+        room='bedroom',
+        reason=IntentReason.SETBACK,
+        target=Decimal('19.5'),
+        until=None,
+        forced=False,
+    )
     return replace(
         house_overview,
         floors=(
-            replace(ground, rooms=(replace(open_space, comfort=open_space_comfort),)),
-            replace(upstairs, rooms=(replace(bedroom, comfort=bedroom_comfort), office)),
+            replace(
+                ground,
+                rooms=(
+                    replace(
+                        open_space,
+                        comfort=open_space_comfort,
+                        intent=open_space_intent,
+                        adjustable=True,
+                        guest_room=True,
+                    ),
+                ),
+            ),
+            replace(upstairs, rooms=(replace(bedroom, comfort=bedroom_comfort, intent=bedroom_intent), office)),
         ),
     )
 
@@ -102,7 +136,7 @@ def test_rooms_api_returns_rooms_in_floor_order(f_client: Client, m_overview_use
     )
 
 
-def test_rooms_api_gives_each_room_its_targets_and_its_backup_heat(
+def test_rooms_api_gives_each_room_its_targets_its_backup_heat_and_what_it_holds_now(
     f_client: Client,
     m_comfort_overview_use_case: MagicMock,
 ) -> None:
@@ -122,6 +156,11 @@ def test_rooms_api_gives_each_room_its_targets_and_its_backup_heat(
                 'backup_zone': None,
                 'backup_live': False,
                 'backup_active': False,
+                'reason': 'override',
+                'target': '22.5',
+                'until': '2026-11-04T18:40:00+03:00',
+                'guest_room': True,
+                'adjustable': True,
             },
             {
                 'slug': 'bedroom',
@@ -135,6 +174,11 @@ def test_rooms_api_gives_each_room_its_targets_and_its_backup_heat(
                 'backup_zone': 'bathroom-2f',
                 'backup_live': False,
                 'backup_active': True,
+                'reason': 'setback',
+                'target': '19.5',
+                'until': None,
+                'guest_room': False,
+                'adjustable': False,
             },
             {
                 'slug': 'office',

@@ -15,6 +15,7 @@ from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.climate.domain.zone_cycle import CycleConditions, ZoneConditions, ZoneDecision, decide_zone
+from apps.climate.domain.zone_intent import NO_INTENT
 from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.models import ComfortPeriod, Zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
@@ -465,7 +466,7 @@ def test_saving_the_config_of_an_unknown_zone_raises() -> None:
 
 
 def _week_of_decisions(zones: list[ZoneSettings], control: ClimateControl) -> list[ZoneDecision]:
-    floor = ZoneConditions(air=None, learning=ZoneLearningRecord.unlearned(), guarded=False, writes_live=True)
+    floor = ZoneConditions(air=None, learning=ZoneLearningRecord.unlearned(), intent=NO_INTENT, writes_live=True)
     air = replace(floor, air=Decimal('20.4'))
     decisions: list[ZoneDecision] = []
     for zone in zones:

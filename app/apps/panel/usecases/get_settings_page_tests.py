@@ -64,6 +64,7 @@ CLIMATE = ClimateConfigRecord(
         air_min_band=Decimal('0.20'),
         learned_mornings_needed=3,
         preheat_lead_cap_minutes=240,
+        guests_end_hour=14,
     ),
 )
 OPEN_SPACE_RECORD = RoomClimateConfigRecord(
@@ -76,6 +77,7 @@ OPEN_SPACE_RECORD = RoomClimateConfigRecord(
         setback_target=Decimal('19.5'),
         backup_below=Decimal('19.0'),
         backup_hysteresis=Decimal('0.30'),
+        guest_room=False,
     ),
     air_sensor_slug=None,
     backup_zone_slug=None,
@@ -92,6 +94,7 @@ BEDROOM_RECORD = RoomClimateConfigRecord(
         setback_target=Decimal('19.5'),
         backup_below=Decimal('19.0'),
         backup_hysteresis=Decimal('0.30'),
+        guest_room=False,
     ),
     air_sensor_slug='air-second-floor',
     backup_zone_slug='bathroom-2f',

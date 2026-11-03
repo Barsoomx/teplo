@@ -75,6 +75,7 @@ def _climate_settings(lead_cap_minutes: int) -> ClimateConfigStoreStub:
                 air_min_band=Decimal('0.20'),
                 learned_mornings_needed=3,
                 preheat_lead_cap_minutes=lead_cap_minutes,
+                guests_end_hour=14,
             ),
         ),
     )

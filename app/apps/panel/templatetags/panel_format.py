@@ -13,14 +13,16 @@ from django.utils.safestring import SafeString
 from django.utils.translation import gettext, gettext_lazy
 
 from apps.climate.domain.comfort_windows import WEEKDAY_FIELDS
-from apps.climate.domain.modes import ScheduleMode
+from apps.climate.domain.drive import PendingKind
+from apps.climate.domain.modes import CommandSource, ScheduleMode
 from apps.climate.domain.room_climate import ROOM
+from apps.climate.domain.room_intent import OVERRIDE_STEP, OVERRIDE_TARGET_MAX, OVERRIDE_TARGET_MIN, RoomIntent
 from apps.climate.domain.week_plan import DayPeriod
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.panel.usecases.get_panel_overview import LoadOverview
+from apps.panel.usecases.get_panel_overview import LoadOverview, ZoneOverview
 from apps.power.domain.loads import MEASURED_PHASES, AmpsOrigin, LoadKind, PhaseOrigin
 from apps.power.domain.outage import OutageRecord
 from apps.system.domain.clock import ClockStatusCode
@@ -98,6 +100,13 @@ GUARD_OFF_UNREAD = gettext_lazy(
 BACKUP_ON = gettext_lazy('%(name)s: backup heat would turn comfort on (%(room)s %(air)s°)')
 BACKUP_OFF = gettext_lazy('%(name)s: backup heat would return the zone to its schedule (%(room)s %(air)s°)')
 BACKUP_OFF_UNREAD = gettext_lazy('%(name)s: backup heat would return the zone to its schedule (no reading in %(room)s)')
+NEXT_WRITE_AT = gettext_lazy('Thermostat set to %(setpoint)s°, %(target)s° no sooner than %(time)s')
+NEXT_WRITE_SOON = gettext_lazy('Thermostat set to %(setpoint)s°, %(target)s° within the next minute')
+GUESTS_UNTIL = gettext_lazy('Guests until %(time)s')
+GUESTS_OFF = gettext_lazy('Guests mode is off')
+ROOM_OVERRIDDEN = gettext_lazy('%(name)s: manual %(target)s° until %(time)s')
+ROOM_OVERRIDE_CLEARED = gettext_lazy('%(name)s: back to the schedule')
+FROM_TELEGRAM = gettext_lazy('From Telegram')
 PHASE_LABELS = {phase.value: phase.value.upper() for phase in MEASURED_PHASES}
 LOAD_PHASES = {
     PhaseOrigin.SET: gettext_lazy('Phase %(phase)s, set'),
@@ -179,6 +188,10 @@ HEATING_SWITCHED = {
     True: gettext_lazy('%(name)s: heating switched on'),
     False: gettext_lazy('%(name)s: heating switched off'),
 }
+GUEST_ROOM_SWITCHED = {
+    True: gettext_lazy('%(name)s: a guest room now'),
+    False: gettext_lazy('%(name)s: no longer a guest room'),
+}
 SCHEDULE_CHANGES = dict(
     zip(
         WEEKDAY_FIELDS,
@@ -231,6 +244,10 @@ def _phase(value: object) -> str:
     return PHASE_LABELS.get(str(value), str(UNKNOWN_PHASE))
 
 
+def _hour(value: object) -> str:
+    return f'{value:02d}:00' if isinstance(value, int) and not isinstance(value, bool) else str(value)
+
+
 SETTINGS_FIELDS: dict[tuple[str, str], tuple[Promise, Callable[[object], str]]] = {
     ('zone', 'comfort_floor_setpoint'): (gettext_lazy('floor in comfort'), _degrees),
     ('zone', 'night_floor_setpoint'): (gettext_lazy('floor at night'), _degrees),
@@ -245,6 +262,7 @@ SETTINGS_FIELDS: dict[tuple[str, str], tuple[Promise, Callable[[object], str]]] 
     ('climate_settings', 'air_min_band'): (gettext_lazy('minimum band between start and stop'), _fine_degrees),
     ('climate_settings', 'learned_mornings_needed'): (gettext_lazy('learned mornings needed'), _number),
     ('climate_settings', 'preheat_lead_cap_minutes'): (gettext_lazy('longest warm-up'), _minutes),
+    ('climate_settings', 'guests_end_hour'): (gettext_lazy('guests until'), _hour),
     ('climate_settings', 'second_floor_guard_threshold'): (gettext_lazy('second-floor guard below'), _degrees),
     ('climate_settings', 'second_floor_guard_hysteresis'): (
         gettext_lazy('second-floor guard hysteresis'),
@@ -330,6 +348,63 @@ def day_word(value: datetime) -> str:
         return gettext('tomorrow')
 
     return date_format(day, 'j E')
+
+
+@register.filter
+def next_write_text(zone: ZoneOverview) -> str:
+    pending = zone.pending
+    if pending is None or pending.kind is not PendingKind.NEXT_WRITE or pending.at is None:
+        return ''
+
+    values = {'setpoint': floatformat(zone.setpoint, -1), 'target': floatformat(zone.target_setpoint, -1)}
+    if pending.at <= timezone.now():
+        return str(NEXT_WRITE_SOON) % values
+
+    return str(NEXT_WRITE_AT) % {**values, 'time': _moment_text(pending.at)}
+
+
+@register.filter
+def steps_down(intent: RoomIntent) -> bool:
+    return intent.target - OVERRIDE_STEP >= OVERRIDE_TARGET_MIN
+
+
+@register.filter
+def steps_up(intent: RoomIntent) -> bool:
+    return intent.target + OVERRIDE_STEP <= OVERRIDE_TARGET_MAX
+
+
+@register.filter
+def guests_text(entry: TimelineEntry) -> str:
+    if entry.kind == 'guests_cleared':
+        return str(GUESTS_OFF)
+
+    moment = _journaled_moment(entry.payload.get('until'))
+    if moment is None:
+        return _unknown_event(entry)
+
+    return str(GUESTS_UNTIL) % {'time': moment}
+
+
+@register.filter
+def room_override_text(entry: TimelineEntry) -> str:
+    name = entry.payload.get('name')
+    if not isinstance(name, str) or not name:
+        return _unknown_event(entry)
+
+    if entry.kind == 'room_override_cleared':
+        return str(ROOM_OVERRIDE_CLEARED) % {'name': name}
+
+    target = floatformat(entry.payload.get('target'), 1)
+    moment = _journaled_moment(entry.payload.get('until'))
+    if not target or moment is None:
+        return _unknown_event(entry)
+
+    return str(ROOM_OVERRIDDEN) % {'name': name, 'target': target, 'time': moment}
+
+
+@register.filter
+def command_note(entry: TimelineEntry) -> str:
+    return str(FROM_TELEGRAM) if entry.payload.get('source') == CommandSource.TELEGRAM else ''
 
 
 @register.filter
@@ -614,6 +689,9 @@ def settings_change_text(entry: TimelineEntry) -> str:
     if target == 'zone' and field == 'heating_enabled' and isinstance(new, bool):
         return str(HEATING_SWITCHED[new]) % {'name': name}
 
+    if target == ROOM and field == 'guest_room' and isinstance(new, bool):
+        return str(GUEST_ROOM_SWITCHED[new]) % {'name': name}
+
     known = SETTINGS_FIELDS.get((target, field))
     if known is None:
         return str(SETTINGS_CHANGED) % {'name': name}
@@ -632,6 +710,22 @@ def _settings_subject_name(entry: TimelineEntry, target: str) -> str:
 
     name = entry.payload.get('name')
     return name if isinstance(name, str) and name else entry.subject
+
+
+def _moment_text(at: datetime) -> str:
+    day = day_word(at)
+    time = timezone.localtime(at).strftime('%H:%M')
+    return f'{time} {day}' if day else time
+
+
+def _journaled_moment(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+
+    try:
+        return _moment_text(datetime.fromisoformat(value))
+    except ValueError:
+        return None
 
 
 def _windows_text(windows: object) -> str:
