@@ -1,8 +1,13 @@
 # SHT30 on I2C. A failed read publishes nothing, so once a reading has gone out the timeout publishes nan after two
 # missed updates.
+# The SuperMini's pins; a node on another board sets i2c_sda and i2c_scl in its own substitutions.
+substitutions:
+  i2c_sda: GPIO0
+  i2c_scl: GPIO1
+
 i2c:
-  sda: GPIO0
-  scl: GPIO1
+  sda: ${i2c_sda}
+  scl: ${i2c_scl}
   scan: true
 
 sensor:

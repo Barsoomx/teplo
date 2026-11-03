@@ -172,13 +172,14 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
 
 The sensor nodes run ESPHome firmware built from `esphome/`: one configuration per node on top of the shared packages in `esphome/common/`.
 
-The seven ESP32-C3 SuperMini boards are wired alike, so the spare replaces any of them. 3.3 V feeds the sensors and 5 V only the IR LED. GPIO0 is SDA and GPIO1 SCL of the SHT30 at 0x44; GPIO10 is the DS18B20's 1-Wire line, pulled up by 4.7 kΩ; GPIO3 drives the IR LED through 4.7 kΩ into an S8050 base, the LED fed from 5 V through 100 Ω; GPIO4 reads the VS1838B receiver; GPIO8 is the on-board status LED. The phase meter is an ESP32 DevKit with the clamps L1, L2 and L3 on GPIO34, GPIO35 and GPIO32.
+The six ESP32-C3 SuperMini boards are wired alike, so the spare replaces any of them. 3.3 V feeds the sensors and 5 V only the IR LED. GPIO0 is SDA and GPIO1 SCL of the SHT30 at 0x44; GPIO10 is the DS18B20's 1-Wire line, pulled up by 4.7 kΩ; GPIO3 drives the IR LED through 4.7 kΩ into an S8050 base, the LED fed from 5 V through 100 Ω; GPIO4 reads the VS1838B receiver; GPIO8 is the on-board status LED. The phase meter and the second-floor air node are ESP32-S3-DevKitC-1 boards with a U.FL antenna, as the metal shed door and the distance to the second floor are more than a SuperMini's chip antenna carries; their octal PSRAM takes GPIO35–37, so no sensor sits there. The phase meter reads the clamps L1, L2 and L3 on GPIO4, GPIO5 and GPIO6: L1 on the stabilizer feeding the floors, L2 on the stabilizer of the first-floor water heater, L3 on the phase without a stabilizer. The second-floor node has the SHT30 on GPIO8 (SDA) and GPIO9 (SCL). The board package `common/s3.yaml` leaves the transmit power at its maximum and has no status LED.
 
 | Node | Board | Publishes |
 |---|---|---|
-| `teplo-air-living-room`, `teplo-air-kitchen`, `teplo-air-hallway`, `teplo-air-second-floor` | ESP32-C3 SuperMini, SHT30 | `temperature`, `humidity` every 30 s |
+| `teplo-air-living-room`, `teplo-air-kitchen`, `teplo-air-hallway` | ESP32-C3 SuperMini, SHT30 | `temperature`, `humidity` every 30 s |
+| `teplo-air-second-floor` | ESP32-S3-DevKitC-1 with U.FL antenna, SHT30 | `temperature`, `humidity` every 30 s |
 | `teplo-outdoor` | ESP32-C3 SuperMini, DS18B20 | `temperature` every 30 s |
-| `teplo-phase-meter` | ESP32 DevKit, three SCT-013-050 clamps | `l1_current`, `l2_current`, `l3_current` every second |
+| `teplo-phase-meter` | ESP32-S3-DevKitC-1 with U.FL antenna, three SCT-013-050 clamps | `l1_current`, `l2_current`, `l3_current` every second |
 | `teplo-ir-bedroom` | ESP32-C3 SuperMini, IR LED and receiver | air conditioner control |
 | `teplo-spare` | ESP32-C3 SuperMini | the same as an air node; without a sensor it publishes `nan` |
 
@@ -202,7 +203,7 @@ A sensor that fails when its node starts also yields `nan`. An SHT30 that does n
    export MOUNT_SOURCE="$(wslpath -w .)"
    ```
 
-3. Flash a new board over USB the first time. Connect it with the 2 m data cable (a charge-only cable shows no port), open https://web.esphome.io in Chrome and press CONNECT. Pick `USB JTAG/serial debug unit` for a SuperMini or `USB-SERIAL CH340` for the DevKit, press INSTALL, choose the node's `.factory.bin` and agree to erase the board. No port, or the upload hangs at `Connecting…`: unplug a SuperMini and plug it back in with BOOT held; hold the DevKit's BOOT button for 2–3 s. LOGS then shows the node joining Wi-Fi and its first readings.
+3. Flash a new board over USB the first time. Connect it with the 2 m data cable (a charge-only cable shows no port), open https://web.esphome.io in Chrome and press CONNECT. Pick `USB JTAG/serial debug unit` for a SuperMini, or for an S3 DevKitC plugged into its port marked USB (not UART), press INSTALL, choose the node's `.factory.bin` and agree to erase the board. No port, or the upload hangs at `Connecting…`: unplug the board and plug it back in with BOOT held. LOGS then shows the node joining Wi-Fi and its first readings.
 
 4. Check each node at `http://<node>/`, e.g. `http://teplo-air-kitchen/`, or at `http://<node>.local/` or the address in the router's client list. The node serves the page itself, without files from the internet; it lists the readings and the log. A node that cannot join Wi-Fi for 90 s opens an access point named after itself, with `fallback_ap_password`; a phone that joins it gets a page that takes new Wi-Fi credentials.
 
