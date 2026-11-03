@@ -215,13 +215,7 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_date
     now: datetime,
     resumed_at: float,
 ) -> None:
-    resumed = resumed_shed(
-        SHED_BOILER_RECORD,
-        at=AT,
-        now=now,
-        default_amps=Decimal('6.0'),
-        write_interval=WRITE_INTERVAL,
-    )
+    resumed = resumed_shed(SHED_BOILER_RECORD, at=AT, now=now, default_amps=Decimal('6.0'))
 
     assert (resumed, relief([] if resumed is None else [resumed], LoadPhase.L2, AT - 1)) == (
         Shed(
@@ -239,13 +233,7 @@ def test_resumed_shed_carries_the_stored_shed_settled_for_every_reading_and_date
 
 
 def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
-    resumed = resumed_shed(
-        SHED_KITCHEN_RECORD,
-        at=AT,
-        now=NOW,
-        default_amps=Decimal('6.0'),
-        write_interval=WRITE_INTERVAL,
-    )
+    resumed = resumed_shed(SHED_KITCHEN_RECORD, at=AT, now=NOW, default_amps=Decimal('6.0'))
 
     assert resumed == Shed(
         load='kitchen',
@@ -265,33 +253,27 @@ def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
     [
         (_kitchen_shed_ago(timedelta(minutes=20), None), AT - 1200),
         (_kitchen_shed_ago(timedelta(minutes=29), timedelta(minutes=29)), AT - 1740),
-        (_kitchen_shed_ago(timedelta(minutes=30), timedelta(minutes=30)), AT),
+        (_kitchen_shed_ago(timedelta(minutes=31), timedelta(minutes=31)), AT - 1860),
         (_kitchen_shed_ago(timedelta(minutes=40), timedelta(minutes=10)), AT - 2400),
     ],
     ids=[
         'shed_twenty_minutes_ago',
         'shed_and_stamped_within_the_write_interval',
-        'shed_and_stamped_a_write_interval_ago',
-        'release_stamped_within_the_write_interval',
+        'shed_and_stamped_more_than_a_write_interval_ago',
+        'release_stamped_after_the_shed',
     ],
 )
-def test_resumed_zone_shed_counts_a_release_unstamped_just_before_the_restart_once_one_could_be_written(
+def test_resumed_zone_shed_counts_only_its_own_write_as_unstamped_whatever_the_zones_last_stamp(
     record: LoadRecord,
     unstamped_write_at: float,
 ) -> None:
-    resumed = resumed_shed(record, at=AT, now=NOW, default_amps=Decimal('6.0'), write_interval=WRITE_INTERVAL)
+    resumed = resumed_shed(record, at=AT, now=NOW, default_amps=Decimal('6.0'))
 
     assert (None if resumed is None else resumed.unstamped_write_at) == unstamped_write_at
 
 
 def test_resumed_shed_of_a_load_not_shed_is_none() -> None:
-    resumed = resumed_shed(
-        replace(SHED_BOILER_RECORD, shed=None),
-        at=AT,
-        now=NOW,
-        default_amps=Decimal('6.0'),
-        write_interval=WRITE_INTERVAL,
-    )
+    resumed = resumed_shed(replace(SHED_BOILER_RECORD, shed=None), at=AT, now=NOW, default_amps=Decimal('6.0'))
 
     assert resumed is None
 

@@ -87,14 +87,7 @@ def shed_confirmed(unconfirmed: UnconfirmedShed, reading: LoadReading | None) ->
     return reading.closed is False
 
 
-def resumed_shed(
-    record: LoadRecord,
-    *,
-    at: float,
-    now: datetime,
-    default_amps: Decimal,
-    write_interval: timedelta,
-) -> Shed | None:
+def resumed_shed(record: LoadRecord, *, at: float, now: datetime, default_amps: Decimal) -> Shed | None:
     stored = record.shed
     if stored is None:
         return None
@@ -109,14 +102,7 @@ def resumed_shed(
         was_on=stored.was_on,
         at=shed_at,
         settled_at=SETTLED,
-        unstamped_write_at=_resumed_unstamped_write(
-            record,
-            stored.at,
-            shed_at=shed_at,
-            at=at,
-            now=now,
-            write_interval=write_interval,
-        ),
+        unstamped_write_at=shed_at if record.kind is LoadKind.ZONE else None,
     )
 
 
@@ -183,25 +169,6 @@ def choose_restore(
         ),
         None,
     )
-
-
-def _resumed_unstamped_write(
-    record: LoadRecord,
-    stored_at: datetime,
-    *,
-    shed_at: float,
-    at: float,
-    now: datetime,
-    write_interval: timedelta,
-) -> float | None:
-    if record.kind is not LoadKind.ZONE:
-        return None
-
-    last_write = stored_at if record.last_command_at is None else max(stored_at, record.last_command_at)
-    if now - last_write < write_interval:
-        return shed_at
-
-    return at
 
 
 def _calm_for(phase: LoadPhase, calm: frozenset[LoadPhase]) -> bool:
