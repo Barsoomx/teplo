@@ -174,7 +174,25 @@ def test_early_stop_offset_moves_by_three_tenths_of_overshoot_within_bounds(
     peak: Decimal,
     expected: Decimal,
 ) -> None:
-    assert learn_early_stop_offset(offset, peak=peak, target=TARGET) == expected
+    assert learn_early_stop_offset(offset, used=offset, peak=peak, target=TARGET) == expected
+
+
+@pytest.mark.parametrize(
+    ('offset', 'used', 'peak', 'expected'),
+    [
+        (Decimal('0.30'), Decimal('0.10'), Decimal('22.3'), Decimal('0.33')),
+        (Decimal('0.45'), Decimal('0.10'), Decimal('22.3'), Decimal('0.44')),
+        (Decimal('0.60'), Decimal('0.10'), Decimal('22.5'), Decimal('0.60')),
+    ],
+    ids=['initial_offset_moves_toward_the_room', 'larger_learned_offset_settles', 'learned_offset_matches_the_room'],
+)
+def test_early_stop_offset_learns_from_the_offset_in_effect_at_the_stop(
+    offset: Decimal,
+    used: Decimal,
+    peak: Decimal,
+    expected: Decimal,
+) -> None:
+    assert learn_early_stop_offset(offset, used=used, peak=peak, target=TARGET) == expected
 
 
 def test_unlearned_zone_starts_from_initial_early_stop_offset() -> None:

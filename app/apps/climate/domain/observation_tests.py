@@ -29,6 +29,7 @@ WINDOWS = tuple(ComfortWindow(weekday=weekday, start=time(6, 30), end=time(23, 3
 TARGET = Decimal('22.0')
 OUTDOOR = Decimal('-3.4')
 AIR = Decimal('20.1')
+OFFSET = Decimal('0.2')
 FIRST_SAMPLE = AirSample(at=PREHEAT_START, air=Decimal('20.0'))
 
 
@@ -61,7 +62,7 @@ def f_morning() -> Morning:
 
 @pytest.fixture
 def f_watch() -> StopWatch:
-    return StopWatch(stopped_at=STOPPED_AT, target=TARGET, peak=Decimal('21.8'))
+    return StopWatch(stopped_at=STOPPED_AT, target=TARGET, offset=OFFSET, peak=Decimal('21.8'))
 
 
 @pytest.mark.parametrize('air_state', [None, AirState.HEAT], ids=['floor_heats', 'air_mode_heats'])
@@ -328,11 +329,12 @@ def test_applied_stop_of_heat_starts_watch() -> None:
         applied=True,
         heat_target=TARGET,
         target=TARGET,
+        offset=OFFSET,
         air=Decimal('21.8'),
         at=STOPPED_AT,
     )
 
-    assert watch == StopWatch(stopped_at=STOPPED_AT, target=TARGET, peak=Decimal('21.8'))
+    assert watch == StopWatch(stopped_at=STOPPED_AT, target=TARGET, offset=OFFSET, peak=Decimal('21.8'))
 
 
 @pytest.mark.parametrize(
@@ -358,6 +360,7 @@ def test_stop_watch_needs_applied_stop_of_heat_under_unchanged_target(
         applied=applied,
         heat_target=heat_target,
         target=TARGET,
+        offset=OFFSET,
         air=Decimal('21.8'),
         at=STOPPED_AT,
     )

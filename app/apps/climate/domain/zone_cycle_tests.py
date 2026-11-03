@@ -177,7 +177,7 @@ def f_watched_memory() -> ZoneMemory:
         mode=ScheduleMode.COMFORT,
         air_state=AirState.IDLE,
         heat_target=TARGET,
-        stop=StopWatch(stopped_at=MORNING, target=TARGET, peak=Decimal('22.3')),
+        stop=StopWatch(stopped_at=MORNING, target=TARGET, offset=Decimal('0.1'), peak=Decimal('22.3')),
     )
 
 
@@ -304,7 +304,7 @@ def test_applied_stop_of_heat_starts_stop_watch(f_live_zone: ZoneSettings, f_hea
 
     assert (follow_up.memory.air_state, follow_up.memory.stop) == (
         AirState.IDLE,
-        StopWatch(stopped_at=MORNING, target=TARGET, peak=Decimal('21.9')),
+        StopWatch(stopped_at=MORNING, target=TARGET, offset=Decimal('0.1'), peak=Decimal('21.9')),
     )
 
 
@@ -333,7 +333,7 @@ def test_stop_watch_hands_over_its_peak_two_hours_after_stop(
     )
 
     assert (follow_up.stop, follow_up.memory.stop) == (
-        StopWatch(stopped_at=MORNING, target=TARGET, peak=Decimal('22.3')),
+        StopWatch(stopped_at=MORNING, target=TARGET, offset=Decimal('0.1'), peak=Decimal('22.3')),
         None,
     )
 
@@ -832,7 +832,12 @@ def test_shed_zone_keeps_no_air_state_and_drops_its_morning_and_stop_watch(
     memory = replace(
         f_preheating_morning_memory,
         preheated_for=COMFORT_AT,
-        stop=StopWatch(stopped_at=AIR_MODE_STOP - timedelta(minutes=30), target=TARGET, peak=Decimal('21.8')),
+        stop=StopWatch(
+            stopped_at=AIR_MODE_STOP - timedelta(minutes=30),
+            target=TARGET,
+            offset=Decimal('0.1'),
+            peak=Decimal('21.9'),
+        ),
     )
 
     follow_up = _follow(

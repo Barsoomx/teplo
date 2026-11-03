@@ -370,7 +370,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         )
 
     def _learn_stop(self, zone: ZoneSettings, watch: StopWatch, offset: Decimal) -> None:
-        learned = learn_early_stop_offset(offset, peak=watch.peak, target=watch.target)
+        learned = learn_early_stop_offset(offset, used=watch.offset, peak=watch.peak, target=watch.target)
         try:
             self._learning.save_early_stop_offset(zone.slug, learned)
         except OperationalError as error:
@@ -385,6 +385,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             'zone_early_stop_offset_learned',
             zone=zone.slug,
             target=str(watch.target),
+            used=str(watch.offset),
             peak=str(watch.peak),
             offset=str(learned),
         )

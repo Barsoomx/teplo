@@ -190,6 +190,7 @@ def _follow_air(
             applied=outcome is ZoneCycleOutcome.APPLIED and cycle.clock_trusted and decision.target == idle,
             heat_target=heat_target,
             target=plan.target,
+            offset=plan.early_stop_offset,
             air=plan.air,
             at=cycle.now,
         )

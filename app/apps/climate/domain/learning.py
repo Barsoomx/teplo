@@ -57,8 +57,8 @@ class MorningEstimate:
     outdoor_bucket: int
 
 
-def learn_early_stop_offset(offset: Decimal, *, peak: Decimal, target: Decimal) -> Decimal:
-    learned = _ema(offset, offset + peak - target)
+def learn_early_stop_offset(offset: Decimal, *, used: Decimal, peak: Decimal, target: Decimal) -> Decimal:
+    learned = _ema(offset, used + peak - target)
     clamped = min(max(learned, EARLY_STOP_OFFSET_MIN), EARLY_STOP_OFFSET_MAX)
     return clamped.quantize(OFFSET_STEP, rounding=ROUND_HALF_UP)
 

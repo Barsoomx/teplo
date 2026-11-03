@@ -34,6 +34,7 @@ class MorningProgress:
 class StopWatch:
     stopped_at: datetime
     target: Decimal
+    offset: Decimal
     peak: Decimal
 
 
@@ -83,13 +84,14 @@ def start_stop_watch(
     applied: bool,
     heat_target: Decimal | None,
     target: Decimal,
+    offset: Decimal,
     air: Decimal,
     at: datetime,
 ) -> StopWatch | None:
     if not applied or previous is not AirState.HEAT or state is not AirState.IDLE or heat_target != target:
         return None
 
-    return StopWatch(stopped_at=at, target=target, peak=air)
+    return StopWatch(stopped_at=at, target=target, offset=offset, peak=air)
 
 
 def observe_stop(watch: StopWatch, reading: StopReading) -> StopProgress:

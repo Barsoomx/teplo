@@ -1820,13 +1820,13 @@ def test_stop_of_live_air_heat_teaches_early_stop_offset_from_two_hour_peak(
 ) -> None:
     f_watched_stop_cycle.execute(_at(MORNING + timedelta(hours=2, minutes=1)))
 
-    assert ZoneLearning.objects.get(zone__slug='kitchen').early_stop_offset == Decimal('0.39')
+    assert ZoneLearning.objects.get(zone__slug='kitchen').early_stop_offset == Decimal('0.33')
 
 
 def test_stop_is_learned_once(f_learned_stop_cycle: RunHeatingCycleUseCase) -> None:
     f_learned_stop_cycle.execute(_at(MORNING + timedelta(hours=2, minutes=2)))
 
-    assert ZoneLearning.objects.get(zone__slug='kitchen').early_stop_offset == Decimal('0.39')
+    assert ZoneLearning.objects.get(zone__slug='kitchen').early_stop_offset == Decimal('0.33')
 
 
 def test_stop_in_dry_run_teaches_nothing(f_dry_run_stop_cycle: RunHeatingCycleUseCase) -> None:
@@ -1915,7 +1915,7 @@ def f_unsaved_stop_cycle(
             mode=ScheduleMode.COMFORT,
             air_state=AirState.IDLE,
             heat_target=Decimal('22.0'),
-            stop=StopWatch(stopped_at=MORNING, target=Decimal('22.0'), peak=Decimal('22.3')),
+            stop=StopWatch(stopped_at=MORNING, target=Decimal('22.0'), offset=Decimal('0.10'), peak=Decimal('22.3')),
         ),
     )
     return _use_case(store, temperatures, house_thermostats, f_book, dispatcher, learning=locked_learning)
