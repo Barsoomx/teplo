@@ -1,0 +1,20 @@
+{% load i18n %}<section class="room" aria-labelledby="room-{{ room.slug }}">
+  <header class="room-head">
+    <h3 class="room-name" id="room-{{ room.slug }}">{{ room.name }}</h3>
+  </header>
+  {% if room.zones %}
+  <div class="tiles">
+    {% for zone in room.zones %}{% include 'panel/_zone_tile.html' with heading_level=4 %}{% endfor %}
+  </div>
+  {% if room.sensors %}
+  <ul class="air-sensors" role="list" aria-label="{% translate 'Air' %}">
+    {% for sensor in room.sensors %}{% include 'panel/_air_sensor.html' %}{% endfor %}
+  </ul>
+  {% endif %}
+  {% elif room.sensors %}
+  <div class="tiles">
+    {% for sensor in room.sensors %}{% include 'panel/_air_tile.html' with heading_level=4 %}{% endfor %}
+  </div>
+  {% endif %}
+  {% include 'panel/_plug_tiles.html' with plugs=room.plugs heading_level=4 %}
+</section>

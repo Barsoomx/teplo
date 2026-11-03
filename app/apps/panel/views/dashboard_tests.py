@@ -50,6 +50,7 @@ def failing_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
     return replace(
         panel_overview,
         zones=(kitchen, hallway),
+        unplaced_zones=(kitchen, hallway),
         clock=ClockStatus(trusted=False, code=ClockStatusCode.NTP_STATUS_FAILED, reason=RAW_DETAILS[2]),
     )
 
@@ -75,7 +76,7 @@ def lost_air_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOver
         age_seconds=640,
     )
     kitchen = replace(panel_overview.zones[0], air=lost_air, path=ControlPath.FLOOR, air_target=None)
-    return replace(panel_overview, zones=(kitchen,), outdoor=None, standalone_sensors=())
+    return replace(panel_overview, zones=(kitchen,), unplaced_zones=(kitchen,), outdoor=None, standalone_sensors=())
 
 
 @pytest.fixture
@@ -118,7 +119,8 @@ def air_paths_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOve
             age_seconds=None,
         ),
     )
-    return replace(panel_overview, zones=(living_room, kitchen, hallway))
+    zones = (living_room, kitchen, hallway)
+    return replace(panel_overview, zones=zones, unplaced_zones=zones)
 
 
 @pytest.fixture
@@ -148,6 +150,33 @@ def outage_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOvervi
 def m_outage_overview_use_case(outage_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = outage_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_house_overview_use_case(house_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = house_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_unplaced_overview_use_case(
+    request: pytest.FixtureRequest,
+    panel_overview: GetPanelOverviewOutputDTO,
+    house_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    lost_boiler = panel_overview.plugs[1]
+    overviews = {
+        'with_floors': replace(
+            house_overview,
+            plugs=(*house_overview.plugs, lost_boiler),
+            unplaced_plugs=(lost_boiler,),
+        ),
+        'without_floors': panel_overview,
+    }
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = overviews[request.param]
         yield use_case
 
 
@@ -375,6 +404,99 @@ def test_dashboard_lists_the_loads_in_shedding_order_with_their_phase_current_an
         m_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == (True, 2, True, (True, True, True), (True, True, True), 1, 1, 1)
+
+
+def test_dashboard_groups_rooms_under_their_floors(
+    f_russian_client: Client,
+    m_house_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    places = [
+        content.find(marker)
+        for marker in (
+            'id="floor-floor-1">1 этаж</h2>',
+            'id="room-open-space">Гостиная, кухня и прихожая</h3>',
+            '<h4 class="tile-name">Кухня</h4>',
+            '<h4 class="load-name">Бойлер 1 этаж</h4>',
+            'id="floor-floor-2">2 этаж</h2>',
+            'id="room-bedroom">Спальня</h3>',
+            '<h4 class="tile-name">Воздух: спальня</h4>',
+            'id="loads-title"',
+        )
+    ]
+    assert (
+        -1 in places,
+        places == sorted(places),
+        content.count('class="floor"'),
+        content.count('class="room"'),
+        m_house_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (False, True, 2, 2, 1, 1)
+
+
+def test_dashboard_shows_the_air_of_a_room_without_a_zone_in_large_type(
+    f_russian_client: Client,
+    m_house_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    bedroom_at = content.index('id="room-bedroom"')
+    bedroom = content[bedroom_at : content.index('</section>', bedroom_at)]
+    assert (
+        bedroom.count('<article class="tile tile-air">'),
+        '<p class="readout-value">19,8<span class="readout-unit">°</span> <span class="air-humidity">' in bedroom,
+        '38%' in bedroom,
+        '<p class="readout-caption">Воздух</p>' in bedroom,
+        ('style=' in bedroom, 'tile-floor' in bedroom, 'scale' in bedroom),
+        ('air-row' in content, content.count('Воздух: спальня')),
+        m_house_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (1, True, True, True, (False, False, False), (False, 1), 1, 1)
+
+
+def test_dashboard_leaves_out_a_room_with_nothing_to_show(
+    f_russian_client: Client,
+    m_house_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Кабинет' in content,
+        'room-office' in content,
+        'id="room-bedroom"' in content,
+        m_house_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (False, False, True, 1, 1)
+
+
+@pytest.mark.parametrize(
+    ('m_unplaced_overview_use_case', 'named'),
+    [('with_floors', True), ('without_floors', False)],
+    indirect=['m_unplaced_overview_use_case'],
+)
+def test_dashboard_names_zones_and_plugs_without_a_room_only_when_the_house_has_floors(
+    f_russian_client: Client,
+    m_unplaced_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    named: bool,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Без комнаты' in content,
+        'id="floor-unplaced"' in content,
+        '<h3 class="load-name">Бойлер 2 этаж</h3>' in content,
+        m_unplaced_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (named, named, True, 1, 1)
 
 
 def test_dashboard_without_unmarked_outages_asks_nothing(

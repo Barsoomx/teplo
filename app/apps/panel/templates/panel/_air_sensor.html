@@ -1,0 +1,6 @@
+{% load i18n panel_format %}{% if sensor.available %}
+<li class="air-sensor">{% icon 'thermometer' %}<span class="air-sensor-name">{{ sensor.name }}</span> <span class="air-sensor-value">{{ sensor.temperature|floatformat:1 }}°</span>{% if sensor.humidity is not None %} <span class="air-humidity"><span class="visually-hidden">{% translate 'humidity' %} </span>{{ sensor.humidity|floatformat:0 }}%</span>{% endif %}</li>
+{% else %}
+{% failure_note sensor.error_code sensor.error omit='device_unavailable' device='temperature_sensor' as sensor_note %}
+<li class="air-sensor is-offline"{% if sensor.error %} title="{{ sensor.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% blocktranslate with name=sensor.name %}{{ name }}: no connection. Check that the sensor has power and Wi-Fi.{% endblocktranslate %}{% if sensor_note %} <span class="offline-error">{{ sensor_note }}</span>{% endif %}</span></li>
+{% endif %}

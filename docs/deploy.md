@@ -164,7 +164,7 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
 
    Every node that is up prints its readings within 30 seconds, e.g. `teplo/teplo-air-kitchen/sensor/temperature/state 21.5`: the air and outdoor sensors every 30 seconds, the phase meter every second. No message is retained, so a node that is already connected prints no status line: `teplo/<node>/status online` appears only when a node connects, and `offline` when it drops. Stop with Ctrl-C.
 
-   The dashboard shows a reading within 10 seconds of its arrival: an air sensor in its zone card, or in the row under the house facts when it belongs to no zone, the outdoor temperature among the house facts, and the phase bars below the loads, refreshed every 3 seconds. `api/v1/sensors/` and `api/v1/phases/` give the same as JSON.
+   The dashboard shows a reading within 10 seconds of its arrival: an air sensor in its zone's tile or its room's card, or in the row under the house facts when it belongs to no room, the outdoor temperature among the house facts, and the phase bars below the loads, refreshed every 3 seconds. `api/v1/sensors/` and `api/v1/phases/` give the same as JSON.
 
 `teplo.log` says `mqtt_connected` once teplo has subscribed. `mqtt_connection_refused` means a wrong `username` or `password` in `[mqtt]`; `mqtt_connect_failed` means the broker is down or listens on another address. teplo keeps retrying on its own, 1 second after a failure and then up to every 30 seconds. `esphome_node_unknown` names a node that publishes but matches no teplo device, e.g. a misspelt node name, and `mqtt_not_configured` a missing `[mqtt]` table. The broker logs to standard error, which the init script discards; to watch it, stop the service and run `/opt/sbin/mosquitto -c /opt/etc/mosquitto/mosquitto.conf -v` in the foreground.
 
@@ -245,6 +245,7 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 - The cron watchdog restarts teplo when its process dies or exceeds 300 MB RSS and trims the log above 5 MB. After `S90teplo stop` it leaves teplo stopped until the next `start`.
 - Secrets and settings are read at start: restart after editing them.
 - Day to day, the panel's schedule page (`/schedule/`) sets each zone's comfort windows and its settings page (`/settings/`) the setpoints, the climate and load thresholds and the shedding order; neither needs a restart. The heating cycle and the load guard pick a change up within a minute, and a thermostat takes a new setpoint or schedule at its zone's next allowed write, at most one change per 30 minutes. Each change is journaled, e.g. «Кухня: пол в комфорте 28° → 27,5°». The gates `live control`, `air control live`, `second floor guard live`, `load management live` and a load's `live` are switched only in the admin, as described below: the settings page shows each read-only with a link to its admin page, and `TEPLO_DRY_RUN` stays in `teplo.env`.
+- The floors and rooms come from the site data and are edited in the admin (`/admin/house/floor/`, `/admin/house/room/`). A plug or a sensor that serves no zone takes its room on its own page in `/admin/devices/device/`; a zone's thermostat and air sensor follow the room set on the zone's page in `/admin/climate/zone/`. The site data puts the water heater 1F and washing machine plugs in «Санузел 1 этаж»; if they stand elsewhere, set their room on their pages. The dashboard shows a room once it holds a zone, an air sensor or a plug.
 
 ## Enable live control
 
@@ -279,7 +280,15 @@ Air control, optimal start and the second-floor guard ship in dry-run (`docs/des
 
 ## Roll back
 
-An older release does not know the migrations of a newer one, so undo them before it runs. Rolling back past load management takes two steps first:
+An older release does not know the migrations of a newer one, so undo them before it runs, from the release you leave and the newest first.
+
+Rolling back past the floors and rooms takes one step: undo the site's placement, then the room columns and the floor and room tables. `migrate climate 0008` also undoes the site's `0008_house`, which names «Воздух: спальня» «Воздух: 2 этаж» again and keeps the oven, dishwasher and washing machine plugs:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; manage="/opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py"; $manage migrate climate 0008 && $manage migrate devices 0002 && $manage migrate house zero'
+```
+
+Rolling back past load management takes two steps first:
 
 1. Untick `load management live` in `/admin/power/loadsettings/` and wait until no load on the dashboard reads «Отключена»: an older release never switches a plug back on.
 2. From the release you leave, migrate the devices back. This returns the water heater plugs to the read-only driver, which older releases know, and keeps the loads and what they learned for the next deploy:

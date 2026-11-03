@@ -9,6 +9,7 @@ from apps.climate.domain.climate_config import start_offset_keeps_band
 from apps.climate.models import ClimateSettings, ComfortPeriod, Zone, ZoneLearning
 from apps.climate.models.climate_settings import START_OFFSET_BELOW_MIN_BAND
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.devices.models import Device
 from apps.power.models import Load
 
 SHED_ZONE_FIELDS = ('slug', 'thermostat')
@@ -27,11 +28,13 @@ class ZoneAdmin(admin.ModelAdmin):
         'kind',
         'thermostat',
         'air_sensor',
+        'room',
         'heating_enabled',
         'live_control',
         'air_control_live',
     )
     list_editable = ('heating_enabled', 'live_control', 'air_control_live')
+    list_filter = ('room',)
     readonly_fields = ('boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
     inlines = (ComfortPeriodInline,)
 
@@ -41,6 +44,12 @@ class ZoneAdmin(admin.ModelAdmin):
             return fields
 
         return (*fields, *SHED_ZONE_FIELDS)
+
+    def save_model(self, request: HttpRequest, obj: Zone, form: forms.ModelForm, change: bool) -> None:
+        super().save_model(request, obj, form, change)
+        Device.objects.filter(
+            pk__in=[pk for pk in (obj.thermostat_id, obj.air_sensor_id) if pk is not None],
+        ).update(room=obj.room_id)
 
 
 class ClimateSettingsAdminForm(forms.ModelForm):

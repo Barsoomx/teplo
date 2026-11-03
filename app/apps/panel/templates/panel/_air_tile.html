@@ -1,0 +1,13 @@
+{% load i18n panel_format %}<article class="tile tile-air{% if not sensor.available %} is-offline{% endif %}">
+  <header class="tile-head">
+    <h{{ heading_level|default:2 }} class="tile-name">{{ sensor.name }}</h{{ heading_level|default:2 }}>
+  </header>
+  <div class="readout">
+    {% if sensor.available %}<p class="readout-value">{{ sensor.temperature|floatformat:1 }}<span class="readout-unit">°</span>{% if sensor.humidity is not None %} <span class="air-humidity"><span class="visually-hidden">{% translate 'humidity' %} </span>{{ sensor.humidity|floatformat:0 }}%</span>{% endif %}</p>{% else %}<p class="readout-value readout-missing">—</p>{% endif %}
+    <p class="readout-caption">{% translate 'Air' %}</p>
+    {% if not sensor.available %}
+    {% failure_note sensor.error_code sensor.error omit='device_unavailable' device='temperature_sensor' as note %}
+    <p class="offline-note"{% if sensor.error %} title="{{ sensor.error }}"{% endif %}>{% icon 'wifi-off' %}<span>{% translate 'No connection to the air sensor. Check that it has power and Wi-Fi.' %}{% if note %} <span class="offline-error">{{ note }}</span>{% endif %}</span></p>
+    {% endif %}
+  </div>
+</article>

@@ -31,6 +31,13 @@ class Zone(models.Model):
         related_name='air_zones',
         limit_choices_to={'kind': DeviceKind.TEMPERATURE_SENSOR.value},
     )
+    room = models.ForeignKey(
+        'house.Room',
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='zones',
+    )
     heating_enabled = models.BooleanField(default=True)
     live_control = models.BooleanField(default=False)
     air_control_live = models.BooleanField(default=False)

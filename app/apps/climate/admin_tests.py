@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
+from django import forms
 from django.contrib import admin
 from django.contrib.auth.models import User
 from django.http import HttpRequest
@@ -12,6 +13,10 @@ from django.utils import translation
 from apps.climate.admin import ClimateSettingsAdmin, ZoneAdmin, ZoneLearningAdmin
 from apps.climate.factories import ClimateSettingsFactory, ZoneFactory, ZoneLearningFactory
 from apps.climate.models import ClimateSettings, Zone, ZoneLearning
+from apps.devices.domain.kinds import DeviceDriver, DeviceKind
+from apps.devices.factories import DeviceFactory
+from apps.devices.models import Device
+from apps.house.factories import RoomFactory
 from apps.power.factories import ZoneLoadFactory
 
 pytestmark = pytest.mark.django_db
@@ -86,6 +91,30 @@ def f_kitchen_posted(f_kitchen: Zone) -> dict[str, str]:
 
 
 @pytest.fixture
+def f_kitchen_moved_to_the_open_space(
+    f_zone_admin: ZoneAdmin,
+    f_request: HttpRequest,
+    f_kitchen: Zone,
+    f_kitchen_posted: dict[str, str],
+) -> forms.ModelForm:
+    air = DeviceFactory.create(
+        slug='air-kitchen',
+        kind=DeviceKind.TEMPERATURE_SENSOR,
+        driver=DeviceDriver.ESPHOME_TEMPERATURE,
+    )
+    open_space = RoomFactory.create(slug='open-space')
+    DeviceFactory.create(
+        slug='plug-oven',
+        kind=DeviceKind.PLUG,
+        driver=DeviceDriver.TUYA_PLUG,
+        monitor_only=True,
+        room=RoomFactory.create(slug='pantry'),
+    )
+    posted = {**f_kitchen_posted, 'air_sensor': str(air.pk), 'room': str(open_space.pk)}
+    return f_zone_admin.get_form(f_request, f_kitchen, change=True)(posted, instance=f_kitchen)
+
+
+@pytest.fixture
 def f_kitchen_with_its_load(request: pytest.FixtureRequest, f_kitchen: Zone) -> Zone:
     ZoneLoadFactory.create(slug='kitchen', zone=f_kitchen, shed_at=request.param)
     return f_kitchen
@@ -150,6 +179,25 @@ def test_zone_page_of_a_zone_without_a_load_keeps_the_slug_and_the_thermostat_ed
     form = f_zone_admin.get_form(f_request, f_kitchen, change=True)
 
     assert (readonly, {'slug', 'thermostat'} <= set(form.base_fields)) == (CYCLE_FIELDS, True)
+
+
+def test_saving_a_zone_moves_its_thermostat_and_air_sensor_into_its_room(
+    f_zone_admin: ZoneAdmin,
+    f_request: HttpRequest,
+    f_kitchen_moved_to_the_open_space: forms.ModelForm,
+) -> None:
+    valid = f_kitchen_moved_to_the_open_space.is_valid()
+    f_zone_admin.save_model(
+        f_request,
+        f_kitchen_moved_to_the_open_space.save(commit=False),
+        f_kitchen_moved_to_the_open_space,
+        change=True,
+    )
+
+    assert (valid, sorted(Device.objects.values_list('slug', 'room__slug'))) == (
+        True,
+        [('air-kitchen', 'open-space'), ('plug-oven', 'pantry'), ('thermostat-kitchen', 'open-space')],
+    )
 
 
 def test_zone_learning_admin_shows_what_zones_learned_without_editing_it(

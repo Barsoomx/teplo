@@ -9,6 +9,13 @@ class Device(models.Model):
     kind = models.CharField(max_length=32, choices=[(kind.value, kind.value) for kind in DeviceKind])
     driver = models.CharField(max_length=32, choices=[(driver.value, driver.value) for driver in DeviceDriver])
     monitor_only = models.BooleanField(default=False)
+    room = models.ForeignKey(
+        'house.Room',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='devices',
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

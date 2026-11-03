@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
@@ -16,9 +17,11 @@ from apps.climate.domain.week_plan import DayPeriod
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
+    FloorOverview,
     GetPanelOverviewOutputDTO,
     LoadOverview,
     PlugOverview,
+    RoomOverview,
     SensorOverview,
     ZoneOverview,
     ZoneRegime,
@@ -67,59 +70,59 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
         humidity=None,
         age_seconds=20,
     )
+    kitchen = ZoneOverview(
+        slug='kitchen',
+        name='Кухня',
+        kind=ZoneKind.AIR,
+        mode=ScheduleMode.COMFORT,
+        available=True,
+        error_code=None,
+        error=None,
+        floor_temperature=Decimal('24.5'),
+        power=True,
+        setpoint=Decimal('28.0'),
+        target_setpoint=Decimal('28.0'),
+        boosted=False,
+        live_control=False,
+        air_control_live=False,
+        path=ControlPath.AIR_DRY_RUN,
+        air_target=Decimal('22.0'),
+        regime=ZoneRegime.COMFORT,
+        lead=None,
+        boost_until=None,
+        next_change=ScheduleTransition(
+            mode=ScheduleMode.NIGHT,
+            at=datetime(2026, 10, 29, 23, 30, tzinfo=ZoneInfo('Europe/Moscow')),
+        ),
+        air=air_kitchen,
+    )
+    plugs = (
+        PlugOverview(
+            slug='plug-boiler-1f',
+            name='Бойлер 1 этаж',
+            available=True,
+            error_code=None,
+            error=None,
+            on=True,
+            power_watts=Decimal('1305.4'),
+            current_amps=Decimal('6.02'),
+            voltage_volts=Decimal('216.8'),
+        ),
+        PlugOverview(
+            slug='plug-boiler-2f',
+            name='Бойлер 2 этаж',
+            available=False,
+            error_code='device_protocol_error',
+            error='unexpected plug payload: {}',
+            on=None,
+            power_watts=None,
+            current_amps=None,
+            voltage_volts=None,
+        ),
+    )
     return GetPanelOverviewOutputDTO(
-        zones=(
-            ZoneOverview(
-                slug='kitchen',
-                name='Кухня',
-                kind=ZoneKind.AIR,
-                mode=ScheduleMode.COMFORT,
-                available=True,
-                error_code=None,
-                error=None,
-                floor_temperature=Decimal('24.5'),
-                power=True,
-                setpoint=Decimal('28.0'),
-                target_setpoint=Decimal('28.0'),
-                boosted=False,
-                live_control=False,
-                air_control_live=False,
-                path=ControlPath.AIR_DRY_RUN,
-                air_target=Decimal('22.0'),
-                regime=ZoneRegime.COMFORT,
-                lead=None,
-                boost_until=None,
-                next_change=ScheduleTransition(
-                    mode=ScheduleMode.NIGHT,
-                    at=datetime(2026, 10, 29, 23, 30, tzinfo=ZoneInfo('Europe/Moscow')),
-                ),
-                air=air_kitchen,
-            ),
-        ),
-        plugs=(
-            PlugOverview(
-                slug='plug-boiler-1f',
-                name='Бойлер 1 этаж',
-                available=True,
-                error_code=None,
-                error=None,
-                on=True,
-                power_watts=Decimal('1305.4'),
-                current_amps=Decimal('6.02'),
-                voltage_volts=Decimal('216.8'),
-            ),
-            PlugOverview(
-                slug='plug-boiler-2f',
-                name='Бойлер 2 этаж',
-                available=False,
-                error_code='device_protocol_error',
-                error='unexpected plug payload: {}',
-                on=None,
-                power_watts=None,
-                current_amps=None,
-                voltage_volts=None,
-            ),
-        ),
+        zones=(kitchen,),
+        plugs=plugs,
         loads=(
             LoadOverview(
                 slug='boiler-1f',
@@ -161,9 +164,80 @@ def panel_overview() -> GetPanelOverviewOutputDTO:
         sensors=(air_second_floor, air_kitchen, outdoor),
         outdoor=outdoor,
         standalone_sensors=(air_second_floor,),
+        floors=(),
+        unplaced_zones=(kitchen,),
+        unplaced_plugs=plugs,
         outages=(),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized'),
         dry_run=True,
+    )
+
+
+@pytest.fixture
+def house_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverviewOutputDTO:
+    air_second_floor, air_kitchen, outdoor = panel_overview.sensors
+    kitchen_air = replace(air_kitchen, room='open-space')
+    bedroom_air = replace(
+        air_second_floor,
+        name='Воздух: спальня',
+        available=True,
+        error_code=None,
+        error=None,
+        humidity=Decimal('38.0'),
+        age_seconds=12,
+        room='bedroom',
+    )
+    kitchen = replace(panel_overview.zones[0], air=kitchen_air, room='open-space')
+    boiler = replace(panel_overview.plugs[0], room='open-space')
+    return replace(
+        panel_overview,
+        zones=(kitchen,),
+        plugs=(boiler,),
+        sensors=(kitchen_air, bedroom_air, outdoor),
+        standalone_sensors=(),
+        floors=(
+            FloorOverview(
+                slug='floor-1',
+                name='1 этаж',
+                rooms=(
+                    RoomOverview(
+                        slug='open-space',
+                        name='Гостиная, кухня и прихожая',
+                        floor='floor-1',
+                        zones=(kitchen,),
+                        sensors=(),
+                        plugs=(boiler,),
+                        devices=('air-kitchen', 'plug-boiler-1f', 'thermostat-kitchen'),
+                    ),
+                ),
+            ),
+            FloorOverview(
+                slug='floor-2',
+                name='2 этаж',
+                rooms=(
+                    RoomOverview(
+                        slug='bedroom',
+                        name='Спальня',
+                        floor='floor-2',
+                        zones=(),
+                        sensors=(bedroom_air,),
+                        plugs=(),
+                        devices=('air-second-floor',),
+                    ),
+                    RoomOverview(
+                        slug='office',
+                        name='Кабинет',
+                        floor='floor-2',
+                        zones=(),
+                        sensors=(),
+                        plugs=(),
+                        devices=(),
+                    ),
+                ),
+            ),
+        ),
+        unplaced_zones=(),
+        unplaced_plugs=(),
     )
 
 

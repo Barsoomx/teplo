@@ -38,7 +38,7 @@ esphome/                 ESPHome device configurations
 deploy/                  router install and deploy scripts
 ```
 
-Contexts: `core`, `devices`, `climate`, `power`, `tariffs`, `telemetry`, `notifications`, `system`, `panel`.
+Contexts: `core`, `house`, `devices`, `climate`, `power`, `tariffs`, `telemetry`, `notifications`, `system`, `panel`.
 
 - **Use cases** extend `BaseUseCase[TInput, TOutput]`: the public `execute(input_dto)` handles logging, `DomainError` and event dispatch, the subclass implements `_execute`. Views, management commands and runtime loops only call use cases.
 - **Use cases are synchronous**; the asyncio runtime runs each periodic job in a worker thread (`asyncio.to_thread`), so jobs run concurrently: shared in-memory state takes a lock and a driver serializes calls to its device.

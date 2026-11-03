@@ -8,3 +8,4 @@ class DeviceSettings:
     slug: str
     name: str
     kind: DeviceKind
+    room_slug: str | None = None

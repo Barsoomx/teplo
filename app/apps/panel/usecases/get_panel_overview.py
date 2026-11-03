@@ -29,6 +29,8 @@ from apps.devices.services.state_store import (
     temperature_state_store,
     thermostat_state_store,
 )
+from apps.house.domain.rooms import RoomRecord
+from apps.house.repositories.house import HouseRepository
 from apps.power.domain.control import LoadControl, commands_live
 from apps.power.domain.load_state import LoadState, load_state
 from apps.power.domain.load_status import plug_draws, thermostat_draws
@@ -68,6 +70,7 @@ class SensorOverview:
     temperature: Decimal | None
     humidity: Decimal | None
     age_seconds: int | None
+    room: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -93,6 +96,7 @@ class ZoneOverview:
     boost_until: datetime | None
     next_change: ScheduleTransition | None
     air: SensorOverview | None
+    room: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -106,6 +110,7 @@ class PlugOverview:
     power_watts: Decimal | None
     current_amps: Decimal | None
     voltage_volts: Decimal | None
+    room: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -129,6 +134,32 @@ class LoadOverview:
 
 
 @dataclass(frozen=True, kw_only=True)
+class RoomOverview:
+    slug: str
+    name: str
+    floor: str
+    zones: tuple[ZoneOverview, ...]
+    sensors: tuple[SensorOverview, ...]
+    plugs: tuple[PlugOverview, ...]
+    devices: tuple[str, ...]
+
+    @property
+    def shown(self) -> bool:
+        return bool(self.zones or self.sensors or self.plugs)
+
+
+@dataclass(frozen=True, kw_only=True)
+class FloorOverview:
+    slug: str
+    name: str
+    rooms: tuple[RoomOverview, ...]
+
+    @property
+    def shown_rooms(self) -> tuple[RoomOverview, ...]:
+        return tuple(room for room in self.rooms if room.shown)
+
+
+@dataclass(frozen=True, kw_only=True)
 class GetPanelOverviewOutputDTO:
     zones: tuple[ZoneOverview, ...]
     plugs: tuple[PlugOverview, ...]
@@ -136,6 +167,9 @@ class GetPanelOverviewOutputDTO:
     sensors: tuple[SensorOverview, ...]
     outdoor: SensorOverview | None
     standalone_sensors: tuple[SensorOverview, ...]
+    floors: tuple[FloorOverview, ...]
+    unplaced_zones: tuple[ZoneOverview, ...]
+    unplaced_plugs: tuple[PlugOverview, ...]
     outages: tuple[OutageRecord, ...]
     clock: ClockStatus
     dry_run: bool
@@ -146,6 +180,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self,
         zones: ZoneRepository,
         devices: DeviceRepository,
+        house: HouseRepository,
         climate_settings: ClimateSettingsRepository,
         learning: ZoneLearningRepository,
         outages: OutageRepository,
@@ -163,6 +198,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         super().__init__()
         self._zones = zones
         self._devices = devices
+        self._house = house
         self._climate_settings = climate_settings
         self._learning = learning
         self._outages = outages
@@ -182,6 +218,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         return cls(
             zones=ZoneRepository(),
             devices=DeviceRepository(),
+            house=HouseRepository(),
             climate_settings=ClimateSettingsRepository(),
             learning=ZoneLearningRepository(),
             outages=OutageRepository(),
@@ -211,26 +248,52 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         outdoor = None if outdoor_slug is None else sensors.get(outdoor_slug)
         cycle = CycleConditions(now=now, clock_trusted=clock.trusted, control=control, outdoor=_temperature(outdoor))
         guarded_zone = self._guarded_zone(control)
-        placed = {outdoor_slug, *(zone.air_sensor_slug for zone in zones)}
+        zone_overviews = tuple(
+            self._zone(
+                zone,
+                _air_sensor(zone, sensors),
+                learning.get(zone.slug, ZoneLearningRecord.unlearned()),
+                cycle,
+                guarded=zone.slug == guarded_zone,
+            )
+            for zone in zones
+        )
+        plugs = tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG)
+        zone_air = {zone.air_sensor_slug for zone in zones}
+        room_sensors = tuple(sensor for slug, sensor in sensors.items() if slug not in zone_air)
+        floors = self._floors(zone_overviews, room_sensors, plugs, devices)
+        placed = frozenset(room.slug for floor in floors for room in floor.rooms)
         return GetPanelOverviewOutputDTO(
-            zones=tuple(
-                self._zone(
-                    zone,
-                    _air_sensor(zone, sensors),
-                    learning.get(zone.slug, ZoneLearningRecord.unlearned()),
-                    cycle,
-                    guarded=zone.slug == guarded_zone,
-                )
-                for zone in zones
-            ),
-            plugs=tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG),
+            zones=zone_overviews,
+            plugs=plugs,
             loads=self._load_overviews(frozenset(zone.slug for zone in zones if zone.live_control)),
             sensors=tuple(sensors.values()),
             outdoor=outdoor,
-            standalone_sensors=tuple(sensor for slug, sensor in sensors.items() if slug not in placed),
+            standalone_sensors=tuple(
+                sensor for sensor in room_sensors if sensor.slug != outdoor_slug and sensor.room not in placed
+            ),
+            floors=floors,
+            unplaced_zones=tuple(zone for zone in zone_overviews if zone.room not in placed),
+            unplaced_plugs=tuple(plug for plug in plugs if plug.room not in placed),
             outages=tuple(self._overloads.noted(outage) for outage in self._outages.unmarked()),
             clock=clock,
             dry_run=self._dry_run,
+        )
+
+    def _floors(
+        self,
+        zones: tuple[ZoneOverview, ...],
+        sensors: tuple[SensorOverview, ...],
+        plugs: tuple[PlugOverview, ...],
+        devices: list[DeviceSettings],
+    ) -> tuple[FloorOverview, ...]:
+        return tuple(
+            FloorOverview(
+                slug=floor.slug,
+                name=floor.name,
+                rooms=tuple(_room(room, zones, sensors, plugs, devices) for room in floor.rooms),
+            )
+            for floor in self._house.floors()
         )
 
     def _guarded_zone(self, control: ClimateControl) -> str | None:
@@ -285,6 +348,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 next_transition(zone.windows, cycle.now, lead) if cycle.clock_trusted and zone.heating_enabled else None
             ),
             air=air,
+            room=zone.room_slug,
         )
 
     def _load_overviews(self, live_zones: frozenset[str]) -> tuple[LoadOverview, ...]:
@@ -358,6 +422,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             power_watts=state.power_watts if state else None,
             current_amps=state.current_amps if state else None,
             voltage_volts=state.voltage_volts if state else None,
+            room=device.room_slug,
         )
 
     def _sensor(self, device: DeviceSettings) -> SensorOverview:
@@ -373,7 +438,26 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             temperature=reading.temperature if reading else None,
             humidity=reading.humidity if reading else None,
             age_seconds=None if snapshot.age is None else int(snapshot.age.total_seconds()),
+            room=device.room_slug,
         )
+
+
+def _room(
+    room: RoomRecord,
+    zones: tuple[ZoneOverview, ...],
+    sensors: tuple[SensorOverview, ...],
+    plugs: tuple[PlugOverview, ...],
+    devices: list[DeviceSettings],
+) -> RoomOverview:
+    return RoomOverview(
+        slug=room.slug,
+        name=room.name,
+        floor=room.floor_slug,
+        zones=tuple(zone for zone in zones if zone.room == room.slug),
+        sensors=tuple(sensor for sensor in sensors if sensor.room == room.slug),
+        plugs=tuple(plug for plug in plugs if plug.room == room.slug),
+        devices=tuple(sorted(device.slug for device in devices if device.room_slug == room.slug)),
+    )
 
 
 def _air_sensor(zone: ZoneSettings, sensors: dict[str, SensorOverview]) -> SensorOverview | None:

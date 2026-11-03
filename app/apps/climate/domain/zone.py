@@ -47,6 +47,7 @@ class ZoneSettings:
     last_command_at: datetime | None
     last_dry_run_at: datetime | None
     last_air_dry_run_at: datetime | None
+    room_slug: str | None = None
 
     def is_boosted(self, now: datetime) -> bool:
         return self.boost_until is not None and now < self.boost_until <= now + BOOST_DURATION

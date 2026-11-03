@@ -15,6 +15,7 @@ from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
+from apps.house.factories import RoomFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -87,6 +88,14 @@ def floor_zone() -> Zone:
 
 
 @pytest.fixture
+def placed_zones() -> None:
+    open_space = RoomFactory.create(slug='open-space')
+    ZoneFactory.create(slug='kitchen', room=open_space)
+    ZoneFactory.create(slug='hallway', room=open_space)
+    ZoneFactory.create(slug='bathroom-2f')
+
+
+@pytest.fixture
 def f_commanded_zone(f_zone: Zone) -> Zone:
     Zone.objects.filter(pk=f_zone.pk).update(
         last_command_at=NOW - timedelta(minutes=5),
@@ -129,6 +138,15 @@ def test_all_settings_names_the_air_sensor_of_a_zone_that_has_one(f_air_zones: l
     assert [(zone.slug, zone.air_sensor_slug) for zone in ZoneRepository.all_settings()] == [
         (f_air_zones[1].slug, None),
         (f_air_zones[0].slug, 'air-living-room'),
+    ]
+
+
+@pytest.mark.usefixtures('placed_zones')
+def test_all_settings_name_the_room_of_each_zone() -> None:
+    assert [(zone.slug, zone.room_slug) for zone in ZoneRepository.all_settings()] == [
+        ('bathroom-2f', None),
+        ('hallway', 'open-space'),
+        ('kitchen', 'open-space'),
     ]
 
 

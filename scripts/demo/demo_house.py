@@ -15,6 +15,7 @@ from apps.devices.domain.readings import Phase, PlugState, TemperatureReading, T
 from apps.devices.models import Device
 from apps.devices.services.phase_meter_store import phase_meter_store
 from apps.devices.services.state_store import plug_state_store, temperature_state_store, thermostat_state_store
+from apps.house.models import Floor, Room
 from apps.power.domain.ev_detection import EvWatch
 from apps.power.domain.loads import LoadPhase
 from apps.power.models import Load, LoadSettings
@@ -32,12 +33,26 @@ ENGLISH_NAMES = {
 ENGLISH_DEVICE_NAMES = {
     'plug-boiler-1f': 'Water heater 1F',
     'plug-boiler-2f': 'Water heater 2F',
+    'plug-oven': 'Oven',
+    'plug-dishwasher': 'Dishwasher',
+    'plug-washing-machine': 'Washing machine',
     'air-living-room': 'Living room air',
     'air-kitchen': 'Kitchen air',
     'air-hallway': 'Hallway air',
-    'air-second-floor': 'Second floor air',
+    'air-second-floor': 'Bedroom air',
     'outdoor': 'Outdoor',
     'phase-meter': 'Phase meter',
+}
+ENGLISH_FLOOR_NAMES = {
+    'floor-1': '1st floor',
+    'floor-2': '2nd floor',
+}
+ENGLISH_ROOM_NAMES = {
+    'open-space': 'Living room, kitchen and hallway',
+    'bathroom-1f': 'Washroom',
+    'bedroom': 'Bedroom',
+    'office': 'Office',
+    'bathroom-2f': 'Bathroom',
 }
 COMFORT_STARTS = {
     'living-room': time(6, 30),
@@ -54,6 +69,9 @@ READINGS = {
 PLUG_READINGS = {
     'plug-boiler-1f': ('1305.4', '6.02', '216.8'),
     'plug-boiler-2f': ('0.0', '0.0', '223.1'),
+    'plug-oven': ('0.0', '0.0', '221.4'),
+    'plug-dishwasher': ('1874.2', '8.47', '219.6'),
+    'plug-washing-machine': ('2.1', '0.02', '222.3'),
 }
 SENSOR_READINGS = {
     'air-living-room': ('22.4', '41.3'),
@@ -95,6 +113,10 @@ def main() -> None:
             Zone.objects.filter(slug=slug).update(name=name)
         for slug, name in ENGLISH_DEVICE_NAMES.items():
             Device.objects.filter(slug=slug).update(name=name)
+        for slug, name in ENGLISH_FLOOR_NAMES.items():
+            Floor.objects.filter(slug=slug).update(name=name)
+        for slug, name in ENGLISH_ROOM_NAMES.items():
+            Room.objects.filter(slug=slug).update(name=name)
         for slug, name in ENGLISH_LOAD_NAMES.items():
             Load.objects.filter(slug=slug).update(name=name)
     _seed_zones(now)

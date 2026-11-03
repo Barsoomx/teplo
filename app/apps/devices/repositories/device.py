@@ -32,6 +32,11 @@ class DeviceRepository:
     @staticmethod
     def all_settings() -> list[DeviceSettings]:
         return [
-            DeviceSettings(slug=device.slug, name=device.name, kind=DeviceKind(device.kind))
-            for device in Device.objects.order_by('slug')
+            DeviceSettings(
+                slug=device.slug,
+                name=device.name,
+                kind=DeviceKind(device.kind),
+                room_slug=None if device.room is None else device.room.slug,
+            )
+            for device in Device.objects.select_related('room').order_by('slug')
         ]

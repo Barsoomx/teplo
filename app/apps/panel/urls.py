@@ -7,6 +7,7 @@ from apps.panel.views.api.v1.loads import LoadsApiView
 from apps.panel.views.api.v1.outages import OutagesApiView
 from apps.panel.views.api.v1.phases import PhasesApiView
 from apps.panel.views.api.v1.plugs import PlugsApiView
+from apps.panel.views.api.v1.rooms import RoomsApiView
 from apps.panel.views.api.v1.sensors import SensorsApiView
 from apps.panel.views.api.v1.zones import ZonesApiView
 from apps.panel.views.boost_zone import BoostZoneView
@@ -57,6 +58,7 @@ urlpatterns = [
     path('login/', LoginView.as_view(template_name='panel/login.html'), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),
     path('api/v1/zones/', ZonesApiView.as_view(), name='api-v1-zones'),
+    path('api/v1/rooms/', RoomsApiView.as_view(), name='api-v1-rooms'),
     path('api/v1/plugs/', PlugsApiView.as_view(), name='api-v1-plugs'),
     path('api/v1/loads/', LoadsApiView.as_view(), name='api-v1-loads'),
     path('api/v1/sensors/', SensorsApiView.as_view(), name='api-v1-sensors'),

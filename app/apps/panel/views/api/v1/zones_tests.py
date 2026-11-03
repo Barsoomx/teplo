@@ -40,6 +40,7 @@ def test_zones_api_returns_overview(f_client: Client, m_overview_use_case: Magic
                 'air_control_live': False,
                 'path': 'air_dry_run',
                 'air_target': '22.0',
+                'room': None,
             },
         ],
         1,

@@ -22,6 +22,8 @@ from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
+from apps.house.factories import FloorFactory, RoomFactory
+from apps.house.repositories.house import HouseRepository
 from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewInputDTO,
     GetPanelOverviewOutputDTO,
@@ -76,8 +78,17 @@ BOILER_SHED = Shed(
 )
 
 
-def _sensor(slug: str) -> Device:
-    return DeviceFactory.create(slug=slug, kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.ESPHOME_TEMPERATURE)
+def _sensor(slug: str, **fields: object) -> Device:
+    return DeviceFactory.create(
+        slug=slug,
+        kind=DeviceKind.TEMPERATURE_SENSOR,
+        driver=DeviceDriver.ESPHOME_TEMPERATURE,
+        **fields,
+    )
+
+
+def _plug(slug: str, name: str, **fields: object) -> Device:
+    return DeviceFactory.create(slug=slug, name=name, kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG, **fields)
 
 
 def _zone(slug: str, name: str, **fields: object) -> Zone:
@@ -107,6 +118,7 @@ def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPane
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -142,6 +154,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -167,6 +180,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -195,6 +209,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -223,6 +238,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -246,6 +262,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -292,6 +309,7 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -363,6 +381,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -390,6 +409,7 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -476,6 +496,7 @@ def f_outages_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -589,6 +610,7 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         devices=DeviceRepository(),
+        house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository(),
         outages=OutageRepository(),
@@ -605,43 +627,92 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
     )
 
 
+@pytest.fixture
+def f_house_use_case() -> GetPanelOverviewUseCase:
+    ground = FloorFactory.create(slug='floor-1', name='1 этаж', level=1)
+    upstairs = FloorFactory.create(slug='floor-2', name='2 этаж', level=2)
+    open_space = RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая', floor=ground, position=1)
+    bathroom = RoomFactory.create(slug='bathroom-1f', name='Санузел 1 этаж', floor=ground, position=2)
+    bedroom = RoomFactory.create(slug='bedroom', name='Спальня', floor=upstairs, position=1)
+    RoomFactory.create(slug='office', name='Кабинет', floor=upstairs, position=2)
+    ZoneFactory.create(
+        slug='kitchen',
+        name='Кухня',
+        thermostat__slug='thermostat-kitchen',
+        thermostat__room=open_space,
+        air_sensor=_sensor('air-kitchen', name='Воздух: кухня', room=open_space),
+        room=open_space,
+    )
+    ZoneFactory.create(
+        slug='hallway',
+        name='Прихожая',
+        thermostat__slug='thermostat-hallway',
+        thermostat__room=open_space,
+        room=open_space,
+    )
+    ZoneFactory.create(
+        slug='bathroom-1f',
+        name='Санузел 1 этаж',
+        kind=ZoneKind.FLOOR,
+        thermostat__slug='thermostat-bathroom-1f',
+        thermostat__room=bathroom,
+        room=bathroom,
+    )
+    ZoneFactory.create(
+        slug='bathroom-2f',
+        name='Санузел 2 этаж',
+        kind=ZoneKind.FLOOR,
+        thermostat__slug='thermostat-bathroom-2f',
+    )
+    _sensor('air-fireplace', name='Воздух: у камина', room=open_space)
+    _sensor('air-second-floor', name='Воздух: спальня', room=bedroom)
+    _sensor('air-attic', name='Воздух: чердак')
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor', name='Улица'))
+    _plug('plug-oven', 'Духовка', monitor_only=True, room=open_space)
+    _plug('plug-boiler-1f', 'Бойлер 1 этаж', room=bathroom)
+    _plug('plug-boiler-2f', 'Бойлер 2 этаж')
+    return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), ControlBook())
+
+
 def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUseCase) -> None:
     output = f_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
 
-    assert output == GetPanelOverviewOutputDTO(
-        zones=(
-            ZoneOverview(
-                slug='kitchen',
-                name='Кухня',
-                kind=ZoneKind.AIR,
-                mode=ScheduleMode.COMFORT,
-                available=True,
-                error_code=None,
-                error=None,
-                floor_temperature=Decimal('21.5'),
-                power=True,
-                setpoint=Decimal('22.0'),
-                target_setpoint=Decimal('28.0'),
-                boosted=False,
-                live_control=False,
-                air_control_live=False,
-                path=ControlPath.FLOOR,
-                air_target=None,
-                regime=ZoneRegime.COMFORT,
-                lead=None,
-                boost_until=None,
-                next_change=ScheduleTransition(
-                    mode=ScheduleMode.NIGHT,
-                    at=datetime(2026, 10, 29, 23, 30, tzinfo=MOSCOW),
-                ),
-                air=None,
-            ),
+    kitchen = ZoneOverview(
+        slug='kitchen',
+        name='Кухня',
+        kind=ZoneKind.AIR,
+        mode=ScheduleMode.COMFORT,
+        available=True,
+        error_code=None,
+        error=None,
+        floor_temperature=Decimal('21.5'),
+        power=True,
+        setpoint=Decimal('22.0'),
+        target_setpoint=Decimal('28.0'),
+        boosted=False,
+        live_control=False,
+        air_control_live=False,
+        path=ControlPath.FLOOR,
+        air_target=None,
+        regime=ZoneRegime.COMFORT,
+        lead=None,
+        boost_until=None,
+        next_change=ScheduleTransition(
+            mode=ScheduleMode.NIGHT,
+            at=datetime(2026, 10, 29, 23, 30, tzinfo=MOSCOW),
         ),
+        air=None,
+    )
+    assert output == GetPanelOverviewOutputDTO(
+        zones=(kitchen,),
         plugs=(),
         loads=(),
         sensors=(),
         outdoor=None,
         standalone_sensors=(),
+        floors=(),
+        unplaced_zones=(kitchen,),
+        unplaced_plugs=(),
         outages=(),
         clock=ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='stub'),
         dry_run=True,
@@ -651,37 +722,39 @@ def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUse
 def test_overview_shows_unread_thermostat_as_unavailable(f_offline_use_case: GetPanelOverviewUseCase) -> None:
     output = f_offline_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
 
+    hallway = ZoneOverview(
+        slug='hallway',
+        name='Прихожая',
+        kind=ZoneKind.AIR,
+        mode=ScheduleMode.COMFORT,
+        available=False,
+        error_code='device_unavailable',
+        error='timeout',
+        floor_temperature=None,
+        power=None,
+        setpoint=None,
+        target_setpoint=Decimal('28.0'),
+        boosted=False,
+        live_control=False,
+        air_control_live=False,
+        path=ControlPath.FLOOR,
+        air_target=None,
+        regime=ZoneRegime.COMFORT,
+        lead=None,
+        boost_until=None,
+        next_change=None,
+        air=None,
+    )
     assert output == GetPanelOverviewOutputDTO(
-        zones=(
-            ZoneOverview(
-                slug='hallway',
-                name='Прихожая',
-                kind=ZoneKind.AIR,
-                mode=ScheduleMode.COMFORT,
-                available=False,
-                error_code='device_unavailable',
-                error='timeout',
-                floor_temperature=None,
-                power=None,
-                setpoint=None,
-                target_setpoint=Decimal('28.0'),
-                boosted=False,
-                live_control=False,
-                air_control_live=False,
-                path=ControlPath.FLOOR,
-                air_target=None,
-                regime=ZoneRegime.COMFORT,
-                lead=None,
-                boost_until=None,
-                next_change=None,
-                air=None,
-            ),
-        ),
+        zones=(hallway,),
         plugs=(),
         loads=(),
         sensors=(),
         outdoor=None,
         standalone_sensors=(),
+        floors=(),
+        unplaced_zones=(hallway,),
+        unplaced_plugs=(),
         outages=(),
         clock=ClockStatus(trusted=False, code=ClockStatusCode.NTP_NOT_SYNCHRONIZED, reason='stub'),
         dry_run=False,
@@ -897,6 +970,108 @@ def test_overview_lists_a_sensor_outside_zones_and_climate_settings_with_the_air
     output = f_unplaced_sensor_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
 
     assert (output.outdoor, [sensor.slug for sensor in output.standalone_sensors]) == (None, ['outdoor'])
+
+
+def test_overview_groups_zones_sensors_and_plugs_by_floor_and_room(f_house_use_case: GetPanelOverviewUseCase) -> None:
+    output = f_house_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert [
+        (
+            floor.slug,
+            floor.name,
+            [
+                (
+                    room.slug,
+                    room.floor,
+                    [zone.slug for zone in room.zones],
+                    [sensor.slug for sensor in room.sensors],
+                    [plug.slug for plug in room.plugs],
+                    room.devices,
+                )
+                for room in floor.rooms
+            ],
+        )
+        for floor in output.floors
+    ] == [
+        (
+            'floor-1',
+            '1 этаж',
+            [
+                (
+                    'open-space',
+                    'floor-1',
+                    ['kitchen', 'hallway'],
+                    ['air-fireplace'],
+                    ['plug-oven'],
+                    ('air-fireplace', 'air-kitchen', 'plug-oven', 'thermostat-hallway', 'thermostat-kitchen'),
+                ),
+                (
+                    'bathroom-1f',
+                    'floor-1',
+                    ['bathroom-1f'],
+                    [],
+                    ['plug-boiler-1f'],
+                    ('plug-boiler-1f', 'thermostat-bathroom-1f'),
+                ),
+            ],
+        ),
+        (
+            'floor-2',
+            '2 этаж',
+            [
+                ('bedroom', 'floor-2', [], ['air-second-floor'], [], ('air-second-floor',)),
+                ('office', 'floor-2', [], [], [], ()),
+            ],
+        ),
+    ]
+
+
+def test_overview_keeps_a_room_with_nothing_to_show_for_the_api(f_house_use_case: GetPanelOverviewUseCase) -> None:
+    upstairs = f_house_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).floors[1]
+
+    assert ([(room.slug, room.shown) for room in upstairs.rooms], [room.slug for room in upstairs.shown_rooms]) == (
+        [('bedroom', True), ('office', False)],
+        ['bedroom'],
+    )
+
+
+def test_overview_lists_zones_and_plugs_without_a_room_as_unplaced(f_house_use_case: GetPanelOverviewUseCase) -> None:
+    output = f_house_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert (
+        [zone.slug for zone in output.unplaced_zones],
+        [plug.slug for plug in output.unplaced_plugs],
+        [(zone.slug, zone.room) for zone in output.zones],
+        [(plug.slug, plug.room) for plug in output.plugs],
+    ) == (
+        ['bathroom-2f'],
+        ['plug-boiler-2f'],
+        [
+            ('kitchen', 'open-space'),
+            ('hallway', 'open-space'),
+            ('bathroom-1f', 'bathroom-1f'),
+            ('bathroom-2f', None),
+        ],
+        [('plug-boiler-1f', 'bathroom-1f'), ('plug-boiler-2f', None), ('plug-oven', 'open-space')],
+    )
+
+
+def test_a_sensor_placed_in_a_room_leaves_the_air_row(f_house_use_case: GetPanelOverviewUseCase) -> None:
+    output = f_house_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert (
+        [sensor.slug for sensor in output.standalone_sensors],
+        [(sensor.slug, sensor.room) for sensor in output.sensors],
+    ) == (
+        ['air-attic'],
+        [
+            ('air-kitchen', 'open-space'),
+            ('air-second-floor', 'bedroom'),
+            ('air-fireplace', 'open-space'),
+            ('air-attic', None),
+            ('outdoor', None),
+        ],
+    )
 
 
 def test_overview_asks_about_unmarked_outages_newest_first(

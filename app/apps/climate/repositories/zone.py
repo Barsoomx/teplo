@@ -16,7 +16,9 @@ class ZoneRepository:
     @staticmethod
     def all_settings() -> list[ZoneSettings]:
         zones = (
-            Zone.objects.select_related('thermostat', 'air_sensor').prefetch_related('comfort_periods').order_by('slug')
+            Zone.objects.select_related('thermostat', 'air_sensor', 'room')
+            .prefetch_related('comfort_periods')
+            .order_by('slug')
         )
         return [_to_settings(zone) for zone in zones]
 
@@ -113,4 +115,5 @@ def _to_settings(zone: Zone) -> ZoneSettings:
         last_command_at=zone.last_command_at,
         last_dry_run_at=zone.last_dry_run_at,
         last_air_dry_run_at=zone.last_air_dry_run_at,
+        room_slug=None if zone.room is None else zone.room.slug,
     )

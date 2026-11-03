@@ -24,6 +24,7 @@ INSTALLED_APPS = [
     'django.contrib.humanize',
     'rest_framework',
     'apps.core',
+    'apps.house',
     'apps.devices',
     'apps.system',
     'apps.climate',

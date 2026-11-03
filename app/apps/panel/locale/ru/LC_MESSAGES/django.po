@@ -120,6 +120,9 @@ msgstr "Нет связи. Проверьте питание термостат�
 msgid "No connection to the air sensor. Check that it has power and Wi-Fi."
 msgstr "Нет связи с датчиком воздуха. Проверьте его питание и Wi-Fi."
 
+msgid "Not in a room"
+msgstr "Без комнаты"
+
 msgid "Loads"
 msgstr "Нагрузки"
 

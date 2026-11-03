@@ -7,6 +7,7 @@ from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
+from apps.house.factories import RoomFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -53,6 +54,19 @@ def f_sensors() -> list[Device]:
     ]
 
 
+@pytest.fixture
+def placed_devices() -> None:
+    open_space = RoomFactory.create(slug='open-space')
+    DeviceFactory.create(slug='thermostat-kitchen', room=open_space)
+    DeviceFactory.create(
+        slug='air-kitchen',
+        kind=DeviceKind.TEMPERATURE_SENSOR,
+        driver=DeviceDriver.ESPHOME_TEMPERATURE,
+        room=open_space,
+    )
+    DeviceFactory.create(slug='outdoor', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.ESPHOME_TEMPERATURE)
+
+
 def test_thermostat_slugs_lists_only_thermostats_in_order(f_devices: list[Device]) -> None:
     assert DeviceRepository.thermostat_slugs() == [f_devices[1].slug, f_devices[0].slug]
 
@@ -80,6 +94,15 @@ def test_all_settings_describes_every_device_in_slug_order(f_devices: list[Devic
     assert DeviceRepository.all_settings() == [
         DeviceSettings(slug=device.slug, name=device.name, kind=DeviceKind(device.kind))
         for device in (f_devices[3], f_devices[2], f_devices[1], f_devices[0])
+    ]
+
+
+@pytest.mark.usefixtures('placed_devices')
+def test_all_settings_name_the_room_of_each_device() -> None:
+    assert [(device.slug, device.room_slug) for device in DeviceRepository.all_settings()] == [
+        ('air-kitchen', 'open-space'),
+        ('outdoor', None),
+        ('thermostat-kitchen', 'open-space'),
     ]
 
 
