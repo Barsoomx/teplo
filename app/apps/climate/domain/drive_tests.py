@@ -42,14 +42,22 @@ def _due(change: ThermostatChange, *, starts: bool) -> ZoneDrive:
 
 
 @pytest.mark.parametrize(
-    ('state', 'held', 'last_write_at', 'expected'),
+    ('state', 'held', 'last_write_at', 'slot_free', 'expected'),
     [
-        (IDLE, True, None, _settled(ZoneCycleOutcome.SHED)),
-        (None, True, None, _settled(ZoneCycleOutcome.SHED)),
-        (None, False, None, _settled(ZoneCycleOutcome.DEVICE_UNAVAILABLE)),
-        (replace(IDLE, setpoint=Decimal('28.0')), False, None, _settled(ZoneCycleOutcome.UNCHANGED)),
-        (IDLE, False, NOW - timedelta(minutes=29), _settled(ZoneCycleOutcome.THROTTLED)),
-        (IDLE, False, NOW - timedelta(minutes=30), _due(ThermostatChange(setpoint=Decimal('28.0')), starts=True)),
+        (IDLE, True, None, True, _settled(ZoneCycleOutcome.SHED)),
+        (None, True, None, True, _settled(ZoneCycleOutcome.SHED)),
+        (None, False, None, True, _settled(ZoneCycleOutcome.DEVICE_UNAVAILABLE)),
+        (replace(IDLE, setpoint=Decimal('28.0')), False, None, True, _settled(ZoneCycleOutcome.UNCHANGED)),
+        (IDLE, False, NOW - timedelta(minutes=29), True, _settled(ZoneCycleOutcome.THROTTLED)),
+        (
+            IDLE,
+            False,
+            NOW - timedelta(minutes=30),
+            True,
+            _due(ThermostatChange(setpoint=Decimal('28.0')), starts=True),
+        ),
+        (IDLE, False, NOW - timedelta(minutes=30), False, _settled(ZoneCycleOutcome.THROTTLED)),
+        (replace(IDLE, setpoint=Decimal('28.0')), False, None, False, _settled(ZoneCycleOutcome.UNCHANGED)),
     ],
     ids=[
         'shed_zone_is_held',
@@ -58,15 +66,18 @@ def _due(change: ThermostatChange, *, starts: bool) -> ZoneDrive:
         'thermostat_already_on_target',
         'within_thirty_minutes_of_the_last_write',
         'thirty_minutes_after_the_last_write',
+        'write_the_write_gate_holds_back',
+        'thermostat_on_target_while_the_write_gate_holds_its_slot',
     ],
 )
 def test_drive_writes_only_an_allowed_change_to_a_zone_that_is_not_shed(
     state: ThermostatState | None,
     held: bool,
     last_write_at: datetime | None,
+    slot_free: bool,
     expected: ZoneDrive,
 ) -> None:
-    assert plan_drive(COMFORT, state, last_write_at=last_write_at, now=NOW, held=held) == expected
+    assert plan_drive(COMFORT, state, last_write_at=last_write_at, now=NOW, held=held, slot_free=slot_free) == expected
 
 
 @pytest.mark.parametrize(
@@ -115,7 +126,7 @@ def test_write_starts_a_zone_that_draws_nothing_and_would_heat(
     state: ThermostatState,
     expected: ZoneDrive,
 ) -> None:
-    assert plan_drive(target, state, last_write_at=None, now=NOW, held=False) == expected
+    assert plan_drive(target, state, last_write_at=None, now=NOW, held=False, slot_free=True) == expected
 
 
 @pytest.mark.parametrize(

@@ -134,7 +134,13 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         )
         held = self._gate.held_zones()
         runs = [
-            self._plan(zone, self._conditions(zone, learning, guarded_zone), cycle, held=zone.slug in held)
+            self._plan(
+                zone,
+                self._conditions(zone, learning, guarded_zone),
+                cycle,
+                held=zone.slug in held,
+                read_at=input_dto.monotonic,
+            )
             for zone in zones
         ]
         permits = StartPermits(answers=self._gate.ask_starts(_starts(runs), now), gated=self._gate.gated_zones())
@@ -199,7 +205,15 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             ),
         )
 
-    def _plan(self, zone: ZoneSettings, conditions: ZoneConditions, cycle: CycleConditions, *, held: bool) -> ZoneRun:
+    def _plan(
+        self,
+        zone: ZoneSettings,
+        conditions: ZoneConditions,
+        cycle: CycleConditions,
+        *,
+        held: bool,
+        read_at: float,
+    ) -> ZoneRun:
         memory = self._book.zone(zone.slug)
         decision = decide_zone(zone, memory, conditions, cycle)
         snapshot = self._store.snapshot(zone.thermostat_slug)
@@ -209,8 +223,15 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             last_write_at=zone.last_command_at if conditions.writes_live else zone.last_dry_run_at,
             now=cycle.now,
             held=held,
+            slot_free=self._slot_free(zone, conditions, cycle.now, read_at=read_at),
         )
         return ZoneRun(zone=zone, memory=memory, conditions=conditions, decision=decision, drive=drive)
+
+    def _slot_free(self, zone: ZoneSettings, conditions: ZoneConditions, now: datetime, *, read_at: float) -> bool:
+        if not conditions.writes_live:
+            return True
+
+        return self._writes.allows(zone.slug, now, stamped_at=zone.last_command_at, read_at=read_at)
 
     def _run_zone(
         self,
@@ -240,7 +261,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         *,
         read_at: float,
     ) -> ZoneCycleOutcome:
-        run = self._plan(zone, conditions, cycle, held=zone.slug in self._gate.held_zones())
+        run = self._plan(zone, conditions, cycle, held=zone.slug in self._gate.held_zones(), read_at=read_at)
         outcome = self._drive(run, permits, cycle.now, read_at=read_at)
         follow_up = follow_zone(zone, run.memory, run.decision, outcome, conditions, cycle)
         follow_up = self._journal_air_dry_run(zone, run.memory, follow_up, cycle.now)

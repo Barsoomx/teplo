@@ -58,7 +58,7 @@ from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardLoads, GuardState, SeenReading
 from apps.power.domain.load_status import thermostat_reading
-from apps.power.domain.loads import MEASURED_PHASES, LoadKind, LoadPhase, LoadRecord, ShedReason
+from apps.power.domain.loads import MEASURED_PHASES, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterWatch
 from apps.power.domain.phase_watch import OverloadWatch, PhaseWatch
 from apps.power.domain.start_gate import StartRefusal
@@ -69,7 +69,7 @@ from apps.power.services.guard_book import GuardBook
 from apps.power.services.guard_load_gate import GuardLoadGate
 from apps.power.services.load_switcher import LoadSwitcher
 from apps.power.services.zone_switch import ThermostatZoneSwitch
-from apps.power.stubs import ZoneWriteStampsStub
+from apps.power.stubs import LoadStoreStub, ZoneWriteStampsStub
 from apps.power.usecases.recover_write_holds import RecoverWriteHoldsInputDTO, RecoverWriteHoldsUseCase
 from apps.power.usecases.shed_phase_loads import (
     ShedPhaseLoadsInputDTO,
@@ -161,6 +161,18 @@ HALLWAY_LOAD = replace(
     zone_slug='hallway',
     device_slug='thermostat-hallway',
     priority=4,
+)
+LIVING_ROOM_HANDED_BACK_BEFORE_A_RESTART = replace(
+    LIVING_ROOM_LOAD,
+    shed=LiveShed(
+        at=MORNING - timedelta(minutes=5),
+        reason=ShedReason.OVERLOAD,
+        phase=LoadPhase.L2,
+        was_on=None,
+        device=LIVING_ROOM,
+        handed_back=True,
+    ),
+    last_command_at=MORNING - timedelta(minutes=5),
 )
 FRESH_METER = MeterWatch(seen=True, stale_since=None)
 UNSEEN_METER = MeterWatch(seen=False, stale_since=0.0)
@@ -2746,6 +2758,31 @@ def f_two_starts_cycle(
     return _use_case(store, temperatures, thermostats, book, dispatcher, gate=load_gate)
 
 
+@pytest.fixture
+def f_two_starts_after_a_restart_that_took_back_the_hold_of_the_living_room(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+    load_gate: GuardLoadGate,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _idle_floor_zone(store, temperatures)
+    _floor_zone('living-room', LIVING_ROOM, last_command_at=MORNING - timedelta(minutes=5))
+    store.record_state(LIVING_ROOM, _state('22.0', power=False))
+    _watch(f_guard_book, management_live=True)
+    writes = _write_gate(MonotonicClockStub(now=0.0))
+    RecoverWriteHoldsUseCase(
+        loads=LoadStoreStub(records=[LIVING_ROOM_HANDED_BACK_BEFORE_A_RESTART], live_zones=frozenset({'living-room'})),
+        writes=writes,
+        dry_run=False,
+    ).execute(RecoverWriteHoldsInputDTO(now=MORNING))
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat, LIVING_ROOM: f_living_room_thermostat}
+    return _use_case(store, temperatures, thermostats, book, dispatcher, gate=load_gate, writes=writes)
+
+
 @pytest.mark.parametrize(
     ('f_held_cycle', 'now', 'zone', 'commands'),
     [
@@ -2988,6 +3025,29 @@ def test_live_starts_of_one_cycle_go_most_important_first_one_a_cycle(
         {'kitchen': ZoneCycleOutcome.APPLIED, 'living-room': ZoneCycleOutcome.THROTTLED},
         [('setpoint', Decimal('28.0'))],
         [('setpoint', Decimal('28.0'))],
+    )
+
+
+def test_floor_the_write_gate_holds_asks_for_no_start_so_the_next_floor_starts_in_the_same_cycle(
+    f_two_starts_after_a_restart_that_took_back_the_hold_of_the_living_room: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_living_room_thermostat: FloorThermostatStub,
+    f_guard_book: GuardBook,
+) -> None:
+    output = f_two_starts_after_a_restart_that_took_back_the_hold_of_the_living_room.execute(_at(STEPPED_FORWARD))
+
+    assert (
+        output.outcomes,
+        f_thermostat.commands,
+        f_living_room_thermostat.commands,
+        f_guard_book.last_permit_at(),
+        f_guard_book.waiting(),
+    ) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED, 'living-room': ZoneCycleOutcome.THROTTLED},
+        [('setpoint', Decimal('28.0'))],
+        [],
+        0.0,
+        frozenset(),
     )
 
 

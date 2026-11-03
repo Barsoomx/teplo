@@ -44,6 +44,8 @@ class LoadGate(Protocol):
 
 
 class WriteGate(Protocol):
+    def allows(self, zone: str, at: datetime, *, stamped_at: datetime | None, read_at: float) -> bool: ...
+
     def reserve(
         self,
         zone: str,

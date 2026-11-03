@@ -234,6 +234,35 @@ def test_gate_reserves_the_slot_of_a_zone_never_written(f_gate: ZoneWriteGate) -
     )
 
 
+def test_gate_asked_about_a_write_takes_no_slot(f_gate: ZoneWriteGate) -> None:
+    allowed = f_gate.allows('kitchen', NOW, stamped_at=None, read_at=START)
+
+    assert (allowed, f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START)) == (
+        True,
+        WriteReservation(zone='kitchen', slot=WriteSlot(generation=1, at=NOW, moment=START), previous=None),
+    )
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'expected'),
+    [(1799, False), (1800, True)],
+    ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
+)
+def test_gate_answers_whether_it_takes_a_write_as_its_reservation_then_does(
+    f_gate: ZoneWriteGate,
+    f_clock: MonotonicClockStub,
+    f_shed: WriteReservation,
+    seconds: int,
+    expected: bool,
+) -> None:
+    f_clock.advance(seconds)
+
+    allowed = f_gate.allows('kitchen', NOW + timedelta(hours=2), stamped_at=f_shed.slot.at, read_at=f_clock())
+    reservation = f_gate.reserve('kitchen', NOW + timedelta(hours=2), stamped_at=f_shed.slot.at, read_at=f_clock())
+
+    assert (allowed, reservation is not None) == (expected, expected)
+
+
 @pytest.mark.parametrize(
     ('seconds', 'expected'),
     [(1799, False), (1800, True)],

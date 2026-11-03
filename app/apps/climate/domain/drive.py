@@ -53,6 +53,7 @@ def plan_drive(
     last_write_at: datetime | None,
     now: datetime,
     held: bool,
+    slot_free: bool,
 ) -> ZoneDrive:
     if held:
         return _settled(ZoneCycleOutcome.SHED)
@@ -64,7 +65,7 @@ def plan_drive(
     if change.is_empty:
         return _settled(ZoneCycleOutcome.UNCHANGED)
 
-    if not write_allowed(last_write_at, now):
+    if not slot_free or not write_allowed(last_write_at, now):
         return _settled(ZoneCycleOutcome.THROTTLED)
 
     return ZoneDrive(change=change, outcome=None, starts=_starts(change, state))

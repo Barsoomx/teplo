@@ -24,6 +24,16 @@ class ZoneWriteGate:
     def init(cls) -> 'ZoneWriteGate':
         return cls(clock=time.monotonic, zone_lock=threading.Lock)
 
+    def allows(self, zone: str, at: datetime, *, stamped_at: datetime | None, read_at: float) -> bool:
+        with self._lock:
+            return slot_free(
+                self._slots.get(zone),
+                stamped_at=stamped_at,
+                now=at,
+                read_at=read_at,
+                moment=self._clock(),
+            )
+
     def reserve(
         self,
         zone: str,
