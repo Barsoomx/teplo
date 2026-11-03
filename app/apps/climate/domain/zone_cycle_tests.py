@@ -506,6 +506,99 @@ def test_air_dry_run_journals_idle_setpoint_of_state_it_follows_once_boost_ends(
     )
 
 
+@pytest.fixture
+def f_floor_mode_memory(f_zone: ZoneSettings, f_journaled_memory: ZoneMemory) -> ZoneMemory:
+    return _follow(f_zone, f_journaled_memory, _conditions(None), _cycle(MORNING), ZoneCycleOutcome.APPLIED).memory
+
+
+@pytest.fixture
+def f_boosted_floor_mode_memory(f_boosted_zone: ZoneSettings, f_journaled_memory: ZoneMemory) -> ZoneMemory:
+    return _follow(
+        f_boosted_zone,
+        f_journaled_memory,
+        _conditions(None),
+        _cycle(MORNING),
+        ZoneCycleOutcome.APPLIED,
+    ).memory
+
+
+@pytest.mark.parametrize(
+    ('outcome', 'would_be_target'),
+    [
+        (ZoneCycleOutcome.APPLIED, COMFORT),
+        (ZoneCycleOutcome.UNCHANGED, COMFORT),
+        (ZoneCycleOutcome.DRY_RUN, COMFORT),
+        (ZoneCycleOutcome.THROTTLED, None),
+        (ZoneCycleOutcome.WAITING, None),
+        (ZoneCycleOutcome.DEVICE_UNAVAILABLE, None),
+        (ZoneCycleOutcome.FAILED, None),
+        (ZoneCycleOutcome.SHED, None),
+    ],
+)
+def test_zone_leaving_air_dry_run_takes_what_floor_mode_wrote_as_its_would_be_target(
+    f_zone: ZoneSettings,
+    f_journaled_memory: ZoneMemory,
+    outcome: ZoneCycleOutcome,
+    would_be_target: ThermostatTarget | None,
+) -> None:
+    follow_up = _follow(f_zone, f_journaled_memory, _conditions(None), _cycle(MORNING), outcome)
+
+    assert (follow_up.memory.path, follow_up.memory.would_be_target) == (ControlPath.FLOOR, would_be_target)
+
+
+def test_floor_zone_keeps_no_would_be_target(f_floor_zone: ZoneSettings) -> None:
+    follow_up = _follow(f_floor_zone, ZoneMemory(), _conditions(None), _cycle(MORNING), ZoneCycleOutcome.APPLIED)
+
+    assert follow_up.memory == ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT)
+
+
+def test_air_dry_run_back_from_floor_mode_journals_the_change_from_what_floor_mode_wrote(
+    f_zone: ZoneSettings,
+    f_floor_mode_memory: ZoneMemory,
+) -> None:
+    now = MORNING + timedelta(minutes=1)
+
+    follow_up = _follow(f_zone, f_floor_mode_memory, _conditions('21.5'), _cycle(now), ZoneCycleOutcome.UNCHANGED)
+
+    assert (follow_up.air_dry_run, follow_up.memory.would_be_target, follow_up.memory.air_state) == (
+        AirControlDryRun(
+            zone='kitchen',
+            air=Decimal('21.5'),
+            target=TARGET,
+            mode=ScheduleMode.COMFORT,
+            state=AirState.HEAT,
+            previous_state=None,
+            power=True,
+            setpoint=Decimal('29.0'),
+            start_offset=Decimal('0.3'),
+            early_stop_offset=Decimal('0.1'),
+            lead_minutes=None,
+            occurred_at=now,
+        ),
+        HEAT,
+        AirState.HEAT,
+    )
+
+
+def test_air_dry_run_back_from_floor_mode_journals_nothing_floor_mode_already_wrote(
+    f_boosted_zone: ZoneSettings,
+    f_boosted_floor_mode_memory: ZoneMemory,
+) -> None:
+    follow_up = _follow(
+        f_boosted_zone,
+        f_boosted_floor_mode_memory,
+        _conditions('21.5'),
+        _cycle(MORNING + timedelta(minutes=1)),
+        ZoneCycleOutcome.UNCHANGED,
+    )
+
+    assert (follow_up.air_dry_run, follow_up.memory.would_be_target, follow_up.memory.air_state) == (
+        None,
+        BOOST,
+        AirState.HEAT,
+    )
+
+
 def test_air_dry_run_journals_optimal_start_when_preheat_would_begin(f_zone: ZoneSettings) -> None:
     memory = ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.PREHEAT)
 
@@ -824,6 +917,7 @@ def test_lost_air_sensor_keeps_latched_preheat_and_forgets_air_state(
     assert follow_up.memory == ZoneMemory(
         path=ControlPath.FLOOR,
         mode=ScheduleMode.COMFORT,
+        would_be_target=COMFORT,
         preheat=PreheatStart(comfort_at=COMFORT_AT, lead=timedelta(hours=3)),
     )
 

@@ -87,9 +87,10 @@ def follow_zone(
     cycle: CycleConditions,
 ) -> ZoneFollowUp:
     reading = _morning_reading(zone, memory, decision, outcome, conditions, cycle)
+    kept = _kept_memory(zone, memory, decision, outcome, reading, cycle)
     if outcome is ZoneCycleOutcome.SHED:
         return ZoneFollowUp(
-            memory=_kept_memory(memory, decision, reading, cycle),
+            memory=kept,
             air_dry_run=None,
             optimal_start=None,
             morning=None,
@@ -98,7 +99,7 @@ def follow_zone(
 
     morning = _observe_morning(memory.morning, reading)
     follow_up = ZoneFollowUp(
-        memory=replace(_kept_memory(memory, decision, reading, cycle), morning=morning.morning),
+        memory=replace(kept, morning=morning.morning),
         air_dry_run=None,
         optimal_start=None,
         morning=morning.finished,
@@ -126,18 +127,35 @@ def hold_air_dry_run(follow_up: ZoneFollowUp, memory: ZoneMemory) -> ZoneFollowU
 
 
 def _kept_memory(
+    zone: ZoneSettings,
     memory: ZoneMemory,
     decision: ZoneDecision,
+    outcome: ZoneCycleOutcome,
     reading: MorningReading | None,
     cycle: CycleConditions,
 ) -> ZoneMemory:
     return ZoneMemory(
         path=decision.path,
         mode=decision.mode if cycle.clock_trusted else None,
-        would_be_target=memory.would_be_target,
+        would_be_target=_would_be_target(zone, memory, decision, outcome),
         preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
         preheated_for=None if reading is None else note_preheat(reading),
     )
+
+
+def _would_be_target(
+    zone: ZoneSettings,
+    memory: ZoneMemory,
+    decision: ZoneDecision,
+    outcome: ZoneCycleOutcome,
+) -> ThermostatTarget | None:
+    if decision.path is ControlPath.AIR_DRY_RUN:
+        return memory.would_be_target
+
+    if not _has_air_sensor(zone) or outcome not in FOLLOWED:
+        return None
+
+    return decision.target
 
 
 def _plan(
@@ -279,7 +297,7 @@ def _morning_reading(
     conditions: ZoneConditions,
     cycle: CycleConditions,
 ) -> MorningReading | None:
-    if zone.kind is not ZoneKind.AIR or zone.air_sensor_slug is None:
+    if not _has_air_sensor(zone):
         return None
 
     return MorningReading(
@@ -298,6 +316,10 @@ def _morning_reading(
         outcome=outcome,
         air_state=_followed_air_state(memory, decision, outcome),
     )
+
+
+def _has_air_sensor(zone: ZoneSettings) -> bool:
+    return zone.kind is ZoneKind.AIR and zone.air_sensor_slug is not None
 
 
 def _observe_morning(morning: Morning | None, reading: MorningReading | None) -> MorningProgress:

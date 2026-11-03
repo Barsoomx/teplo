@@ -1112,6 +1112,27 @@ def f_boost_ending_air_cycle(
 
 
 @pytest.fixture
+def f_air_sensor_back_in_dry_run_cycle(
+    clock: MonotonicClockStub,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _air_zone()
+    thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat}
+    store.record_state(KITCHEN, _state('22.0'))
+    temperatures.record_state('air-kitchen', _reading('20.4'))
+    _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(MORNING))
+    clock.advance(STALE.total_seconds())
+    store.record_state(KITCHEN, _state('28.0'))
+    _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(MORNING + HALF_HOUR))
+    temperatures.record_state('air-kitchen', _reading('20.6'))
+    return _use_case(store, temperatures, thermostats, book, dispatcher)
+
+
+@pytest.fixture
 def f_heating_air_dry_run_cycle(
     request: pytest.FixtureRequest,
     store: ThermostatStateStore,
@@ -1534,6 +1555,40 @@ def test_air_dry_run_journals_idle_setpoint_when_boost_ends_as_live_air_mode_wri
             ),
         ],
         BOOST_END,
+    )
+
+
+def test_air_dry_run_back_from_a_lost_sensor_journals_the_change_from_what_floor_mode_wrote(
+    f_air_sensor_back_in_dry_run_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    now = MORNING + HALF_HOUR + MINUTE
+
+    output = f_air_sensor_back_in_dry_run_cycle.execute(_at(now))
+
+    zone = Zone.objects.get(slug='kitchen')
+    assert (output.outcomes, f_thermostat.commands, zone.last_command_at, zone.last_air_dry_run_at, f_events) == (
+        {'kitchen': ZoneCycleOutcome.UNCHANGED},
+        [('setpoint', Decimal('28.0'))],
+        MORNING,
+        now,
+        [
+            AirControlDryRun(
+                zone='kitchen',
+                air=Decimal('20.6'),
+                target=Decimal('22.0'),
+                mode=ScheduleMode.COMFORT,
+                state=AirState.HEAT,
+                previous_state=None,
+                power=True,
+                setpoint=Decimal('30.0'),
+                start_offset=Decimal('0.30'),
+                early_stop_offset=Decimal('0.10'),
+                lead_minutes=None,
+                occurred_at=now,
+            ),
+        ],
     )
 
 
@@ -2014,7 +2069,12 @@ def test_morning_that_fails_to_save_is_lost_while_the_cycle_goes_on(
             _issued('kitchen', '28.0', COMFORT_AT),
             _issued('living-room', '28.0', COMFORT_AT),
         ],
-        ZoneMemory(path=ControlPath.FLOOR, mode=ScheduleMode.COMFORT, preheated_for=COMFORT_AT),
+        ZoneMemory(
+            path=ControlPath.FLOOR,
+            mode=ScheduleMode.COMFORT,
+            would_be_target=ThermostatTarget(power=True, setpoint=Decimal('28.0')),
+            preheated_for=COMFORT_AT,
+        ),
         [('zone_morning_save_failed', 'warning', 'kitchen', LOCKED)],
     )
 
@@ -2049,6 +2109,7 @@ def test_stop_that_fails_to_save_is_lost_while_the_cycle_goes_on(
             mode=ScheduleMode.COMFORT,
             air_state=AirState.IDLE,
             heat_target=Decimal('22.0'),
+            would_be_target=ThermostatTarget(power=True, setpoint=Decimal('18.0')),
         ),
         [('zone_early_stop_offset_save_failed', 'warning', 'kitchen', LOCKED)],
     )
