@@ -2,6 +2,9 @@ from django.contrib import admin
 from django.http import HttpRequest
 
 from apps.climate.models import ClimateSettings, ComfortPeriod, Zone, ZoneLearning
+from apps.power.models import Load
+
+SHED_ZONE_FIELDS = ('slug', 'thermostat')
 
 
 class ComfortPeriodInline(admin.TabularInline):
@@ -24,6 +27,13 @@ class ZoneAdmin(admin.ModelAdmin):
     list_editable = ('heating_enabled', 'live_control', 'air_control_live')
     readonly_fields = ('boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
     inlines = (ComfortPeriodInline,)
+
+    def get_readonly_fields(self, request: HttpRequest, obj: Zone | None = None) -> tuple[str, ...]:
+        fields = tuple(super().get_readonly_fields(request, obj))
+        if obj is None or not Load.objects.filter(zone=obj, shed_at__isnull=False).exists():
+            return fields
+
+        return (*fields, *SHED_ZONE_FIELDS)
 
 
 @admin.register(ClimateSettings)
