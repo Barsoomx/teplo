@@ -66,7 +66,7 @@ def plan_air(
     schedule_lead = lead if preheat is None else preheat.lead
     mode = resolve_mode(zone.windows, now, schedule_lead)
     target = resolve_air_target(zone, mode, clock_trusted=clock_trusted)
-    early_stop_offset = learning.early_stop_offset_or(control.regulation.initial_early_stop_offset)
+    early_stop_offset = control.regulation.early_stop_offset(learning.early_stop_offset)
     state = decide_air_state(
         current,
         air,

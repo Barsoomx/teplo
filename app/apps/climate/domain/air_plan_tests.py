@@ -23,7 +23,11 @@ NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
 OUTDOOR = Decimal('-3.4')
 CONTROL = ClimateControl(
     sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug='air-second-floor'),
-    regulation=AirRegulationSettings(start_offset=Decimal('0.3'), initial_early_stop_offset=Decimal('0.3')),
+    regulation=AirRegulationSettings(
+        start_offset=Decimal('0.3'),
+        initial_early_stop_offset=Decimal('0.3'),
+        min_band=Decimal('0.2'),
+    ),
     optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
     second_floor_guard=SecondFloorGuardSettings(
         zone_slug='bathroom-2f',
@@ -112,7 +116,7 @@ def test_plan_heats_below_start_threshold_in_comfort(f_zone: ZoneSettings) -> No
         schedule_lead=timedelta(hours=3),
         mode=ScheduleMode.COMFORT,
         target=Decimal('22.0'),
-        early_stop_offset=Decimal('0.3'),
+        early_stop_offset=Decimal('0.1'),
         state=AirState.HEAT,
         thermostat=HEAT,
     )
@@ -125,7 +129,7 @@ def test_plan_idles_at_night_air_target(f_zone: ZoneSettings) -> None:
         schedule_lead=timedelta(hours=3),
         mode=ScheduleMode.NIGHT,
         target=Decimal('19.5'),
-        early_stop_offset=Decimal('0.3'),
+        early_stop_offset=Decimal('0.1'),
         state=AirState.IDLE,
         thermostat=IDLE,
     )
@@ -251,18 +255,23 @@ def test_plan_schedules_the_night_on_the_lead_of_the_minute(
 @pytest.mark.parametrize(
     ('learning', 'early_stop_offset', 'state'),
     [
-        (UNLEARNED, Decimal('0.3'), AirState.IDLE),
-        (replace(UNLEARNED, early_stop_offset=Decimal('0.10')), Decimal('0.10'), AirState.HEAT),
+        (UNLEARNED, Decimal('0.1'), AirState.IDLE),
+        (replace(UNLEARNED, early_stop_offset=Decimal('0.05')), Decimal('0.05'), AirState.HEAT),
+        (replace(UNLEARNED, early_stop_offset=Decimal('0.45')), Decimal('0.1'), AirState.IDLE),
     ],
-    ids=['initial_offset_stops', 'learned_smaller_offset_keeps_heating'],
+    ids=[
+        'initial_offset_held_to_the_band_stops',
+        'learned_smaller_offset_keeps_heating',
+        'learned_larger_offset_held_to_the_band_stops',
+    ],
 )
-def test_plan_stops_heat_on_learned_early_stop_offset(
+def test_plan_stops_heat_on_learned_early_stop_offset_held_to_the_minimum_band(
     f_zone: ZoneSettings,
     learning: ZoneLearningRecord,
     early_stop_offset: Decimal,
     state: AirState,
 ) -> None:
-    plan = _plan(f_zone, MORNING, '21.8', current=AirState.HEAT, learning=learning)
+    plan = _plan(f_zone, MORNING, '21.9', current=AirState.HEAT, learning=learning)
 
     assert (plan.early_stop_offset, plan.state) == (early_stop_offset, state)
 

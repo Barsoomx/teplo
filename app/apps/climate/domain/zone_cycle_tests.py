@@ -40,7 +40,11 @@ OUTDOOR = Decimal('-3.4')
 TARGET = Decimal('22.0')
 CONTROL = ClimateControl(
     sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug='air-second-floor'),
-    regulation=AirRegulationSettings(start_offset=Decimal('0.3'), initial_early_stop_offset=Decimal('0.3')),
+    regulation=AirRegulationSettings(
+        start_offset=Decimal('0.3'),
+        initial_early_stop_offset=Decimal('0.3'),
+        min_band=Decimal('0.2'),
+    ),
     optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
     second_floor_guard=SecondFloorGuardSettings(
         zone_slug='bathroom-2f',
@@ -293,14 +297,14 @@ def test_applied_stop_of_heat_starts_stop_watch(f_live_zone: ZoneSettings, f_hea
     follow_up = _follow(
         f_live_zone,
         f_heating_memory,
-        _conditions('21.8'),
+        _conditions('21.9'),
         _cycle(MORNING),
         ZoneCycleOutcome.APPLIED,
     )
 
     assert (follow_up.memory.air_state, follow_up.memory.stop) == (
         AirState.IDLE,
-        StopWatch(stopped_at=MORNING, target=TARGET, peak=Decimal('21.8')),
+        StopWatch(stopped_at=MORNING, target=TARGET, peak=Decimal('21.9')),
     )
 
 
@@ -308,7 +312,7 @@ def test_stop_written_in_dry_run_starts_no_stop_watch(f_live_zone: ZoneSettings,
     follow_up = _follow(
         f_live_zone,
         f_heating_memory,
-        _conditions('21.8', writes_live=False),
+        _conditions('21.9', writes_live=False),
         _cycle(MORNING),
         ZoneCycleOutcome.DRY_RUN,
     )
@@ -347,7 +351,7 @@ def test_air_dry_run_journals_first_decision(f_zone: ZoneSettings) -> None:
             previous_state=None,
             power=True,
             setpoint=Decimal('29.0'),
-            early_stop_offset=Decimal('0.3'),
+            early_stop_offset=Decimal('0.1'),
             lead_minutes=None,
             occurred_at=MORNING,
         ),
@@ -377,7 +381,7 @@ def test_air_dry_run_journals_would_be_thermostat_change_beside_state_it_keeps(
         previous_state=AirState.HEAT,
         power=True,
         setpoint=Decimal('30.0'),
-        early_stop_offset=Decimal('0.3'),
+        early_stop_offset=Decimal('0.1'),
         lead_minutes=None,
         occurred_at=MORNING,
     )
@@ -460,7 +464,7 @@ def test_air_dry_run_state_change_that_keeps_boost_target_is_not_journaled(
     outcome: ZoneCycleOutcome,
     state: AirState,
 ) -> None:
-    follow_up = _follow(f_boosted_zone, f_boost_journaled_memory, _conditions('21.8'), _cycle(MORNING), outcome)
+    follow_up = _follow(f_boosted_zone, f_boost_journaled_memory, _conditions('21.9'), _cycle(MORNING), outcome)
 
     assert (follow_up.air_dry_run, follow_up.memory.air_state, follow_up.memory.would_be_target) == (
         None,
@@ -491,7 +495,7 @@ def test_air_dry_run_journals_idle_setpoint_of_state_it_follows_once_boost_ends(
             previous_state=AirState.IDLE,
             power=True,
             setpoint=Decimal('18.0'),
-            early_stop_offset=Decimal('0.3'),
+            early_stop_offset=Decimal('0.1'),
             lead_minutes=None,
             occurred_at=MORNING,
         ),
@@ -768,13 +772,13 @@ def test_air_mode_stop_in_preheat_finishes_morning(
     follow_up = _follow(
         f_live_zone,
         f_preheating_morning_memory,
-        _conditions('21.7', learning=LEARNED),
+        _conditions('21.9', learning=LEARNED),
         _cycle(AIR_MODE_STOP),
         ZoneCycleOutcome.APPLIED,
     )
 
     assert (follow_up.morning, follow_up.memory.morning, follow_up.memory.air_state) == (
-        replace(f_morning, samples=(*f_morning.samples, AirSample(at=AIR_MODE_STOP, air=Decimal('21.7')))),
+        replace(f_morning, samples=(*f_morning.samples, AirSample(at=AIR_MODE_STOP, air=Decimal('21.9')))),
         None,
         AirState.IDLE,
     )
@@ -794,14 +798,14 @@ def test_air_mode_stop_waiting_its_turn_keeps_morning_going(
     follow_up = _follow(
         f_live_zone,
         f_preheating_morning_memory,
-        _conditions('21.7', learning=LEARNED),
+        _conditions('21.9', learning=LEARNED),
         _cycle(AIR_MODE_STOP),
         outcome,
     )
 
     assert (follow_up.morning, follow_up.memory.morning, follow_up.memory.air_state) == (
         None,
-        replace(f_morning, samples=(*f_morning.samples, AirSample(at=AIR_MODE_STOP, air=Decimal('21.7')))),
+        replace(f_morning, samples=(*f_morning.samples, AirSample(at=AIR_MODE_STOP, air=Decimal('21.9')))),
         AirState.HEAT,
     )
 

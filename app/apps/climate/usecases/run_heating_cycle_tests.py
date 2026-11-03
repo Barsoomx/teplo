@@ -17,6 +17,7 @@ from apps.climate.domain.events import (
     ZoneCommandFailed,
     ZoneCommandIssued,
 )
+from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.learning import AirSample, Morning
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
@@ -108,7 +109,7 @@ AIR_MODE_MORNING_AIR = (
 )
 AIR_MODE_STOP = OPTIMAL_START + timedelta(hours=1, minutes=52)
 STOP_AIR = (
-    (MORNING, '21.8', '30.0'),
+    (MORNING, '21.9', '30.0'),
     (MORNING + timedelta(hours=1), '22.3', '18.0'),
     (MORNING + timedelta(hours=2), '22.1', '18.0'),
 )
@@ -1081,7 +1082,7 @@ def boosted_thermostats(
     store.record_state(KITCHEN, _state('30.0'))
     temperatures.record_state('air-kitchen', _reading('21.5'))
     _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(MORNING))
-    temperatures.record_state('air-kitchen', _reading('21.8'))
+    temperatures.record_state('air-kitchen', _reading('21.9'))
     return thermostats
 
 
@@ -1108,6 +1109,30 @@ def f_boost_ending_air_cycle(
         _at(BOOST_END - timedelta(minutes=10)),
     )
     return _use_case(store, temperatures, boosted_thermostats, book, dispatcher)
+
+
+@pytest.fixture
+def f_heating_air_dry_run_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _air_zone()
+    store.record_state(KITCHEN, _state('22.0'))
+    temperatures.record_state('air-kitchen', _reading(request.param))
+    book.remember_zone(
+        'kitchen',
+        ZoneMemory(
+            path=ControlPath.AIR_DRY_RUN,
+            mode=ScheduleMode.COMFORT,
+            air_state=AirState.HEAT,
+            would_be_target=ThermostatTarget(power=True, setpoint=Decimal('30.0')),
+        ),
+    )
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher)
 
 
 @pytest.fixture
@@ -1173,7 +1198,7 @@ def f_air_mode_morning_cycle(
         store.record_state(KITCHEN, _state(setpoint))
         temperatures.record_state('air-kitchen', _reading(air))
         _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(at))
-    temperatures.record_state('air-kitchen', _reading('21.7'))
+    temperatures.record_state('air-kitchen', _reading('21.9'))
     return _use_case(store, temperatures, thermostats, book, dispatcher)
 
 
@@ -1329,7 +1354,7 @@ def test_cycle_with_air_control_off_journals_would_be_air_state_and_guard(
                 previous_state=None,
                 power=True,
                 setpoint=Decimal('30.0'),
-                early_stop_offset=Decimal('0.30'),
+                early_stop_offset=Decimal('0.10'),
                 lead_minutes=None,
                 occurred_at=MORNING,
             ),
@@ -1375,7 +1400,7 @@ def test_air_dry_run_journals_would_be_change_thirty_minutes_after_the_last(
                 previous_state=AirState.HEAT,
                 power=True,
                 setpoint=Decimal('18.0'),
-                early_stop_offset=Decimal('0.30'),
+                early_stop_offset=Decimal('0.10'),
                 lead_minutes=None,
                 occurred_at=now,
             ),
@@ -1410,7 +1435,7 @@ def test_air_dry_run_journals_optimal_start_it_would_use(
                 previous_state=AirState.IDLE,
                 power=True,
                 setpoint=Decimal('30.0'),
-                early_stop_offset=Decimal('0.30'),
+                early_stop_offset=Decimal('0.10'),
                 lead_minutes=160,
                 occurred_at=OPTIMAL_START,
             ),
@@ -1464,7 +1489,7 @@ def test_air_dry_run_preheats_on_start_held_before_floor_mode_warmed_room(
             previous_state=AirState.IDLE,
             power=True,
             setpoint=Decimal('30.0'),
-            early_stop_offset=Decimal('0.30'),
+            early_stop_offset=Decimal('0.10'),
             lead_minutes=160,
             occurred_at=OPTIMAL_START,
         ),
@@ -1491,19 +1516,61 @@ def test_air_dry_run_journals_idle_setpoint_when_boost_ends_as_live_air_mode_wri
             _issued('kitchen', '28.0', BOOST_END),
             AirControlDryRun(
                 zone='kitchen',
-                air=Decimal('21.8'),
+                air=Decimal('21.9'),
                 target=Decimal('22.0'),
                 mode=ScheduleMode.COMFORT,
                 state=AirState.IDLE,
                 previous_state=AirState.IDLE,
                 power=True,
                 setpoint=Decimal('18.0'),
-                early_stop_offset=Decimal('0.30'),
+                early_stop_offset=Decimal('0.10'),
                 lead_minutes=None,
                 occurred_at=BOOST_END,
             ),
         ],
         BOOST_END,
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_heating_air_dry_run_cycle', 'entries'),
+    [
+        ('21.8', []),
+        (
+            '21.9',
+            [
+                AirControlDryRun(
+                    zone='kitchen',
+                    air=Decimal('21.9'),
+                    target=Decimal('22.0'),
+                    mode=ScheduleMode.COMFORT,
+                    state=AirState.IDLE,
+                    previous_state=AirState.HEAT,
+                    power=True,
+                    setpoint=Decimal('18.0'),
+                    early_stop_offset=Decimal('0.10'),
+                    lead_minutes=None,
+                    occurred_at=MORNING,
+                ),
+            ],
+        ),
+    ],
+    ids=['inside_the_band', 'at_the_top_of_the_band'],
+    indirect=['f_heating_air_dry_run_cycle'],
+)
+def test_minimum_band_moves_only_the_air_dry_run_journal_while_floor_mode_writes_as_before(
+    f_heating_air_dry_run_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+    entries: list[DomainEvent],
+) -> None:
+    output = f_heating_air_dry_run_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_thermostat.commands, Zone.objects.get(slug='kitchen').last_command_at, f_events) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+        MORNING,
+        [_issued('kitchen', '28.0', MORNING), *entries],
     )
 
 
@@ -1731,7 +1798,7 @@ def test_air_mode_morning_learns_its_rate_until_air_mode_stops_heating(
     assert (f_thermostat.commands, learning.dead_time, learning.heat_up_rates, learning.mornings) == (
         [('setpoint', Decimal('30.0')), ('setpoint', Decimal('18.0'))],
         timedelta(minutes=40),
-        {'-5': '0.860'},
+        {'-5': '0.910'},
         4,
     )
 
@@ -2034,7 +2101,7 @@ def test_air_dry_run_change_whose_stamp_failed_holds_back_no_later_change(
                 previous_state=None,
                 power=True,
                 setpoint=Decimal('18.0'),
-                early_stop_offset=Decimal('0.30'),
+                early_stop_offset=Decimal('0.10'),
                 lead_minutes=None,
                 occurred_at=now,
             ),

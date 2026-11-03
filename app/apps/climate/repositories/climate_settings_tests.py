@@ -57,6 +57,7 @@ def tuned_settings() -> ClimateSettings:
         ),
         air_start_offset=Decimal('0.25'),
         initial_early_stop_offset=Decimal('0.40'),
+        air_min_band=Decimal('0.15'),
         preheat_lead_cap_minutes=210,
         learned_mornings_needed=5,
         second_floor_guard_zone=ZoneFactory.create(slug='bathroom-2f'),
@@ -88,7 +89,11 @@ def test_without_climate_settings_no_sensor_is_named() -> None:
 def test_control_reads_regulation_optimal_start_and_guard() -> None:
     assert ClimateSettingsRepository.control() == ClimateControl(
         sensors=ClimateSensors(outdoor_slug='outdoor', second_floor_slug=None),
-        regulation=AirRegulationSettings(start_offset=Decimal('0.25'), initial_early_stop_offset=Decimal('0.40')),
+        regulation=AirRegulationSettings(
+            start_offset=Decimal('0.25'),
+            initial_early_stop_offset=Decimal('0.40'),
+            min_band=Decimal('0.15'),
+        ),
         optimal_start=OptimalStartSettings(lead_cap=timedelta(minutes=210), mornings_needed=5),
         second_floor_guard=SecondFloorGuardSettings(
             zone_slug='bathroom-2f',
@@ -102,7 +107,11 @@ def test_control_reads_regulation_optimal_start_and_guard() -> None:
 def test_control_without_climate_settings_takes_defaults() -> None:
     assert ClimateSettingsRepository.control() == ClimateControl(
         sensors=ClimateSensors(outdoor_slug=None, second_floor_slug=None),
-        regulation=AirRegulationSettings(start_offset=Decimal('0.3'), initial_early_stop_offset=Decimal('0.3')),
+        regulation=AirRegulationSettings(
+            start_offset=Decimal('0.3'),
+            initial_early_stop_offset=Decimal('0.3'),
+            min_band=Decimal('0.2'),
+        ),
         optimal_start=OptimalStartSettings(lead_cap=timedelta(hours=4), mornings_needed=3),
         second_floor_guard=SecondFloorGuardSettings(
             zone_slug=None,

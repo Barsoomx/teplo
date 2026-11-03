@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.air_policy import (
+    AirRegulationSettings,
     decide_air_actuation,
     decide_air_state,
     resolve_air_target,
@@ -17,6 +18,7 @@ from apps.climate.domain.zone import AirTargets, FloorSetpoints, ZoneSettings
 
 NOW = datetime(2026, 11, 2, 7, 0, tzinfo=ZoneInfo('Europe/Moscow'))
 TARGET = Decimal('22.0')
+NIGHT_TARGET = Decimal('19.5')
 START_OFFSET = Decimal('0.3')
 
 
@@ -45,6 +47,15 @@ def f_zone() -> ZoneSettings:
         last_command_at=None,
         last_dry_run_at=None,
         last_air_dry_run_at=None,
+    )
+
+
+@pytest.fixture
+def f_regulation() -> AirRegulationSettings:
+    return AirRegulationSettings(
+        start_offset=START_OFFSET,
+        initial_early_stop_offset=Decimal('0.3'),
+        min_band=Decimal('0.2'),
     )
 
 
@@ -145,6 +156,63 @@ def test_air_state_starts_and_stops_on_its_thresholds(
         TARGET,
         start_offset=START_OFFSET,
         early_stop_offset=early_stop_offset,
+    )
+
+    assert state is expected
+
+
+@pytest.mark.parametrize(
+    ('learned', 'start_offset', 'expected'),
+    [
+        (None, Decimal('0.3'), Decimal('0.1')),
+        (Decimal('0.05'), Decimal('0.3'), Decimal('0.05')),
+        (Decimal('0.45'), Decimal('0.3'), Decimal('0.1')),
+        (Decimal('0.45'), Decimal('1.0'), Decimal('0.45')),
+        (None, Decimal('0.1'), Decimal('-0.1')),
+    ],
+    ids=[
+        'initial_offset_held_to_the_band',
+        'smaller_learned_offset_kept',
+        'larger_learned_offset_held_to_the_band',
+        'wide_start_offset_leaves_the_learned_offset',
+        'start_offset_narrower_than_the_band_stops_above_the_target',
+    ],
+)
+def test_early_stop_offset_in_effect_stays_the_minimum_band_below_the_start_offset(
+    f_regulation: AirRegulationSettings,
+    learned: Decimal | None,
+    start_offset: Decimal,
+    expected: Decimal,
+) -> None:
+    regulation = replace(f_regulation, start_offset=start_offset)
+
+    assert regulation.early_stop_offset(learned) == expected
+
+
+@pytest.mark.parametrize('learned', [None, Decimal('0.45')], ids=['initial_offset', 'learned_offset_above_the_start'])
+@pytest.mark.parametrize(
+    ('current', 'air', 'expected'),
+    [
+        (AirState.IDLE, Decimal('19.1'), AirState.HEAT),
+        (AirState.HEAT, Decimal('19.3'), AirState.HEAT),
+        (AirState.HEAT, Decimal('19.4'), AirState.IDLE),
+        (AirState.IDLE, Decimal('19.3'), AirState.IDLE),
+    ],
+    ids=['starts_below_the_band', 'keeps_heating_in_the_band', 'stops_at_the_top_of_the_band', 'idles_in_the_band'],
+)
+def test_air_state_keeps_the_minimum_band_whatever_the_zone_learned(
+    f_regulation: AirRegulationSettings,
+    learned: Decimal | None,
+    current: AirState,
+    air: Decimal,
+    expected: AirState,
+) -> None:
+    state = decide_air_state(
+        current,
+        air,
+        NIGHT_TARGET,
+        start_offset=f_regulation.start_offset,
+        early_stop_offset=f_regulation.early_stop_offset(learned),
     )
 
     assert state is expected

@@ -11,6 +11,11 @@ from apps.climate.domain.zone import ZoneSettings
 class AirRegulationSettings:
     start_offset: Decimal
     initial_early_stop_offset: Decimal
+    min_band: Decimal
+
+    def early_stop_offset(self, learned: Decimal | None) -> Decimal:
+        offset = self.initial_early_stop_offset if learned is None else learned
+        return min(offset, self.start_offset - self.min_band)
 
 
 def resolve_control_path(zone: ZoneSettings, *, air_available: bool) -> ControlPath:

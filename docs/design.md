@@ -251,6 +251,7 @@ In air mode a zone is in one of two air states, heat or idle, decided every minu
 - The air target is the comfort air target in the comfort period and in pre-heat, and the night air target at night.
 - Heat starts when air < target − start offset (0.3 °C, climate settings).
 - Heat stops when air ≥ target − early-stop offset. The offset is learned per zone (see Learning) and starts at the initial early-stop offset of the climate settings, 0.3 °C.
+- The early-stop offset in effect is at most the start offset less the minimum band (0.2 °C, climate settings, validated between 0.1 and 1.0 °C), so heat stops at least the band above where it starts, whatever the zone has learned. Without it the two thresholds met when both offsets were 0.3 °C, as on the first night of dry-run at a night target of 19.5 °C, or crossed once a learned offset grew past the start offset, and either way the zone turned heat on and off every 30 minutes, paced only by the write budget. The band clamps the early-stop offset in effect, never the owner's start offset: with the defaults heat starts below target − 0.3 °C and stops at target − 0.1 °C, 19.2 and 19.4 °C at night, and a start offset narrower than the band stops heat above the target.
 - In between, the zone keeps its air state. A zone entering air mode, when its gate is switched on, its air sensor returns, its shed ends or teplo starts, starts idle unless the start condition holds.
 - Minimum 30 minutes between state changes of a zone: a change that needs a thermostat write waits for the zone's write budget (section 4), and for a start permit when it starts the zone (see Shed zones and starts), and until the write goes out, or is journaled while writes are held back, the zone keeps its previous state. A change that needs no write, as during a boost or while the zone is disabled, takes effect at once.
 - teplo keeps the air state of each zone in memory.
@@ -306,7 +307,7 @@ The dry-run paths journal what they would do only when it changes, never every m
 
 | Entry | Written when | Payload |
 |---|---|---|
-| `air_control_dry_run` | the would-be thermostat target of a zone in air mode in dry-run changes | air, target, schedule mode, would-be state, the would-be state the zone followed until then, would-be power and setpoint, early-stop offset, and in pre-heat the lead in minutes |
+| `air_control_dry_run` | the would-be thermostat target of a zone in air mode in dry-run changes | air, target, schedule mode, would-be state, the would-be state the zone followed until then, would-be power and setpoint, the early-stop offset in effect, and in pre-heat the lead in minutes |
 | `optimal_start_dry_run` | the start of the pre-heat a zone in air mode in dry-run would use is held, once per morning: when that pre-heat begins, or when floor mode's pre-heat begins if that comes first | lead in minutes, would-be start, start of the fixed lead |
 | `second_floor_guard_dry_run` | the guard, with its gate off, would turn on or off | second-floor air, whether the guard would be on, the comfort floor setpoint it would hold |
 

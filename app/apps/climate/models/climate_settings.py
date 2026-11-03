@@ -10,6 +10,7 @@ from apps.devices.domain.kinds import DeviceKind
 TEMPERATURE_SENSORS = {'kind': DeviceKind.TEMPERATURE_SENSOR.value}
 OFFSET_VALIDATORS = [MinValueValidator(Decimal('0.00')), MaxValueValidator(Decimal('2.00'))]
 EARLY_STOP_OFFSET_VALIDATORS = [MinValueValidator(EARLY_STOP_OFFSET_MIN), MaxValueValidator(EARLY_STOP_OFFSET_MAX)]
+MIN_BAND_VALIDATORS = [MinValueValidator(Decimal('0.10')), MaxValueValidator(Decimal('1.00'))]
 
 
 class ClimateSettings(models.Model):
@@ -40,6 +41,12 @@ class ClimateSettings(models.Model):
         decimal_places=2,
         default=Decimal('0.30'),
         validators=EARLY_STOP_OFFSET_VALIDATORS,
+    )
+    air_min_band = models.DecimalField(
+        max_digits=3,
+        decimal_places=2,
+        default=Decimal('0.20'),
+        validators=MIN_BAND_VALIDATORS,
     )
     preheat_lead_cap_minutes = models.PositiveIntegerField(default=240, validators=[MaxValueValidator(480)])
     learned_mornings_needed = models.PositiveSmallIntegerField(default=3, validators=[MinValueValidator(1)])

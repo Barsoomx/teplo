@@ -28,6 +28,7 @@ class ClimateSettingsRepository:
             regulation=AirRegulationSettings(
                 start_offset=climate_settings.air_start_offset,
                 initial_early_stop_offset=climate_settings.initial_early_stop_offset,
+                min_band=climate_settings.air_min_band,
             ),
             optimal_start=OptimalStartSettings(
                 lead_cap=timedelta(minutes=climate_settings.preheat_lead_cap_minutes),
