@@ -1,3 +1,4 @@
+import threading
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -27,7 +28,7 @@ def f_zone() -> Zone:
 
 @pytest.fixture
 def f_writes() -> ZoneWriteGate:
-    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0), zone_lock=threading.Lock)
     writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None, read_at=0.0)
     return writes
 
@@ -36,7 +37,7 @@ def f_writes() -> ZoneWriteGate:
 def f_writes_of_a_zone_shed_live(request: pytest.FixtureRequest) -> ZoneWriteGate:
     since_shed: timedelta = request.param
     clock = MonotonicClockStub(now=0.0)
-    writes = ZoneWriteGate(clock=clock)
+    writes = ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
     writes.override('bathroom-1f', WRITTEN_AT)
     clock.advance(since_shed.total_seconds())
     return writes

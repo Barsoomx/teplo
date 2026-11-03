@@ -1,4 +1,5 @@
 from datetime import datetime
+from functools import partial
 
 import structlog
 from django.db import OperationalError
@@ -28,7 +29,7 @@ class ThermostatZoneSwitch:
         device = self._thermostats.thermostat(thermostat)
         shed = self._writes.override(zone, at)
         try:
-            device.set_power(False)
+            self._writes.send(shed, partial(device.set_power, False))
         finally:
             stamped = self._stamped(shed, at)
         return stamped
@@ -49,8 +50,7 @@ class ThermostatZoneSwitch:
 
         with self._writes.stamping(reservation):
             self._stamps.mark_commanded(zone, at)
-        device.set_power(True)
-        return True
+        return self._writes.write(reservation, partial(device.set_power, True))
 
     def _stamped(self, shed: WriteReservation, at: datetime) -> bool:
         try:

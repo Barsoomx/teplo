@@ -1,3 +1,4 @@
+import threading
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -62,7 +63,7 @@ def f_other_plug() -> SwitchablePlugStub:
 
 @pytest.fixture
 def writes() -> ZoneWriteGate:
-    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0), zone_lock=threading.Lock)
 
 
 @pytest.fixture

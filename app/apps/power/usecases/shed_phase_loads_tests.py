@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -240,7 +241,7 @@ def _house(
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error, switch_errors=boiler_switch_errors)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
-    writes = ZoneWriteGate(clock=clock)
+    writes = ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
     zones = ZoneSwitchStub(
         writes=writes,
         error=None,
@@ -867,7 +868,7 @@ def f_guard_after_its_first_second() -> Guard:
             switcher=LoadSwitcher(
                 plugs=SwitchablePlugProviderStub(plugs={}),
                 zones=ZoneSwitchStub(
-                    writes=ZoneWriteGate(clock=clock),
+                    writes=ZoneWriteGate(clock=clock, zone_lock=threading.Lock),
                     error=None,
                 ),
             ),

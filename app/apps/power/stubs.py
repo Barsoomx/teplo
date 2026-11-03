@@ -1,6 +1,7 @@
 from collections.abc import Collection, Mapping
 from dataclasses import replace
 from datetime import datetime
+from functools import partial
 
 from apps.climate.domain.ports import WriteGate
 from apps.core.domain.errors import DomainError
@@ -140,7 +141,7 @@ class ZoneSwitchStub:
             raise self._error
 
         shed = self._writes.override(zone, at)
-        self._switched_off.append((zone, thermostat, at))
+        self._writes.send(shed, partial(self._switched_off.append, (zone, thermostat, at)))
         if self._stamped:
             self._writes.stored(shed)
         return self._stamped
@@ -163,16 +164,18 @@ class ZoneSwitchStub:
 
         with self._writes.stamping(reservation):
             self._stamp_on()
-        if self._on_error is not None:
-            raise self._on_error
-
-        self._switched_on.append((zone, thermostat, at))
-        return True
+        return self._writes.write(reservation, partial(self._power_on, (zone, thermostat, at)))
 
     def _stamp_on(self) -> None:
         if self._refused_on_stamps < len(self._on_stamp_errors):
             self._refused_on_stamps += 1
             raise self._on_stamp_errors[self._refused_on_stamps - 1]
+
+    def _power_on(self, switch: tuple[str, str, datetime]) -> None:
+        if self._on_error is not None:
+            raise self._on_error
+
+        self._switched_on.append(switch)
 
 
 class ZoneWriteStampsStub:

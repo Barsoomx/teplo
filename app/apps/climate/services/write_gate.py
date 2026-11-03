@@ -2,23 +2,27 @@ import itertools
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
 from datetime import datetime
 
 from apps.climate.domain.write_guard import WriteReservation, WriteSlot, override_holds, slot_free
 
+ZoneLock = AbstractContextManager[object]
+
 
 class ZoneWriteGate:
-    def __init__(self, clock: Callable[[], float]) -> None:
+    def __init__(self, clock: Callable[[], float], zone_lock: Callable[[], ZoneLock]) -> None:
         self._clock = clock
+        self._zone_lock = zone_lock
         self._slots: dict[str, WriteSlot] = {}
+        self._zone_locks: dict[str, ZoneLock] = {}
         self._generations = itertools.count(1)
         self._lock = threading.Lock()
 
     @classmethod
     def init(cls) -> 'ZoneWriteGate':
-        return cls(clock=time.monotonic)
+        return cls(clock=time.monotonic, zone_lock=threading.Lock)
 
     def reserve(
         self,
@@ -58,10 +62,17 @@ class ZoneWriteGate:
             if slot is not None and slot.generation == reservation.slot.generation:
                 self._slots[reservation.zone] = replace(slot, stored_at=self._clock())
 
-    def holds(self, reservation: WriteReservation) -> bool:
-        with self._lock:
-            slot = self._slots.get(reservation.zone)
-            return slot is None or slot.generation == reservation.slot.generation
+    def write(self, reservation: WriteReservation, command: Callable[[], None]) -> bool:
+        with self._locked(reservation.zone):
+            if not self._holds(reservation):
+                return False
+
+            command()
+            return True
+
+    def send(self, reservation: WriteReservation, command: Callable[[], None]) -> None:
+        with self._locked(reservation.zone):
+            command()
 
     def clear(self, zone: str) -> bool:
         with self._lock:
@@ -70,6 +81,17 @@ class ZoneWriteGate:
 
             self._slots.pop(zone, None)
             return True
+
+    def _holds(self, reservation: WriteReservation) -> bool:
+        with self._lock:
+            slot = self._slots.get(reservation.zone)
+            return slot is None or slot.generation == reservation.slot.generation
+
+    def _locked(self, zone: str) -> ZoneLock:
+        with self._lock:
+            if zone not in self._zone_locks:
+                self._zone_locks[zone] = self._zone_lock()
+            return self._zone_locks[zone]
 
     def _take(self, zone: str, at: datetime, moment: float, *, override: bool) -> WriteReservation:
         previous = self._slots.get(zone)

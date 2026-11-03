@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from functools import partial
 
 import structlog
 from django.conf import settings
@@ -43,7 +44,7 @@ from apps.climate.services.write_gate import zone_write_gate
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
-from apps.devices.domain.capabilities import ThermostatProvider
+from apps.devices.domain.capabilities import FloorThermostat, ThermostatProvider
 from apps.devices.services.driver_registry import driver_registry
 from apps.devices.services.state_store import (
     TemperatureStateStore,
@@ -283,12 +284,9 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
 
         with self._writes.stamping(reservation):
             self._zones.mark_commanded(zone.slug, now)
-        if not self._writes.holds(reservation):
-            logger.info('zone_write_held', zone=zone.slug)
-            return ZoneCycleOutcome.THROTTLED
-
         try:
-            self._apply(zone.thermostat_slug, change)
+            thermostat = self._provider.thermostat(zone.thermostat_slug)
+            written = self._writes.write(reservation, partial(_apply, thermostat, change))
         except DomainError as error:
             logger.warning(
                 'zone_command_failed',
@@ -308,17 +306,12 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             )
             return ZoneCycleOutcome.FAILED
 
+        if not written:
+            logger.info('zone_write_held', zone=zone.slug)
+            return ZoneCycleOutcome.THROTTLED
+
         self._event_store.add_event(ZoneCommandIssued(zone=zone.slug, change=change, dry_run=False, occurred_at=now))
         return ZoneCycleOutcome.APPLIED
-
-    def _apply(self, slug: str, change: ThermostatChange) -> None:
-        thermostat = self._provider.thermostat(slug)
-        if change.power is not None:
-            thermostat.set_power(change.power)
-        if change.mode is not None:
-            thermostat.set_mode(change.mode)
-        if change.setpoint is not None:
-            thermostat.set_setpoint(change.setpoint)
 
     def _journal_air_dry_run(
         self,
@@ -414,6 +407,15 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             return None
 
         return snapshot.state.temperature
+
+
+def _apply(thermostat: FloorThermostat, change: ThermostatChange) -> None:
+    if change.power is not None:
+        thermostat.set_power(change.power)
+    if change.mode is not None:
+        thermostat.set_mode(change.mode)
+    if change.setpoint is not None:
+        thermostat.set_setpoint(change.setpoint)
 
 
 def _starts(runs: list[ZoneRun]) -> list[ZoneStart]:

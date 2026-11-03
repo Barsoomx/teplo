@@ -1,3 +1,4 @@
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -24,6 +25,14 @@ HEATING_WRITE_AT = NOW - timedelta(minutes=5)
 HEATING_WRITE_DUE_AT = HEATING_WRITE_AT + timedelta(minutes=30)
 START = 1000.0
 LOADS_READ_AT = START - 60
+
+
+class ShedWhileStampingStub:
+    def __init__(self, writes: ZoneWriteGate) -> None:
+        self._writes = writes
+
+    def mark_commanded(self, slug: str, at: datetime) -> None:
+        self._writes.override(slug, at)
 
 
 def _switch_off(switch: ThermostatZoneSwitch) -> object:
@@ -56,7 +65,7 @@ def f_clock() -> MonotonicClockStub:
 
 @pytest.fixture
 def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock)
+    return ZoneWriteGate(clock=f_clock, zone_lock=threading.Lock)
 
 
 @pytest.fixture
@@ -102,6 +111,17 @@ def f_switch_without_the_thermostat(f_writes: ZoneWriteGate) -> ThermostatZoneSw
 def f_switch_without_a_database(f_thermostat: FloorThermostatStub, f_writes: ZoneWriteGate) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneWriteStampsStub(error=OperationalError('database is locked')),
+        thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': f_thermostat}),
+        writes=f_writes,
+    )
+
+
+@pytest.fixture
+def f_switch_whose_release_a_shed_overtakes(
+    f_thermostat: FloorThermostatStub, f_writes: ZoneWriteGate
+) -> ThermostatZoneSwitch:
+    return ThermostatZoneSwitch(
+        stamps=ShedWhileStampingStub(writes=f_writes),
         thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': f_thermostat}),
         writes=f_writes,
     )
@@ -245,3 +265,12 @@ def test_failed_switch_off_whose_stamp_the_database_refuses_raises_the_device_er
             'error': 'database is locked',
         },
     ]
+
+
+def test_switch_on_that_a_shed_overtakes_while_its_stamp_is_stored_sends_nothing_and_says_so(
+    f_switch_whose_release_a_shed_overtakes: ThermostatZoneSwitch,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    switched = _switch_on(f_switch_whose_release_a_shed_overtakes)
+
+    assert (switched, f_thermostat.commands) == (False, [])

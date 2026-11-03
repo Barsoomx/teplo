@@ -1,4 +1,4 @@
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from contextlib import AbstractContextManager
 from datetime import datetime
 from decimal import Decimal
@@ -59,7 +59,9 @@ class WriteGate(Protocol):
 
     def stored(self, reservation: WriteReservation) -> None: ...
 
-    def holds(self, reservation: WriteReservation) -> bool: ...
+    def write(self, reservation: WriteReservation, command: Callable[[], None]) -> bool: ...
+
+    def send(self, reservation: WriteReservation, command: Callable[[], None]) -> None: ...
 
     def clear(self, zone: str) -> bool: ...
 

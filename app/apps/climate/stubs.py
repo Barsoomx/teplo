@@ -1,4 +1,5 @@
-from collections.abc import Collection, Mapping, Sequence
+import threading
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
@@ -188,3 +189,19 @@ class ComfortWindowStoreStub:
             for offset, (weekday, window) in enumerate(placed)
         )
         self._weeks = [replace(each, windows=kept + added) if each.slug == slug else each for each in self._weeks]
+
+
+class ContendedLockStub:
+    def __init__(self, contended: Callable[[], None]) -> None:
+        self._lock = threading.Lock()
+        self._contended = contended
+
+    def __enter__(self) -> None:
+        if self._lock.acquire(blocking=False):
+            return
+
+        self._contended()
+        self._lock.acquire()
+
+    def __exit__(self, *_exc: object) -> None:
+        self._lock.release()
