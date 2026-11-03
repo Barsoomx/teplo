@@ -184,6 +184,7 @@ class GuardedHouse:
 @dataclass(frozen=True, kw_only=True)
 class GatedHouse:
     cycle: Callable[[], RunHeatingCycleUseCase]
+    locked_cycle: Callable[[], RunHeatingCycleUseCase]
     boost: BoostZoneUseCase
 
 
@@ -3370,12 +3371,21 @@ def f_gated_house(
     _floor_zone('kitchen', KITCHEN)
     store.record_state(KITCHEN, _state('22.0'))
 
-    def cycle() -> RunHeatingCycleUseCase:
+    def cycle(zones: ZoneStore | None = None) -> RunHeatingCycleUseCase:
         writes = write_gate if one_gate else _write_gate(clock)
-        return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, writes=writes)
+        return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, zones=zones, writes=writes)
+
+    def locked_cycle() -> RunHeatingCycleUseCase:
+        return cycle(
+            ZoneStoreStub(
+                zones=ZoneRepository.all_settings(),
+                errors={('last_command_at', 'kitchen'): OperationalError(LOCKED)},
+            ),
+        )
 
     return GatedHouse(
         cycle=cycle,
+        locked_cycle=locked_cycle,
         boost=BoostZoneUseCase(zones=ZoneRepository(), writes=write_gate, dispatcher=EventDispatcher()),
     )
 
@@ -3518,6 +3528,33 @@ def test_write_gate_leaves_the_writes_stamps_outcomes_and_events_of_the_cycle_as
             _issued('kitchen', '28.0', MORNING + HALF_HOUR),
             _issued('kitchen', '30.0', MORNING + timedelta(minutes=36)),
         ],
+    )
+
+
+@pytest.mark.parametrize(
+    'f_gated_house',
+    [True, False],
+    ids=['one_gate_for_every_cycle', 'no_slot_kept_between_cycles'],
+    indirect=True,
+)
+def test_write_gate_gives_a_refused_stamp_its_slot_back_so_the_next_cycle_writes_as_before(
+    f_gated_house: GatedHouse,
+    f_thermostat: FloorThermostatStub,
+    f_events: list[DomainEvent],
+) -> None:
+    refused = f_gated_house.locked_cycle().execute(_at(MORNING))
+    retried = f_gated_house.cycle().execute(_at(MORNING + MINUTE))
+
+    assert (
+        [output.outcomes['kitchen'] for output in (refused, retried)],
+        f_thermostat.commands,
+        Zone.objects.get(slug='kitchen').last_command_at,
+        f_events,
+    ) == (
+        [ZoneCycleOutcome.FAILED, ZoneCycleOutcome.APPLIED],
+        [('setpoint', Decimal('28.0'))],
+        MORNING + MINUTE,
+        [_issued('kitchen', '28.0', MORNING + MINUTE)],
     )
 
 
