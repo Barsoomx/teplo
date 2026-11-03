@@ -67,6 +67,14 @@ AIR_CONTROL = {
     'heat': gettext_lazy('%(name)s: air mode would start heating (%(air)s° against a target of %(target)s°)'),
     'idle': gettext_lazy('%(name)s: air mode would stop heating (%(air)s° against a target of %(target)s°)'),
 }
+AIR_CONTROL_RESUMED = {
+    'heat': gettext_lazy(
+        '%(name)s: watching air mode again, it would be heating (%(air)s° against a target of %(target)s°)',
+    ),
+    'idle': gettext_lazy(
+        '%(name)s: watching air mode again, it would not be heating (%(air)s° against a target of %(target)s°)',
+    ),
+}
 AIR_CONTROL_SETPOINT = gettext_lazy('%(name)s: air mode would hold the thermostat at %(setpoint)s°')
 AIR_CONTROL_OFF = gettext_lazy('%(name)s: air mode would turn the thermostat off')
 WOULD_BE_SETPOINT = gettext_lazy('Thermostat would be set to %(setpoint)s°')
@@ -245,7 +253,8 @@ def air_control_text(entry: TimelineEntry) -> str:
     if _air_state_kept(entry):
         return _air_control_thermostat_text(entry)
 
-    template = AIR_CONTROL.get(str(entry.payload.get('state')))
+    templates = AIR_CONTROL_RESUMED if entry.payload.get('previous_state') is None else AIR_CONTROL
+    template = templates.get(str(entry.payload.get('state')))
     air = floatformat(entry.payload.get('air'), 1)
     target = floatformat(entry.payload.get('target'), 1)
     if template is None or not air or not target:

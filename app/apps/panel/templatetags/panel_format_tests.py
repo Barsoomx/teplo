@@ -312,7 +312,18 @@ def test_duration_reads_a_lead_in_hours_and_minutes(lead: timedelta, expected: s
         ),
         (
             {**AIR_CONTROL_PAYLOAD, 'previous_state': None},
-            'Кухня: в режиме по воздуху включил бы обогрев (20,9° при цели 22,0°)',
+            'Кухня: наблюдение по воздуху возобновлено, сейчас грел бы (20,9° при цели 22,0°)',
+        ),
+        (
+            {
+                **AIR_CONTROL_PAYLOAD,
+                'air': '21.8',
+                'mode': 'comfort',
+                'state': 'idle',
+                'previous_state': None,
+                'setpoint': '18.0',
+            },
+            'Кухня: наблюдение по воздуху возобновлено, сейчас не грел бы (21,8° при цели 22,0°)',
         ),
         (
             {**AIR_CONTROL_PAYLOAD, 'air': '21.8', 'mode': 'comfort', 'state': 'idle', 'setpoint': '30.0'},
@@ -328,7 +339,8 @@ def test_duration_reads_a_lead_in_hours_and_minutes(lead: timedelta, expected: s
     ids=[
         'heat',
         'idle',
-        'first_after_start',
+        'resumed_heating',
+        'resumed_idle',
         'thermostat_set_beside_kept_state',
         'thermostat_off_beside_kept_state',
         'kept_state_without_setpoint',
@@ -346,9 +358,13 @@ def test_air_control_text_says_what_air_mode_would_do(payload: dict[str, object]
         (AIR_CONTROL_PAYLOAD, 'На термостате было бы 30°'),
         ({**AIR_CONTROL_PAYLOAD, 'power': False, 'setpoint': None}, 'Термостат был бы выключен'),
         ({**AIR_CONTROL_PAYLOAD, 'state': 'idle', 'setpoint': '30.0'}, ''),
+        (
+            {**AIR_CONTROL_PAYLOAD, 'state': 'idle', 'previous_state': None, 'setpoint': '18.0'},
+            'На термостате было бы 18°',
+        ),
         ({}, ''),
     ],
-    ids=['setpoint', 'off', 'kept_state_says_it_in_the_headline', 'empty'],
+    ids=['setpoint', 'off', 'kept_state_says_it_in_the_headline', 'resumed_observation', 'empty'],
 )
 def test_air_control_note_gives_the_would_be_thermostat_setting(payload: dict[str, object], expected: str) -> None:
     assert air_control_note(_entry('air_control_dry_run', payload)) == expected
@@ -412,6 +428,15 @@ def test_dry_run_texts_follow_the_active_language() -> None:
     assert (air_control_text(entry), air_control_note(entry)) == (
         'Kitchen: air mode would start heating (20.9° against a target of 22.0°)',
         'Thermostat would be set to 30°',
+    )
+
+
+@pytest.mark.usefixtures('english')
+def test_resumed_observation_follows_the_active_language() -> None:
+    entry = _entry('air_control_dry_run', {**AIR_CONTROL_PAYLOAD, 'previous_state': None}, name='Kitchen')
+
+    assert air_control_text(entry) == (
+        'Kitchen: watching air mode again, it would be heating (20.9° against a target of 22.0°)'
     )
 
 
