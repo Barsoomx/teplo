@@ -11,6 +11,8 @@ from apps.notifications.stubs import ExecutableStub, StartThreadStub, StopSignal
 from apps.notifications.usecases.receive_commands import ReceiveCommandsInputDTO, ReceiveCommandsOutputDTO
 from apps.system.domain.clock import ClockReading
 
+pytestmark = pytest.mark.django_db
+
 NOW = datetime(2026, 11, 4, 13, 40, tzinfo=UTC)
 SECRET = TelegramSecret(token='123456:telegram-token', chat_id='-1001234', proxy=None, commands=True)
 TIMED_OUT = CommandPollError('telegram unreachable: timed out')
