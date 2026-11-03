@@ -2,6 +2,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.headroom import Currents, overrun
@@ -11,6 +12,12 @@ from apps.power.domain.moments import elapsed
 
 SETTLE = timedelta(seconds=5)
 SETTLED = float('-inf')
+
+
+class HandBack(StrEnum):
+    SWITCHED_ON = 'switched_on'
+    UNTOUCHED = 'untouched'
+    WAITING = 'waiting'
 
 
 @dataclass(frozen=True, kw_only=True)

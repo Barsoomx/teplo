@@ -1,13 +1,16 @@
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
+from apps.climate.services.write_gate import ZoneWriteGate
+from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import PlugNotSwitchableError
 from apps.devices.domain.readings import PlugState
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
 from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord
+from apps.power.domain.shedding import HandBack
 from apps.power.services.load_switcher import LoadSwitcher
 from apps.power.stubs import PermitStub, ZoneSwitchStub
 
@@ -50,8 +53,19 @@ def f_plug() -> SwitchablePlugStub:
 
 
 @pytest.fixture
-def f_zones() -> ZoneSwitchStub:
-    return ZoneSwitchStub(error=None)
+def writes() -> ZoneWriteGate:
+    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+
+
+@pytest.fixture
+def f_zones(writes: ZoneWriteGate) -> ZoneSwitchStub:
+    return ZoneSwitchStub(writes=writes, error=None)
+
+
+@pytest.fixture
+def f_zones_written_a_minute_ago(writes: ZoneWriteGate) -> ZoneSwitchStub:
+    writes.reserve('kitchen', NOW - timedelta(minutes=1), stamped_at=None)
+    return ZoneSwitchStub(writes=writes, error=None)
 
 
 @pytest.fixture
@@ -65,10 +79,21 @@ def f_switcher_without_plugs(f_zones: ZoneSwitchStub) -> LoadSwitcher:
 
 
 @pytest.fixture
-def f_switcher_whose_zone_stamps_fail(f_plug: SwitchablePlugStub) -> LoadSwitcher:
+def f_switcher_whose_zone_stamps_fail(f_plug: SwitchablePlugStub, writes: ZoneWriteGate) -> LoadSwitcher:
     return LoadSwitcher(
         plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': f_plug}),
-        zones=ZoneSwitchStub(error=None, stamped=False),
+        zones=ZoneSwitchStub(writes=writes, error=None, stamped=False),
+    )
+
+
+@pytest.fixture
+def f_switcher_of_a_zone_written_a_minute_ago(
+    f_plug: SwitchablePlugStub,
+    f_zones_written_a_minute_ago: ZoneSwitchStub,
+) -> LoadSwitcher:
+    return LoadSwitcher(
+        plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': f_plug}),
+        zones=f_zones_written_a_minute_ago,
     )
 
 
@@ -159,10 +184,10 @@ def test_restoring_a_plug_without_a_switching_driver_fails_before_asking_a_permi
 @pytest.mark.parametrize(
     ('load', 'was_on', 'zone_writes_live', 'outcome', 'switches', 'switched_on'),
     [
-        (BOILER, True, True, True, [True], []),
-        (BOILER, None, True, False, [], []),
-        (KITCHEN, None, True, False, [], []),
-        (KITCHEN, None, False, True, [], [('kitchen', 'thermostat-kitchen', NOW)]),
+        (BOILER, True, True, HandBack.SWITCHED_ON, [True], []),
+        (BOILER, None, True, HandBack.UNTOUCHED, [], []),
+        (KITCHEN, None, True, HandBack.UNTOUCHED, [], []),
+        (KITCHEN, None, False, HandBack.SWITCHED_ON, [], [('kitchen', 'thermostat-kitchen', NOW)]),
     ],
     ids=[
         'plug_teplo_switched_off',
@@ -178,13 +203,22 @@ def test_releasing_hands_a_load_back_as_teplo_found_it(
     load: LoadRecord,
     was_on: bool | None,
     zone_writes_live: bool,
-    outcome: bool,
+    outcome: HandBack,
     switches: list[bool],
     switched_on: list[tuple[str, str, datetime]],
 ) -> None:
     released = f_switcher.release(load, was_on=was_on, zone_writes_live=zone_writes_live, at=NOW)
 
     assert (released, f_plug.switches, f_zones.switched_on) == (outcome, switches, switched_on)
+
+
+def test_release_of_a_zone_waits_while_the_zones_write_budget_is_spent(
+    f_switcher_of_a_zone_written_a_minute_ago: LoadSwitcher,
+    f_zones_written_a_minute_ago: ZoneSwitchStub,
+) -> None:
+    released = f_switcher_of_a_zone_written_a_minute_ago.release(KITCHEN, was_on=None, zone_writes_live=False, at=NOW)
+
+    assert (released, f_zones_written_a_minute_ago.switched_on) == (HandBack.WAITING, [])
 
 
 def test_plug_without_a_switching_driver_fails_the_shed(f_switcher_without_plugs: LoadSwitcher) -> None:

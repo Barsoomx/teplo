@@ -5,6 +5,7 @@ from apps.devices.domain.capabilities import SwitchablePlugProvider
 from apps.devices.services.driver_registry import driver_registry
 from apps.power.domain.loads import LoadRecord
 from apps.power.domain.ports import ZoneSwitch
+from apps.power.domain.shedding import HandBack
 from apps.power.services.zone_switch import ThermostatZoneSwitch
 
 
@@ -35,16 +36,18 @@ class LoadSwitcher:
         plug.set_on(True)
         return True
 
-    def release(self, load: LoadRecord, *, was_on: bool | None, zone_writes_live: bool, at: datetime) -> bool:
+    def release(self, load: LoadRecord, *, was_on: bool | None, zone_writes_live: bool, at: datetime) -> HandBack:
         if load.zone_slug is None:
             if was_on is not True:
-                return False
+                return HandBack.UNTOUCHED
 
             self._plugs.switchable_plug(load.device_slug).set_on(True)
-            return True
+            return HandBack.SWITCHED_ON
 
         if zone_writes_live:
-            return False
+            return HandBack.UNTOUCHED
 
-        self._zones.switch_on(load.zone_slug, load.device_slug, at)
-        return True
+        if not self._zones.switch_on(load.zone_slug, load.device_slug, at, stamped_at=load.last_command_at):
+            return HandBack.WAITING
+
+        return HandBack.SWITCHED_ON

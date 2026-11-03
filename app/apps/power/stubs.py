@@ -1,6 +1,7 @@
 from dataclasses import replace
 from datetime import datetime
 
+from apps.climate.domain.ports import WriteGate
 from apps.core.domain.errors import DomainError
 from apps.devices.domain.kinds import DeviceKind
 from apps.power.domain.control import LoadControl
@@ -109,11 +110,13 @@ class DeviceDirectoryStub:
 class ZoneSwitchStub:
     def __init__(
         self,
+        writes: WriteGate,
         error: DomainError | None,
         stamped: bool = True,
         on_error: DomainError | None = None,
         on_stamp_errors: tuple[Exception, ...] = (),
     ) -> None:
+        self._writes = writes
         self._error = error
         self._stamped = stamped
         self._on_error = on_error
@@ -134,21 +137,28 @@ class ZoneSwitchStub:
         if self._error is not None:
             raise self._error
 
+        self._writes.override(zone, at)
         self._switched_off.append((zone, thermostat, at))
         return self._stamped
 
-    def switch_on(self, zone: str, thermostat: str, at: datetime) -> None:
+    def switch_on(self, zone: str, thermostat: str, at: datetime, *, stamped_at: datetime | None) -> bool:
         if self._error is not None:
             raise self._error
 
+        reservation = self._writes.reserve(zone, at, stamped_at=stamped_at)
+        if reservation is None:
+            return False
+
         if self._refused_on_stamps < len(self._on_stamp_errors):
             self._refused_on_stamps += 1
+            self._writes.cancel(reservation)
             raise self._on_stamp_errors[self._refused_on_stamps - 1]
 
         if self._on_error is not None:
             raise self._on_error
 
         self._switched_on.append((zone, thermostat, at))
+        return True
 
 
 class ZoneWriteStampsStub:

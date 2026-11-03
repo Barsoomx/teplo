@@ -5,6 +5,7 @@ from typing import Protocol
 
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
+from apps.climate.domain.write_guard import WriteReservation
 from apps.climate.domain.zone import ZoneSettings
 
 
@@ -32,3 +33,15 @@ class LoadGate(Protocol):
     def gated_zones(self) -> frozenset[str]: ...
 
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]: ...
+
+
+class WriteGate(Protocol):
+    def reserve(self, zone: str, at: datetime, *, stamped_at: datetime | None) -> WriteReservation | None: ...
+
+    def override(self, zone: str, at: datetime) -> None: ...
+
+    def holds(self, reservation: WriteReservation) -> bool: ...
+
+    def cancel(self, reservation: WriteReservation) -> None: ...
+
+    def clear(self, zone: str) -> None: ...

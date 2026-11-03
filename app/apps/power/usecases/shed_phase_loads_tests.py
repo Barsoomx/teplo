@@ -8,6 +8,7 @@ from django.db import OperationalError
 from pytest_django import DjangoAssertNumQueries
 from structlog.testing import capture_logs
 
+from apps.climate.services.write_gate import ZoneWriteGate
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
@@ -171,6 +172,7 @@ class House:
     boiler: SwitchablePlugStub
     plug_provider: SwitchablePlugProviderStub
     zones: ZoneSwitchStub
+    writes: ZoneWriteGate
     events: list[DomainEvent]
 
 
@@ -234,7 +236,9 @@ def _house(
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
+    writes = ZoneWriteGate(clock=clock)
     zones = ZoneSwitchStub(
+        writes=writes,
         error=None,
         stamped=zone_stamped,
         on_error=zone_on_error,
@@ -273,6 +277,7 @@ def _house(
         boiler=boiler,
         plug_provider=plug_provider,
         zones=zones,
+        writes=writes,
         events=events,
     )
 
@@ -809,7 +814,10 @@ def f_guard_after_its_first_second() -> Guard:
         ),
         shed=ShedPhaseLoadsUseCase(
             loads=LoadRepository(),
-            switcher=LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=ZoneSwitchStub(error=None)),
+            switcher=LoadSwitcher(
+                plugs=SwitchablePlugProviderStub(plugs={}),
+                zones=ZoneSwitchStub(writes=ZoneWriteGate(clock=clock), error=None),
+            ),
             book=book,
             clock=clock,
             dry_run=False,
@@ -2084,6 +2092,20 @@ def test_zone_release_after_a_restart_waits_thirty_minutes_after_the_zones_last_
         _restored_at(late, 1199),
         f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.zones.switched_on,
     ) == ([], [(1200, ('kitchen',))], [('kitchen', 'thermostat-kitchen', _moment(1200))])
+
+
+def test_zone_release_the_write_budget_holds_back_keeps_the_zone_shed_and_held_and_journals_nothing(
+    f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago: House,
+) -> None:
+    outputs = _seconds(f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.guard, 60, '10.0')
+
+    assert (
+        _restored_at(outputs, 1),
+        f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.zones.switched_on,
+        f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.book.held_zones(),
+        f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.loads.writes,
+        f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago.events,
+    ) == ([], [], frozenset({'kitchen'}), [], [])
 
 
 def test_zone_shed_whose_write_stamp_was_lost_stays_held_until_thirty_minutes_after_the_shed(

@@ -4,20 +4,31 @@ import pytest
 
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.events import ZoneBoosted
+from apps.climate.domain.write_guard import WriteReservation, WriteSlot
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
+from apps.climate.services.write_gate import ZoneWriteGate
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO, BoostZoneUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
+from apps.core.stubs import MonotonicClockStub
 
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+WRITTEN_AT = NOW - timedelta(minutes=5)
 
 
 @pytest.fixture
 def f_zone() -> Zone:
-    return ZoneFactory.create(slug='bathroom-1f', last_command_at=NOW - timedelta(minutes=5))
+    return ZoneFactory.create(slug='bathroom-1f', last_command_at=WRITTEN_AT)
+
+
+@pytest.fixture
+def f_writes() -> ZoneWriteGate:
+    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+    writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None)
+    return writes
 
 
 @pytest.fixture
@@ -26,10 +37,10 @@ def f_events() -> list[DomainEvent]:
 
 
 @pytest.fixture
-def f_use_case(f_events: list[DomainEvent]) -> BoostZoneUseCase:
+def f_use_case(f_events: list[DomainEvent], f_writes: ZoneWriteGate) -> BoostZoneUseCase:
     dispatcher = EventDispatcher()
     dispatcher.register(ZoneBoosted, f_events.append)
-    return BoostZoneUseCase(zones=ZoneRepository(), dispatcher=dispatcher)
+    return BoostZoneUseCase(zones=ZoneRepository(), writes=f_writes, dispatcher=dispatcher)
 
 
 def test_boost_sets_two_hours_and_clears_write_budget(
@@ -45,6 +56,20 @@ def test_boost_sets_two_hours_and_clears_write_budget(
         NOW + timedelta(hours=2),
         None,
         [ZoneBoosted(zone='bathroom-1f', until=NOW + timedelta(hours=2), occurred_at=NOW)],
+    )
+
+
+@pytest.mark.usefixtures('f_zone')
+def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
+    f_use_case: BoostZoneUseCase,
+    f_writes: ZoneWriteGate,
+) -> None:
+    f_use_case.execute(BoostZoneInputDTO(zone='bathroom-1f', now=NOW))
+
+    assert f_writes.reserve('bathroom-1f', NOW, stamped_at=None) == WriteReservation(
+        zone='bathroom-1f',
+        slot=WriteSlot(at=NOW, moment=0.0),
+        previous=None,
     )
 
 

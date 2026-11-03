@@ -3,7 +3,9 @@ from datetime import datetime
 import structlog
 from django.db import OperationalError
 
+from apps.climate.domain.ports import WriteGate
 from apps.climate.repositories.zone import ZoneRepository
+from apps.climate.services.write_gate import zone_write_gate
 from apps.devices.domain.capabilities import ThermostatProvider
 from apps.devices.services.driver_registry import driver_registry
 from apps.power.domain.ports import ZoneWriteStamps
@@ -12,26 +14,38 @@ logger = structlog.get_logger(__name__)
 
 
 class ThermostatZoneSwitch:
-    def __init__(self, stamps: ZoneWriteStamps, thermostats: ThermostatProvider) -> None:
+    def __init__(self, stamps: ZoneWriteStamps, thermostats: ThermostatProvider, writes: WriteGate) -> None:
         self._stamps = stamps
         self._thermostats = thermostats
+        self._writes = writes
 
     @classmethod
     def init(cls) -> 'ThermostatZoneSwitch':
-        return cls(stamps=ZoneRepository(), thermostats=driver_registry)
+        return cls(stamps=ZoneRepository(), thermostats=driver_registry, writes=zone_write_gate)
 
     def switch_off(self, zone: str, thermostat: str, at: datetime) -> bool:
         device = self._thermostats.thermostat(thermostat)
+        self._writes.override(zone, at)
         try:
             device.set_power(False)
         finally:
             stamped = self._stamped(zone, at)
         return stamped
 
-    def switch_on(self, zone: str, thermostat: str, at: datetime) -> None:
+    def switch_on(self, zone: str, thermostat: str, at: datetime, *, stamped_at: datetime | None) -> bool:
         device = self._thermostats.thermostat(thermostat)
-        self._stamps.mark_commanded(zone, at)
+        reservation = self._writes.reserve(zone, at, stamped_at=stamped_at)
+        if reservation is None:
+            return False
+
+        try:
+            self._stamps.mark_commanded(zone, at)
+        except OperationalError:
+            self._writes.cancel(reservation)
+            raise
+
         device.set_power(True)
+        return True
 
     def _stamped(self, zone: str, at: datetime) -> bool:
         try:

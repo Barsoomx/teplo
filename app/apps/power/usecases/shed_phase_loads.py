@@ -8,7 +8,7 @@ import structlog
 from django.conf import settings
 from django.db import OperationalError
 
-from apps.climate.domain.write_guard import MIN_WRITE_INTERVAL, write_allowed
+from apps.climate.domain.write_guard import MIN_WRITE_INTERVAL
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
@@ -33,6 +33,7 @@ from apps.power.domain.moments import elapsed
 from apps.power.domain.phase_watch import PhaseWatch, calm_phases, shed_due, with_shed
 from apps.power.domain.ports import LoadStore
 from apps.power.domain.shedding import (
+    HandBack,
     Shed,
     can_hand_back,
     choose_restore,
@@ -196,13 +197,13 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         at: float,
         now: datetime,
     ) -> ShedState:
-        switched_on = False
+        handed = HandBack.UNTOUCHED
         if shed.live:
-            if not self._release_due(state, shedding, record, shed, at, now):
+            if not self._release_due(state, shedding, record, shed, at):
                 return shedding
 
             try:
-                switched_on = self._switcher.release(
+                handed = self._switcher.release(
                     record,
                     was_on=shed.was_on,
                     zone_writes_live=self._zone_writes_live(state.loads, record),
@@ -213,7 +214,10 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             except OperationalError as error:
                 return self._lookup_failed(shedding, record, LoadCommand.RESTORE, error)
 
-            logger.info('load_released', load=record.slug, switched_on=switched_on)
+            if handed is HandBack.WAITING:
+                return shedding
+
+            logger.info('load_released', load=record.slug, switched_on=handed is HandBack.SWITCHED_ON)
             shedding = _stored(shedding, record.slug, None)
         self._event_store.add_event(
             _restore_event(
@@ -222,7 +226,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 shed,
                 amps=state.phases.currents.get(shed.phase),
                 cause=RestoreCause.RELEASED,
-                switched_on=switched_on,
+                switched_on=handed is HandBack.SWITCHED_ON,
                 now=now,
             ),
         )
@@ -578,15 +582,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
     def _zone_writes_live(self, loads: GuardLoads, record: LoadRecord) -> bool:
         return not self._dry_run and record.zone_slug in loads.live_zones
 
-    def _release_due(
-        self,
-        state: GuardState,
-        shedding: ShedState,
-        record: LoadRecord,
-        shed: Shed,
-        at: float,
-        now: datetime,
-    ) -> bool:
+    def _release_due(self, state: GuardState, shedding: ShedState, record: LoadRecord, shed: Shed, at: float) -> bool:
         if awaits_reading(state, shedding, record.slug):
             return False
 
@@ -596,11 +592,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if self._zone_writes_live(state.loads, record):
             return can_hand_back(shed, at, MIN_WRITE_INTERVAL)
 
-        return (
-            elapsed(shed.at, at, MIN_WRITE_INTERVAL)
-            and elapsed(shedding.failed.get(record.slug), at, MIN_WRITE_INTERVAL)
-            and write_allowed(record.last_command_at, now)
-        )
+        failed_at = shedding.failed.get(record.slug)
+        return elapsed(shed.at, at, MIN_WRITE_INTERVAL) and elapsed(failed_at, at, MIN_WRITE_INTERVAL)
 
 
 def _reading(state: GuardState, slug: str) -> LoadReading | None:

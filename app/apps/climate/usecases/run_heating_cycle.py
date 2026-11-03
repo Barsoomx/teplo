@@ -21,7 +21,7 @@ from apps.climate.domain.learning import (
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.climate.domain.observation import StopWatch
-from apps.climate.domain.ports import LoadGate, ZoneLearningStore, ZoneStore
+from apps.climate.domain.ports import LoadGate, WriteGate, ZoneLearningStore, ZoneStore
 from apps.climate.domain.second_floor_guard import decide_second_floor_guard
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import (
@@ -38,6 +38,7 @@ from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook, control_book
+from apps.climate.services.write_gate import zone_write_gate
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.usecases.base import BaseUseCase
@@ -85,6 +86,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         provider: ThermostatProvider,
         book: ControlBook,
         gate: LoadGate,
+        writes: WriteGate,
         dry_run: bool,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
@@ -97,6 +99,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         self._provider = provider
         self._book = book
         self._gate = gate
+        self._writes = writes
         self._dry_run = dry_run
 
     @classmethod
@@ -110,6 +113,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             provider=driver_registry,
             book=control_book,
             gate=GuardLoadGate.init(),
+            writes=zone_write_gate,
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
@@ -253,7 +257,21 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         return ZoneCycleOutcome.DRY_RUN
 
     def _issue(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
-        self._zones.mark_commanded(zone.slug, now)
+        reservation = self._writes.reserve(zone.slug, now, stamped_at=zone.last_command_at)
+        if reservation is None:
+            logger.info('zone_write_held', zone=zone.slug)
+            return ZoneCycleOutcome.THROTTLED
+
+        try:
+            self._zones.mark_commanded(zone.slug, now)
+        except OperationalError:
+            self._writes.cancel(reservation)
+            raise
+
+        if not self._writes.holds(reservation):
+            logger.info('zone_write_held', zone=zone.slug)
+            return ZoneCycleOutcome.THROTTLED
+
         try:
             self._apply(zone.thermostat_slug, change)
         except DomainError as error:
