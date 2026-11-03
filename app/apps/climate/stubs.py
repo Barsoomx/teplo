@@ -174,14 +174,14 @@ class ComfortWindowStoreStub:
     def weeks(self) -> list[ZoneWeek]:
         return list(self._weeks)
 
-    def week(self, slug: str) -> ZoneWeek:
+    def week_for_update(self, slug: str) -> ZoneWeek:
         week = next((week for week in self._weeks if week.slug == slug), None)
         if week is None:
             raise ZoneNotFoundError(slug)
 
         return week
 
-    def window_week(self, window_id: int) -> ZoneWeek:
+    def window_week_for_update(self, window_id: int) -> ZoneWeek:
         week = next((week for week in self._weeks if week.stored(window_id) is not None), None)
         if week is None:
             raise ComfortWindowNotFoundError(window_id)
@@ -190,7 +190,7 @@ class ComfortWindowStoreStub:
 
     def replace_days(self, slug: str, days: Mapping[int, Sequence[ComfortWindow]]) -> None:
         self._replaced.append((slug, {weekday: tuple(windows) for weekday, windows in days.items()}))
-        week = self.week(slug)
+        week = self.week_for_update(slug)
         next_id = max((stored.id for each in self._weeks for stored in each.windows), default=0) + 1
         kept = tuple(stored for stored in week.windows if stored.weekday not in days)
         placed = [(weekday, window) for weekday in sorted(days) for window in days[weekday]]

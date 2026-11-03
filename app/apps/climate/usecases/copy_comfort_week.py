@@ -5,9 +5,10 @@ from functools import partial
 from apps.climate.domain.comfort_windows import WEEKDAYS, ScheduleEdit, ZoneWeek, schedule_edit
 from apps.climate.domain.ports import ComfortWindowStore
 from apps.climate.repositories.comfort_period import ComfortPeriodRepository
-from apps.core.domain.ports import SettingsRecorder
+from apps.core.domain.ports import SettingsRecorder, Transaction
 from apps.core.domain.settings import SettingChange
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.core.services.database_transaction import DatabaseTransaction
 from apps.telemetry.services.settings_journal import SettingsJournal
 
 
@@ -25,18 +26,29 @@ class CopyComfortWeekOutputDTO:
 
 
 class CopyComfortWeekUseCase(BaseUseCase[CopyComfortWeekInputDTO, CopyComfortWeekOutputDTO]):
-    def __init__(self, windows: ComfortWindowStore, recorder: SettingsRecorder) -> None:
+    def __init__(self, windows: ComfortWindowStore, recorder: SettingsRecorder, transaction: Transaction) -> None:
         super().__init__()
         self._windows = windows
         self._recorder = recorder
+        self._transaction = transaction
 
     @classmethod
     def init(cls) -> 'CopyComfortWeekUseCase':
-        return cls(windows=ComfortPeriodRepository(), recorder=SettingsJournal.init())
+        return cls(
+            windows=ComfortPeriodRepository(),
+            recorder=SettingsJournal.init(),
+            transaction=DatabaseTransaction(),
+        )
 
     def _execute(self, input_dto: CopyComfortWeekInputDTO) -> CopyComfortWeekOutputDTO:
-        source = self._windows.week(input_dto.zone)
-        targets = [self._windows.week(slug) for slug in dict.fromkeys(input_dto.to_zones) if slug != input_dto.zone]
+        with self._transaction():
+            return self._copy_week(input_dto)
+
+    def _copy_week(self, input_dto: CopyComfortWeekInputDTO) -> CopyComfortWeekOutputDTO:
+        source = self._windows.week_for_update(input_dto.zone)
+        targets = [
+            self._windows.week_for_update(slug) for slug in dict.fromkeys(input_dto.to_zones) if slug != input_dto.zone
+        ]
         edits = {target.slug: _copy(source, target) for target in targets}
         changes = tuple(change for edit in edits.values() for change in edit.changes)
         if changes:

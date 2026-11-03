@@ -5,6 +5,7 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
+from django.db import IntegrityError, OperationalError
 from django.test import Client
 
 from apps.climate.domain.errors import ComfortWindowNotFoundError
@@ -14,6 +15,7 @@ from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
+NOT_SAVED = 'Не сохранено: база данных не приняла изменение. Попробуйте ещё раз'
 
 
 @pytest.fixture
@@ -27,6 +29,13 @@ def m_delete_use_case() -> Iterator[MagicMock]:
 def m_missing_window_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.delete_comfort_window.DeleteComfortWindowUseCase') as use_case:
         use_case.init.return_value.execute.side_effect = ComfortWindowNotFoundError(99)
+        yield use_case
+
+
+@pytest.fixture
+def m_delete_use_case_the_database_refuses(request: pytest.FixtureRequest) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.delete_comfort_window.DeleteComfortWindowUseCase') as use_case:
+        use_case.init.return_value.execute.side_effect = request.param
         yield use_case
 
 
@@ -83,3 +92,28 @@ def test_deleting_a_window_requires_login(f_anonymous_client: Client, m_delete_u
         '/login/?next=/schedule/windows/1/delete/',
         0,
     )
+
+
+@pytest.mark.parametrize(
+    'm_delete_use_case_the_database_refuses',
+    [OperationalError('database is locked'), IntegrityError('CHECK constraint failed')],
+    ids=['database_locked', 'check_failed'],
+    indirect=True,
+)
+def test_window_the_database_does_not_delete_stays_open_in_its_zone_with_the_reason(
+    f_russian_client: Client,
+    m_delete_use_case_the_database_refuses: MagicMock,
+    m_schedule_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.post('/schedule/windows/1/delete/')
+
+    content = response.content.decode()
+    assert (
+        response.status_code,
+        content.count(NOT_SAVED),
+        'id="schedule-kitchen"' in content,
+        '<details class="window" open>' in content,
+        ('value="06:30"' in content, 'value="23:30"' in content),
+        m_delete_use_case_the_database_refuses.init.call_count,
+        m_schedule_use_case.init.call_count,
+    ) == (200, 1, True, True, (True, True), 1, 1)

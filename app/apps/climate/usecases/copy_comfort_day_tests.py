@@ -1,4 +1,6 @@
+from contextlib import suppress
 from datetime import UTC, datetime, time
+from functools import partial
 
 import pytest
 
@@ -13,9 +15,11 @@ from apps.climate.usecases.copy_comfort_day import (
 )
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
-from apps.core.stubs import SettingsRecorderStub
+from apps.core.stubs import SettingsRecorderStub, TransactionStub
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
+MONDAY = ComfortWindow(weekday=0, start=time(6, 30), end=time(23, 30))
+EARLY_MONDAY = ComfortWindow(weekday=0, start=time(5, 0), end=time(6, 0))
 KITCHEN_WEEK = ZoneWeek(
     slug='kitchen',
     name='Кухня',
@@ -42,8 +46,17 @@ def f_recorder() -> SettingsRecorderStub:
 
 
 @pytest.fixture
-def f_use_case(f_windows: ComfortWindowStoreStub, f_recorder: SettingsRecorderStub) -> CopyComfortDayUseCase:
-    return CopyComfortDayUseCase(windows=f_windows, recorder=f_recorder)
+def f_transaction() -> TransactionStub:
+    return TransactionStub(meanwhile=None)
+
+
+@pytest.fixture
+def f_use_case(
+    f_windows: ComfortWindowStoreStub,
+    f_recorder: SettingsRecorderStub,
+    f_transaction: TransactionStub,
+) -> CopyComfortDayUseCase:
+    return CopyComfortDayUseCase(windows=f_windows, recorder=f_recorder, transaction=f_transaction)
 
 
 @pytest.fixture
@@ -56,6 +69,19 @@ def f_off_grid_use_case() -> CopyComfortDayUseCase:
     return CopyComfortDayUseCase(
         windows=ComfortWindowStoreStub(weeks=[week]),
         recorder=SettingsRecorderStub(error=None),
+        transaction=TransactionStub(meanwhile=None),
+    )
+
+
+@pytest.fixture
+def f_use_case_after_a_window_was_added_to_the_day_meanwhile(
+    f_windows: ComfortWindowStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> CopyComfortDayUseCase:
+    return CopyComfortDayUseCase(
+        windows=f_windows,
+        recorder=f_recorder,
+        transaction=TransactionStub(meanwhile=partial(f_windows.replace_days, 'kitchen', {0: (EARLY_MONDAY, MONDAY)})),
     )
 
 
@@ -120,3 +146,39 @@ def test_day_with_a_window_off_the_grid_is_not_copied(f_off_grid_use_case: CopyC
 def test_day_of_an_unknown_zone_raises(f_use_case: CopyComfortDayUseCase) -> None:
     with pytest.raises(ZoneNotFoundError):
         f_use_case.execute(CopyComfortDayInputDTO(zone='attic', weekday=0, to_weekdays=(1,), now=NOW))
+
+
+@pytest.mark.parametrize(
+    ('weekday', 'outcomes'),
+    [(1, ['committed']), (7, ['rolled_back'])],
+    ids=['copied', 'refused'],
+)
+def test_week_is_read_checked_written_and_journaled_in_one_transaction(
+    f_use_case: CopyComfortDayUseCase,
+    f_transaction: TransactionStub,
+    weekday: int,
+    outcomes: list[str],
+) -> None:
+    with suppress(SettingsRejectedError):
+        f_use_case.execute(CopyComfortDayInputDTO(zone='kitchen', weekday=0, to_weekdays=(weekday,), now=NOW))
+
+    assert f_transaction.outcomes == outcomes
+
+
+def test_day_copied_after_a_window_was_added_to_it_copies_that_window_too(
+    f_use_case_after_a_window_was_added_to_the_day_meanwhile: CopyComfortDayUseCase,
+    f_windows: ComfortWindowStoreStub,
+) -> None:
+    f_use_case_after_a_window_was_added_to_the_day_meanwhile.execute(
+        CopyComfortDayInputDTO(zone='kitchen', weekday=0, to_weekdays=(1,), now=NOW),
+    )
+
+    assert f_windows.replaced[-1] == (
+        'kitchen',
+        {
+            1: (
+                ComfortWindow(weekday=1, start=time(5, 0), end=time(6, 0)),
+                ComfortWindow(weekday=1, start=time(6, 30), end=time(23, 30)),
+            ),
+        },
+    )

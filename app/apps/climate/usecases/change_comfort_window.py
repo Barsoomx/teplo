@@ -7,9 +7,10 @@ from apps.climate.domain.errors import ComfortWindowNotFoundError
 from apps.climate.domain.ports import ComfortWindowStore
 from apps.climate.domain.zone import ComfortWindow
 from apps.climate.repositories.comfort_period import ComfortPeriodRepository
-from apps.core.domain.ports import SettingsRecorder
+from apps.core.domain.ports import SettingsRecorder, Transaction
 from apps.core.domain.settings import SettingChange
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.core.services.database_transaction import DatabaseTransaction
 from apps.telemetry.services.settings_journal import SettingsJournal
 
 
@@ -28,17 +29,26 @@ class ChangeComfortWindowOutputDTO:
 
 
 class ChangeComfortWindowUseCase(BaseUseCase[ChangeComfortWindowInputDTO, ChangeComfortWindowOutputDTO]):
-    def __init__(self, windows: ComfortWindowStore, recorder: SettingsRecorder) -> None:
+    def __init__(self, windows: ComfortWindowStore, recorder: SettingsRecorder, transaction: Transaction) -> None:
         super().__init__()
         self._windows = windows
         self._recorder = recorder
+        self._transaction = transaction
 
     @classmethod
     def init(cls) -> 'ChangeComfortWindowUseCase':
-        return cls(windows=ComfortPeriodRepository(), recorder=SettingsJournal.init())
+        return cls(
+            windows=ComfortPeriodRepository(),
+            recorder=SettingsJournal.init(),
+            transaction=DatabaseTransaction(),
+        )
 
     def _execute(self, input_dto: ChangeComfortWindowInputDTO) -> ChangeComfortWindowOutputDTO:
-        week = self._windows.window_week(input_dto.window)
+        with self._transaction():
+            return self._change(input_dto)
+
+    def _change(self, input_dto: ChangeComfortWindowInputDTO) -> ChangeComfortWindowOutputDTO:
+        week = self._windows.window_week_for_update(input_dto.window)
         stored = week.stored(input_dto.window)
         if stored is None:
             raise ComfortWindowNotFoundError(input_dto.window)

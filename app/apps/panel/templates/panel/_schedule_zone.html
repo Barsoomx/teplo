@@ -12,7 +12,7 @@
       <ul class="windows" role="list">
         {% for window in day.windows %}
         <li class="window-item">
-          <details class="window"{% if failure.action == 'change' and failure.window == window.id %} open{% endif %}>
+          <details class="window"{% if failure.window == window.id %} open{% endif %}>
             <summary class="window-chip"><span class="visually-hidden">{% translate 'Comfort window' %} </span>{{ window.start|time:'H:i' }}–{{ window.end|time:'H:i' }}</summary>
             <form class="window-form" hx-post="{% url 'panel:change-comfort-window' window.id %}" hx-target="closest .schedule-zone" hx-swap="outerHTML" hx-disabled-elt="find button">
               {% if failure.action == 'change' and failure.window == window.id %}
@@ -28,7 +28,7 @@
                 <button class="button button-quiet" type="button" hx-post="{% url 'panel:delete-comfort-window' window.id %}" hx-confirm="{{ confirm }}">{% translate 'Delete' %}</button>
               </div>
             </form>
-            {% if failure.action == 'change' and failure.window == window.id %}{% for message in failure.messages %}<p class="form-error" role="alert">{{ message }}</p>{% endfor %}{% endif %}
+            {% if failure.window == window.id %}{% for message in failure.messages %}<p class="form-error" role="alert">{{ message }}</p>{% endfor %}{% endif %}
           </details>
         </li>
         {% empty %}

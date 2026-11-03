@@ -5,6 +5,7 @@ from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
+from django.db import IntegrityError, OperationalError
 from django.test import Client
 
 from apps.climate.domain.errors import ZoneNotFoundError
@@ -17,6 +18,7 @@ pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
 URL = '/schedule/kitchen/days/0/windows/'
+NOT_SAVED = 'Не сохранено: база данных не приняла изменение. Попробуйте ещё раз'
 
 
 @pytest.fixture
@@ -39,6 +41,13 @@ def m_overlap_add_use_case() -> Iterator[MagicMock]:
 def m_missing_zone_add_use_case() -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.add_comfort_window.AddComfortWindowUseCase') as use_case:
         use_case.init.return_value.execute.side_effect = ZoneNotFoundError('attic')
+        yield use_case
+
+
+@pytest.fixture
+def m_add_use_case_the_database_refuses(request: pytest.FixtureRequest) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.add_comfort_window.AddComfortWindowUseCase') as use_case:
+        use_case.init.return_value.execute.side_effect = request.param
         yield use_case
 
 
@@ -140,3 +149,27 @@ def test_adding_a_window_requires_login(f_anonymous_client: Client, m_add_use_ca
         f'/login/?next={URL}',
         0,
     )
+
+
+@pytest.mark.parametrize(
+    'm_add_use_case_the_database_refuses',
+    [OperationalError('database is locked'), IntegrityError('CHECK constraint failed')],
+    ids=['database_locked', 'check_failed'],
+    indirect=True,
+)
+def test_window_the_database_does_not_take_is_answered_in_its_day_with_what_was_typed(
+    f_russian_client: Client,
+    m_add_use_case_the_database_refuses: MagicMock,
+    m_schedule_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.post(URL, {'start': '05:00', 'end': '06:00'})
+
+    content = response.content.decode()
+    assert (
+        response.status_code,
+        content.count(NOT_SAVED),
+        '<details class="day-tool" open>' in content,
+        ('value="05:00"' in content, 'value="06:00"' in content),
+        m_add_use_case_the_database_refuses.init.call_count,
+        m_schedule_use_case.init.call_count,
+    ) == (200, 1, True, (True, True), 1, 1)

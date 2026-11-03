@@ -1,6 +1,8 @@
 from datetime import time
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
@@ -31,13 +33,21 @@ def attic() -> Zone:
     return ZoneFactory.create(slug='attic', name='Чердак')
 
 
-def test_week_lists_the_windows_of_a_zone_by_day_and_start(f_kitchen_periods: list[ComfortPeriod]) -> None:
+def test_week_lists_the_windows_of_a_zone_by_day_and_start_once_the_zone_is_locked(
+    f_kitchen_periods: list[ComfortPeriod],
+) -> None:
     monday, saturday_evening, saturday_morning = f_kitchen_periods
 
-    assert ComfortPeriodRepository.week('kitchen') == ZoneWeek(
-        slug='kitchen',
-        name='Кухня',
-        windows=(_stored(monday), _stored(saturday_morning), _stored(saturday_evening)),
+    with CaptureQueriesContext(connection) as queries:
+        week = ComfortPeriodRepository.week_for_update('kitchen')
+
+    assert ([query['sql'].split(' ', 1)[0] for query in queries.captured_queries], week) == (
+        ['UPDATE', 'SELECT', 'SELECT'],
+        ZoneWeek(
+            slug='kitchen',
+            name='Кухня',
+            windows=(_stored(monday), _stored(saturday_morning), _stored(saturday_evening)),
+        ),
     )
 
 
@@ -49,16 +59,26 @@ def test_weeks_list_every_zone_also_without_windows() -> None:
     ]
 
 
-def test_window_week_is_the_week_of_the_zone_the_window_belongs_to(f_kitchen_periods: list[ComfortPeriod]) -> None:
-    assert ComfortPeriodRepository.window_week(f_kitchen_periods[1].pk).slug == 'kitchen'
+@pytest.mark.usefixtures('attic')
+def test_window_week_is_the_week_of_the_zone_the_window_belongs_to_once_that_zone_is_locked(
+    f_kitchen_periods: list[ComfortPeriod],
+) -> None:
+    with CaptureQueriesContext(connection) as queries:
+        week = ComfortPeriodRepository.window_week_for_update(f_kitchen_periods[1].pk)
+
+    assert (
+        [query['sql'].split(' ', 1)[0] for query in queries.captured_queries],
+        week.slug,
+        len(week.windows),
+    ) == (['UPDATE', 'SELECT', 'SELECT'], 'kitchen', 3)
 
 
 def test_week_of_an_unknown_zone_or_window_raises() -> None:
     with pytest.raises(ZoneNotFoundError):
-        ComfortPeriodRepository.week('attic')
+        ComfortPeriodRepository.week_for_update('attic')
 
     with pytest.raises(ComfortWindowNotFoundError):
-        ComfortPeriodRepository.window_week(9999)
+        ComfortPeriodRepository.window_week_for_update(9999)
 
 
 @pytest.mark.usefixtures('f_kitchen_periods')

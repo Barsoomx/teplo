@@ -6,6 +6,7 @@ from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
 from apps.climate.domain.zone import ComfortWindow
 from apps.climate.models import ComfortPeriod, Zone
+from apps.core.repositories.write_lock import lock_for_update
 
 
 class ComfortPeriodRepository:
@@ -14,20 +15,18 @@ class ComfortPeriodRepository:
         return [_to_week(zone) for zone in Zone.objects.prefetch_related('comfort_periods').order_by('slug')]
 
     @staticmethod
-    def week(slug: str) -> ZoneWeek:
-        zone = Zone.objects.prefetch_related('comfort_periods').filter(slug=slug).first()
-        if zone is None:
+    def week_for_update(slug: str) -> ZoneWeek:
+        if lock_for_update(Zone.objects.filter(slug=slug)) == 0:
             raise ZoneNotFoundError(slug)
 
-        return _to_week(zone)
+        return _to_week(Zone.objects.prefetch_related('comfort_periods').get(slug=slug))
 
     @staticmethod
-    def window_week(window_id: int) -> ZoneWeek:
-        period = ComfortPeriod.objects.select_related('zone').filter(pk=window_id).first()
-        if period is None:
+    def window_week_for_update(window_id: int) -> ZoneWeek:
+        if lock_for_update(Zone.objects.filter(comfort_periods__id=window_id)) == 0:
             raise ComfortWindowNotFoundError(window_id)
 
-        return ComfortPeriodRepository.week(period.zone.slug)
+        return _to_week(Zone.objects.prefetch_related('comfort_periods').get(comfort_periods__id=window_id))
 
     @staticmethod
     def replace_days(slug: str, days: Mapping[int, Sequence[ComfortWindow]]) -> None:
