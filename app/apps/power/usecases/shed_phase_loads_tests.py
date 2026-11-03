@@ -303,6 +303,14 @@ def _polled_seconds(house: House, count: int, l2: str) -> list[ShedPhaseLoadsOut
     return outputs
 
 
+def _flapping_minutes(guard: Guard, minutes: int, l2: str) -> list[ShedPhaseLoadsOutputDTO]:
+    outputs: list[ShedPhaseLoadsOutputDTO] = []
+    for _ in range(minutes):
+        outputs.extend(_seconds(guard, 40, l2))
+        outputs.extend(_seconds(guard, 20, None))
+    return outputs
+
+
 def _pause(guard: Guard, seconds: int) -> None:
     guard.clock.advance(seconds)
 
@@ -903,6 +911,36 @@ def test_restores_wait_two_minutes_of_calm_and_return_one_load_a_minute_most_imp
                 cause=RestoreCause.CALM,
                 switched_on=True,
                 occurred_at=_moment(186),
+            ),
+        ],
+    )
+
+
+def test_restore_on_a_meter_that_drops_out_every_minute_waits_for_two_minutes_of_calm_readings(
+    f_live_house_after_a_shed: House,
+) -> None:
+    outputs = _flapping_minutes(f_live_house_after_a_shed.guard, 3, '12.0')
+
+    assert (
+        _restored_at(outputs, 5),
+        f_live_house_after_a_shed.boiler.switches,
+        f_live_house_after_a_shed.events[2:],
+    ) == (
+        [(145, ('boiler-1f',))],
+        [False, True],
+        [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('12.0'), occurred_at=_moment(145)),
+            LoadRestored(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('12.0'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                switched_on=True,
+                occurred_at=_moment(145),
             ),
         ],
     )

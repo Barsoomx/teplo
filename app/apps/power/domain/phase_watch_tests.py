@@ -167,18 +167,55 @@ def test_dry_run_sheds_calm_only_the_dry_run_view_while_the_measured_phase_stays
     ) == ([False, False], True, False, frozenset({LoadPhase.L2}), frozenset())
 
 
-def test_stale_meter_restarts_the_holds_and_keeps_the_overload(f_overloaded_watch: PhaseWatch) -> None:
+def test_short_silence_pauses_the_calm_holds_and_keeps_the_overload(f_overloaded_watch: PhaseWatch) -> None:
     steps = _watched(
         f_overloaded_watch,
-        [(200.0, Decimal('17.0')), (300.0, None), (330.0, Decimal('17.0')), (449.0, Decimal('17.0'))],
+        [
+            (200.0, Decimal('17.0')),
+            (250.0, None),
+            (270.0, Decimal('17.0')),
+            (339.0, Decimal('17.0')),
+            (340.0, Decimal('17.0')),
+        ],
     )
-    calm = replace(OVERLOAD, above_since=None, calm_since=330.0)
+    calm = OverloadWatch(calm_since=220.0)
 
-    assert ([step.calmed for step in steps], steps[1].watch.live.calm_since, steps[-1].watch) == (
-        [False, False, False, False],
-        None,
-        replace(f_overloaded_watch, live=calm, dry_run=calm, measured_calm_since=330.0, read_at=449.0),
+    assert (
+        [step.calmed for step in steps],
+        steps[1].watch.live,
+        steps[1].watch.silent_since,
+        steps[-1].watch,
+    ) == (
+        [False, False, False, False, True],
+        replace(OVERLOAD, above_since=None, calm_since=200.0),
+        250.0,
+        replace(f_overloaded_watch, live=calm, dry_run=calm, measured_calm_since=220.0, read_at=340.0),
     )
+
+
+def test_silence_as_long_as_the_meter_lost_hold_restarts_the_calm_holds(f_overloaded_watch: PhaseWatch) -> None:
+    steps = _watched(f_overloaded_watch, [(200.0, Decimal('17.0')), (250.0, None), (310.0, Decimal('17.0'))])
+    calm = replace(OVERLOAD, above_since=None, calm_since=310.0)
+
+    assert ([step.calmed for step in steps], steps[-1].watch) == (
+        [False, False, False],
+        replace(f_overloaded_watch, live=calm, dry_run=calm, measured_calm_since=310.0, read_at=310.0),
+    )
+
+
+def test_silence_restarts_the_shed_hold() -> None:
+    steps = _watched(
+        PhaseWatch(),
+        [
+            (100.0, Decimal('25.0')),
+            (101.0, Decimal('25.0')),
+            (102.0, None),
+            (110.0, Decimal('25.0')),
+            (111.0, Decimal('25.0')),
+        ],
+    )
+
+    assert ([step.overloaded for step in steps], steps[-1].watch.live.above_since) == ([False] * 5, 110.0)
 
 
 def test_alarm_rises_after_a_minute_above_the_shed_threshold_whatever_the_relief() -> None:
@@ -269,6 +306,12 @@ def test_calm_phases_are_those_calm_for_the_restore_hold_in_the_view() -> None:
         frozenset({LoadPhase.L1}),
         frozenset({LoadPhase.L1, LoadPhase.L2}),
     )
+
+
+def test_calm_phases_leave_out_a_phase_gone_silent() -> None:
+    watches = {LoadPhase.L1: PhaseWatch(live=OverloadWatch(calm_since=100.0), silent_since=200.0)}
+
+    assert calm_phases(watches, 300.0, THRESHOLDS, live=True) == frozenset()
 
 
 def test_overloaded_phases_are_those_overloaded_in_the_view() -> None:
