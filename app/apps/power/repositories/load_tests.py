@@ -87,6 +87,18 @@ def kitchen_shed_while_the_meter_was_lost(f_kitchen: Load) -> Load:
 
 
 @pytest.fixture
+def kitchen_handed_back_after_an_overload(f_kitchen: Load) -> Load:
+    Load.objects.filter(pk=f_kitchen.pk).update(
+        shed_at=SHED_AT,
+        shed_reason=ShedReason.OVERLOAD,
+        shed_phase=LoadPhase.L2,
+        shed_device='thermostat-kitchen',
+        shed_handed_back=True,
+    )
+    return f_kitchen
+
+
+@pytest.fixture
 def kitchen_written_by_teplo(f_kitchen: Load) -> Load:
     Zone.objects.filter(slug='kitchen').update(last_command_at=SHED_AT)
     return f_kitchen
@@ -129,6 +141,22 @@ def test_marked_shed_is_read_back() -> None:
     assert LoadRepository.all_records() == [replace(BOILER, shed=OVERLOAD_SHED)]
 
 
+@pytest.mark.usefixtures('f_kitchen')
+def test_marked_hand_back_of_a_floor_is_read_back() -> None:
+    hand_back = LiveShed(
+        at=SHED_AT,
+        reason=ShedReason.OVERLOAD,
+        phase=LoadPhase.L2,
+        was_on=None,
+        device='thermostat-kitchen',
+        handed_back=True,
+    )
+
+    LoadRepository.mark_shed('kitchen', hand_back)
+
+    assert LoadRepository.all_records() == [replace(KITCHEN, shed=hand_back)]
+
+
 @pytest.mark.usefixtures('kitchen_shed_while_the_meter_was_lost')
 def test_stored_shed_of_a_zone_is_read_back_without_a_plug_state() -> None:
     assert LoadRepository.all_records() == [
@@ -145,13 +173,12 @@ def test_stored_shed_of_a_zone_is_read_back_without_a_plug_state() -> None:
     ]
 
 
-@pytest.mark.usefixtures('kitchen_shed_while_the_meter_was_lost')
+@pytest.mark.usefixtures('kitchen_handed_back_after_an_overload')
 def test_cleared_shed_leaves_no_trace() -> None:
     LoadRepository.clear_shed('kitchen')
 
-    assert list(Load.objects.values_list('shed_at', 'shed_reason', 'shed_phase', 'shed_was_on', 'shed_device')) == [
-        (None, '', '', None, ''),
-    ]
+    shed_fields = ('shed_at', 'shed_reason', 'shed_phase', 'shed_was_on', 'shed_device', 'shed_handed_back')
+    assert list(Load.objects.values_list(*shed_fields)) == [(None, '', '', None, '', False)]
 
 
 @pytest.mark.usefixtures('f_kitchen')

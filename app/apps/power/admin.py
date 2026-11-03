@@ -41,17 +41,18 @@ class LoadAdmin(admin.ModelAdmin):
         'shed_phase',
         'shed_was_on',
         'shed_device',
+        'shed_handed_back',
     )
 
     def get_readonly_fields(self, request: HttpRequest, obj: Load | None = None) -> tuple[str, ...]:
         fields = tuple(super().get_readonly_fields(request, obj))
-        if obj is None or obj.shed_at is None:
+        if not _shed_live(obj):
             return fields
 
         return (*fields, *SHED_IDENTITY_FIELDS)
 
     def has_delete_permission(self, request: HttpRequest, obj: Load | None = None) -> bool:
-        return (obj is None or obj.shed_at is None) and super().has_delete_permission(request, obj)
+        return not _shed_live(obj) and super().has_delete_permission(request, obj)
 
 
 @admin.register(LoadSettings)
@@ -63,3 +64,7 @@ class LoadSettingsAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request: HttpRequest, obj: LoadSettings | None = None) -> bool:  # noqa: ARG002
         return False
+
+
+def _shed_live(load: Load | None) -> bool:
+    return load is not None and load.shed_at is not None and not load.shed_handed_back

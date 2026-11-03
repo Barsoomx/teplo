@@ -1,5 +1,5 @@
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -94,13 +94,14 @@ def unconfirmed_shed(
     )
 
 
-def stored_shed(shed: Shed) -> LiveShed:
+def stored_shed(shed: Shed, *, handed_back: bool = False) -> LiveShed:
     return LiveShed(
         at=shed.occurred_at,
         reason=shed.reason,
         phase=shed.phase,
         was_on=shed.was_on,
         device=shed.device,
+        handed_back=handed_back,
     )
 
 
@@ -113,23 +114,19 @@ def shed_confirmed(unconfirmed: UnconfirmedShed, reading: LoadReading | None) ->
 
 def resumed_shed(record: LoadRecord, *, at: float, now: datetime, default_amps: Decimal) -> Shed | None:
     stored = record.shed
-    if stored is None:
+    if stored is None or stored.handed_back:
         return None
 
-    shed_at = at - max((now - stored.at).total_seconds(), 0.0)
-    return Shed(
-        load=record.slug,
-        phase=stored.phase,
-        amps=record.effective_amps(default_amps),
-        live=True,
-        reason=stored.reason,
-        was_on=stored.was_on,
-        device=stored.device,
-        at=shed_at,
-        occurred_at=stored.at,
-        settled_at=SETTLED,
-        unstamped_write_at=shed_at if record.kind is LoadKind.ZONE else None,
-    )
+    shed = _resumed(record, stored, at=at, now=now, default_amps=default_amps)
+    return replace(shed, unstamped_write_at=shed.at) if record.kind is LoadKind.ZONE else shed
+
+
+def resumed_hand_back(record: LoadRecord, *, at: float, now: datetime, default_amps: Decimal) -> Shed | None:
+    stored = record.shed
+    if stored is None or not stored.handed_back:
+        return None
+
+    return _resumed(record, stored, at=at, now=now, default_amps=default_amps)
 
 
 def in_view(shed: Shed, *, live: bool) -> bool:
@@ -198,6 +195,21 @@ def choose_restore(
             if overrun(statuses[shed.load].phase, statuses[shed.load].amps, currents, thresholds.start_ceiling) is None
         ),
         None,
+    )
+
+
+def _resumed(record: LoadRecord, stored: LiveShed, *, at: float, now: datetime, default_amps: Decimal) -> Shed:
+    return Shed(
+        load=record.slug,
+        phase=stored.phase,
+        amps=record.effective_amps(default_amps),
+        live=True,
+        reason=stored.reason,
+        was_on=stored.was_on,
+        device=stored.device,
+        at=at - max((now - stored.at).total_seconds(), 0.0),
+        occurred_at=stored.at,
+        settled_at=SETTLED,
     )
 
 

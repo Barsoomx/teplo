@@ -45,6 +45,12 @@ def f_kitchen_with_its_load(request: pytest.FixtureRequest, f_kitchen: Zone) -> 
     return f_kitchen
 
 
+@pytest.fixture
+def f_kitchen_handed_back(f_kitchen: Zone) -> Zone:
+    ZoneLoadFactory.create(slug='kitchen', zone=f_kitchen, shed_at=SHED_AT, shed_handed_back=True)
+    return f_kitchen
+
+
 def test_zone_page_shows_the_boost_and_the_write_stamps_without_posting_them_back(
     f_zone_admin: ZoneAdmin,
     f_request: HttpRequest,
@@ -73,6 +79,14 @@ def test_zone_page_keeps_the_slug_and_the_thermostat_read_only_while_its_load_is
     form = f_zone_admin.get_form(f_request, f_kitchen_with_its_load, change=True)
 
     assert (readonly - CYCLE_FIELDS, locked & set(form.base_fields)) == (locked, set())
+
+
+def test_zone_page_of_a_zone_whose_floor_was_handed_back_keeps_the_slug_and_the_thermostat_editable(
+    f_zone_admin: ZoneAdmin,
+    f_request: HttpRequest,
+    f_kitchen_handed_back: Zone,
+) -> None:
+    assert set(f_zone_admin.get_readonly_fields(f_request, f_kitchen_handed_back)) == CYCLE_FIELDS
 
 
 def test_zone_page_of_a_zone_without_a_load_keeps_the_slug_and_the_thermostat_editable(

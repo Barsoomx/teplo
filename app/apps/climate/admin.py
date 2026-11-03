@@ -30,7 +30,7 @@ class ZoneAdmin(admin.ModelAdmin):
 
     def get_readonly_fields(self, request: HttpRequest, obj: Zone | None = None) -> tuple[str, ...]:
         fields = tuple(super().get_readonly_fields(request, obj))
-        if obj is None or not Load.objects.filter(zone=obj, shed_at__isnull=False).exists():
+        if obj is None or not Load.objects.filter(zone=obj, shed_at__isnull=False, shed_handed_back=False).exists():
             return fields
 
         return (*fields, *SHED_ZONE_FIELDS)

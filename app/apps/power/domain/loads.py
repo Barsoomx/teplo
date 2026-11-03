@@ -54,6 +54,7 @@ class LiveShed:
     phase: LoadPhase
     was_on: bool | None
     device: str
+    handed_back: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -20,6 +20,7 @@ class LoadRepository:
             shed_phase=shed.phase,
             shed_was_on=shed.was_on,
             shed_device=shed.device,
+            shed_handed_back=shed.handed_back,
         )
 
     @staticmethod
@@ -30,6 +31,7 @@ class LoadRepository:
             shed_phase='',
             shed_was_on=None,
             shed_device='',
+            shed_handed_back=False,
         )
 
     @staticmethod
@@ -79,4 +81,5 @@ def _shed(load: Load) -> LiveShed | None:
         phase=LoadPhase(load.shed_phase),
         was_on=load.shed_was_on,
         device=load.shed_device,
+        handed_back=load.shed_handed_back,
     )

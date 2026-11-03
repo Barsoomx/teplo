@@ -1,5 +1,5 @@
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -41,6 +41,7 @@ from apps.power.domain.shedding import (
     drawing_since,
     moved,
     new_shed,
+    resumed_hand_back,
     resumed_shed,
     shed_confirmed,
     stored_shed,
@@ -129,11 +130,19 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             return replace(shedding, resumed=True)
 
         default_amps = state.loads.control.default_amps
-        sheds = (resumed_shed(record, at=at, now=now, default_amps=default_amps) for record in state.loads.records)
-        resumed = {shed.load: shed for shed in sheds if shed is not None}
-        if resumed:
-            logger.info('load_sheds_resumed', loads=sorted(resumed))
-        return replace(shedding, sheds={**resumed, **shedding.sheds}, resumed=True)
+        records = state.loads.records
+        sheds = _by_load(resumed_shed(record, at=at, now=now, default_amps=default_amps) for record in records)
+        handed_back = _by_load(
+            resumed_hand_back(record, at=at, now=now, default_amps=default_amps) for record in records
+        )
+        if sheds or handed_back:
+            logger.info('load_sheds_resumed', loads=sorted(sheds), handed_back=sorted(handed_back))
+        return replace(
+            shedding,
+            sheds={**sheds, **shedding.sheds},
+            handed_back={**handed_back, **shedding.handed_back},
+            resumed=True,
+        )
 
     def _confirmed(self, state: GuardState, shedding: ShedState, now: datetime) -> ShedState:
         for slug, unconfirmed in tuple(shedding.unconfirmed.items()):
@@ -382,7 +391,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 return self._lookup_failed(restored, record, LoadCommand.RESTORE, error)
 
             logger.info('load_restored', load=record.slug)
-            restored = _handed_back(_stored(restored, record.slug, None), record, shed)
+            restored = _handed_back(restored, record, shed)
 
         self._event_store.add_event(
             _restore_event(
@@ -653,24 +662,34 @@ def _stored(shedding: ShedState, slug: str, stored: LiveShed | None) -> ShedStat
     return replace(shedding, unsaved={**shedding.unsaved, slug: stored})
 
 
+def _by_load(sheds: Iterable[Shed | None]) -> dict[str, Shed]:
+    return {shed.load: shed for shed in sheds if shed is not None}
+
+
 def _handed_back(shedding: ShedState, record: LoadRecord, shed: Shed) -> ShedState:
     if record.kind is not LoadKind.ZONE or shed.reason is not ShedReason.OVERLOAD:
-        return shedding
+        return _stored(shedding, record.slug, None)
 
-    return replace(shedding, handed_back={**shedding.handed_back, record.slug: shed})
+    return replace(
+        _stored(shedding, record.slug, stored_shed(shed, handed_back=True)),
+        handed_back={**shedding.handed_back, record.slug: shed},
+    )
 
 
 def _still_handed_back(state: GuardState, shedding: ShedState) -> ShedState:
-    return replace(
-        shedding,
-        handed_back={
-            slug: shed
-            for slug, shed in shedding.handed_back.items()
-            if slug not in shedding.sheds
-            and state.loads.record(slug) is not None
-            and not drawing_since(shed, _reading(state, slug))
-        },
-    )
+    kept: dict[str, Shed] = {}
+    ended: dict[str, LiveShed | None] = {}
+    for slug, shed in shedding.handed_back.items():
+        again = shedding.sheds.get(slug)
+        if (again is not None and again.live) or state.loads.record(slug) is None:
+            continue
+
+        if again is not None or drawing_since(shed, _reading(state, slug)):
+            ended[slug] = None
+            continue
+
+        kept[slug] = shed
+    return replace(shedding, handed_back=kept, unsaved={**shedding.unsaved, **ended})
 
 
 def _shed_event(

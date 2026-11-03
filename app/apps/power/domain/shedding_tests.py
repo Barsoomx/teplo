@@ -19,6 +19,7 @@ from apps.power.domain.shedding import (
     moved,
     new_shed,
     relief,
+    resumed_hand_back,
     resumed_shed,
     shed_confirmed,
     stored_shed,
@@ -223,12 +224,22 @@ def test_unconfirmed_shed_holds_a_settled_live_shed_of_a_plug_that_was_on() -> N
 
 
 def test_stored_shed_keeps_when_and_why_a_load_was_shed_and_the_device_switched_off() -> None:
-    assert stored_shed(BOILER_SHED) == LiveShed(
-        at=NOW,
-        reason=ShedReason.OVERLOAD,
-        phase=LoadPhase.L1,
-        was_on=True,
-        device='plug-boiler-1f',
+    assert (stored_shed(BOILER_SHED), stored_shed(KITCHEN_SHED, handed_back=True)) == (
+        LiveShed(
+            at=NOW,
+            reason=ShedReason.OVERLOAD,
+            phase=LoadPhase.L1,
+            was_on=True,
+            device='plug-boiler-1f',
+        ),
+        LiveShed(
+            at=NOW,
+            reason=ShedReason.OVERLOAD,
+            phase=LoadPhase.L2,
+            was_on=None,
+            device='thermostat-kitchen',
+            handed_back=True,
+        ),
     )
 
 
@@ -342,6 +353,33 @@ def test_resumed_shed_of_a_load_not_shed_is_none() -> None:
     resumed = resumed_shed(replace(SHED_BOILER_RECORD, shed=None), at=AT, now=NOW, default_amps=Decimal('6.0'))
 
     assert resumed is None
+
+
+def test_floor_handed_back_before_a_restart_resumes_as_a_hand_back_and_not_as_a_shed() -> None:
+    record = replace(SHED_KITCHEN_RECORD, shed=stored_shed(KITCHEN_SHED, handed_back=True))
+
+    assert (
+        resumed_shed(record, at=AT, now=NOW + timedelta(minutes=10), default_amps=Decimal('6.0')),
+        resumed_hand_back(record, at=AT, now=NOW + timedelta(minutes=10), default_amps=Decimal('6.0')),
+    ) == (
+        None,
+        Shed(
+            load='kitchen',
+            phase=LoadPhase.L2,
+            amps=Decimal('8.0'),
+            live=True,
+            reason=ShedReason.OVERLOAD,
+            was_on=None,
+            device='thermostat-kitchen',
+            at=AT - 600,
+            occurred_at=NOW,
+            settled_at=SETTLED,
+        ),
+    )
+
+
+def test_shed_not_handed_back_resumes_no_hand_back() -> None:
+    assert resumed_hand_back(SHED_KITCHEN_RECORD, at=AT, now=NOW, default_amps=Decimal('6.0')) is None
 
 
 @pytest.mark.parametrize(

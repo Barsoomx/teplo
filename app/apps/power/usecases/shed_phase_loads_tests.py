@@ -39,7 +39,7 @@ from apps.power.domain.events import (
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
-from apps.power.domain.shedding import Shed, UnconfirmedShed
+from apps.power.domain.shedding import SETTLED, Shed, UnconfirmedShed
 from apps.power.domain.view import GuardView
 from apps.power.factories import PlugLoadFactory, ZoneLoadFactory
 from apps.power.repositories.load import LoadRepository
@@ -628,6 +628,17 @@ def f_restarted_house_after_a_zone_release_attempt_ten_minutes_ago() -> House:
 
 
 @pytest.fixture
+def f_restarted_house_with_a_floor_handed_back_after_an_overload() -> House:
+    house = _house(
+        [replace(KITCHEN, live=True, shed=replace(STORED_ZONE_SHED, handed_back=True))],
+        LIVE_CONTROL,
+        LIVE_ZONES,
+    )
+    _thermostat_read_off(house, 'thermostat-kitchen', 0)
+    return house
+
+
+@pytest.fixture
 def f_teplo_dry_run_house() -> House:
     return _house(
         [replace(BOILER, live=True, shed=STORED_SHED), replace(KITCHEN, live=True)],
@@ -1002,7 +1013,21 @@ def test_restores_wait_two_minutes_of_calm_and_return_one_load_a_minute_most_imp
     ) == (
         [(126, ('kitchen',)), (186, ('boiler-1f',))],
         [False, True],
-        [('clear_shed', 'kitchen', None), ('clear_shed', 'boiler-1f', None)],
+        [
+            (
+                'mark_shed',
+                'kitchen',
+                LiveShed(
+                    at=_moment(5),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=None,
+                    device='thermostat-kitchen',
+                    handed_back=True,
+                ),
+            ),
+            ('clear_shed', 'boiler-1f', None),
+        ],
         [
             PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('10.0'), occurred_at=_moment(126)),
             LoadRestored(
@@ -1088,6 +1113,66 @@ def test_zone_restored_after_an_overload_keeps_the_phase_it_was_shed_for_until_i
             ),
         },
         {},
+    )
+
+
+def test_zone_restored_after_an_overload_stores_its_hand_back_until_it_heats_again(
+    f_live_floors_house_after_a_shed: House,
+) -> None:
+    _seconds(f_live_floors_house_after_a_shed.guard, 125, '10.0')
+    stored = list(f_live_floors_house_after_a_shed.loads.writes)
+    _thermostat_read_heating(f_live_floors_house_after_a_shed, 'thermostat-kitchen', 129)
+    _seconds(f_live_floors_house_after_a_shed.guard, 1, '10.0')
+
+    assert (stored[1:], f_live_floors_house_after_a_shed.loads.writes[len(stored) :]) == (
+        [
+            (
+                'mark_shed',
+                'kitchen',
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=None,
+                    device='thermostat-kitchen',
+                    handed_back=True,
+                ),
+            ),
+        ],
+        [('clear_shed', 'kitchen', None)],
+    )
+
+
+def test_floor_handed_back_before_a_restart_keeps_its_hand_back_and_no_hold(
+    f_restarted_house_with_a_floor_handed_back_after_an_overload: House,
+) -> None:
+    outputs = _seconds(f_restarted_house_with_a_floor_handed_back_after_an_overload.guard, 1, '10.0')
+
+    assert (
+        outputs,
+        _handed_back(f_restarted_house_with_a_floor_handed_back_after_an_overload),
+        f_restarted_house_with_a_floor_handed_back_after_an_overload.book.held_zones(),
+        f_restarted_house_with_a_floor_handed_back_after_an_overload.loads.writes,
+        f_restarted_house_with_a_floor_handed_back_after_an_overload.events,
+    ) == (
+        [NOTHING],
+        {
+            'kitchen': Shed(
+                load='kitchen',
+                phase=LoadPhase.L2,
+                amps=Decimal('8.0'),
+                live=True,
+                reason=ShedReason.OVERLOAD,
+                was_on=None,
+                device='thermostat-kitchen',
+                at=START - 3600,
+                occurred_at=NOW - timedelta(hours=1),
+                settled_at=SETTLED,
+            ),
+        },
+        frozenset(),
+        [],
+        [],
     )
 
 
@@ -1639,7 +1724,20 @@ def test_lost_meter_keeps_the_floors_an_overload_shed_off_until_the_meter_report
         [(261, ('living-room',))],
         [False],
         frozenset({'kitchen'}),
-        [('clear_shed', 'living-room', None)],
+        [
+            (
+                'mark_shed',
+                'living-room',
+                LiveShed(
+                    at=_moment(6),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=None,
+                    device='thermostat-living-room',
+                    handed_back=True,
+                ),
+            ),
+        ],
         [
             PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('10.0'), occurred_at=_moment(261)),
             LoadRestored(

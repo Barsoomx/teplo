@@ -9,7 +9,7 @@ from django.test import RequestFactory
 from apps.devices.admin import DeviceAdmin
 from apps.devices.models import Device
 from apps.power.admin import LoadAdmin, LoadSettingsAdmin, OutageAdmin
-from apps.power.factories import LoadSettingsFactory, OutageFactory, PlugLoadFactory
+from apps.power.factories import LoadSettingsFactory, OutageFactory, PlugLoadFactory, ZoneLoadFactory
 from apps.power.models import Load, LoadSettings, Outage
 
 pytestmark = pytest.mark.django_db
@@ -25,6 +25,7 @@ GUARD_FIELDS = {
     'shed_phase',
     'shed_was_on',
     'shed_device',
+    'shed_handed_back',
 }
 
 
@@ -63,6 +64,11 @@ def f_device_admin() -> DeviceAdmin:
 @pytest.fixture
 def f_load(request: pytest.FixtureRequest) -> Load:
     return PlugLoadFactory.create(device__slug='plug-boiler-1f', shed_at=request.param)
+
+
+@pytest.fixture
+def f_floor_handed_back() -> Load:
+    return ZoneLoadFactory.create(zone__thermostat__slug='thermostat-kitchen', shed_at=SHED_AT, shed_handed_back=True)
 
 
 @pytest.fixture
@@ -181,3 +187,16 @@ def test_admin_refuses_to_delete_the_plug_of_a_load_shed_live(
     _, _, perms_needed, _ = f_device_admin.get_deleted_objects(Device.objects.filter(load=f_load), f_owner_request)
 
     assert perms_needed == {'load'}
+
+
+def test_floor_handed_back_after_an_overload_is_not_shed_and_keeps_nothing_read_only_nor_undeletable(
+    f_load_admin: LoadAdmin,
+    f_owner_request: HttpRequest,
+    f_floor_handed_back: Load,
+) -> None:
+    readonly = set(f_load_admin.get_readonly_fields(f_owner_request, f_floor_handed_back))
+
+    assert (readonly - GUARD_FIELDS, f_load_admin.has_delete_permission(f_owner_request, f_floor_handed_back)) == (
+        set(),
+        True,
+    )

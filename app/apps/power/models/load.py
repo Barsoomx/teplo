@@ -62,6 +62,7 @@ class Load(models.Model):
     shed_phase = models.CharField(max_length=16, choices=PHASE_CHOICES, blank=True, editable=False)
     shed_was_on = models.BooleanField(null=True, editable=False)
     shed_device = models.CharField(max_length=64, blank=True, editable=False)
+    shed_handed_back = models.BooleanField(default=False, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
