@@ -496,6 +496,50 @@ def m_overloaded_outage_timeline_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+SETTINGS_ENTRIES: tuple[tuple[str, str, dict[str, object]], ...] = (
+    (
+        'kitchen',
+        'Кухня',
+        {'object': 'zone', 'name': 'Кухня', 'field': 'comfort_floor_setpoint', 'old': '28.0', 'new': '27.5'},
+    ),
+    (
+        'kitchen',
+        'Кухня',
+        {'object': 'schedule', 'name': 'Кухня', 'field': 'saturday', 'old': ['08:00-23:30'], 'new': []},
+    ),
+    ('', '', {'object': 'load_settings', 'name': '', 'field': 'shed_amps', 'old': '24.0', 'new': '25.0'}),
+    (
+        'boiler-1f',
+        'Бойлер 1 этаж',
+        {'object': 'load', 'name': 'Бойлер 1 этаж', 'field': 'phase', 'old': 'unknown', 'new': 'l2'},
+    ),
+)
+
+
+@pytest.fixture
+def m_settings_timeline_use_case() -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 11, 3),
+                    entries=tuple(
+                        TimelineEntry(
+                            kind='settings_changed',
+                            subject=subject,
+                            subject_name=name,
+                            device_kind=None,
+                            payload=payload,
+                            created_at=MORNING - timedelta(minutes=minutes),
+                        )
+                        for minutes, (subject, name, payload) in enumerate(SETTINGS_ENTRIES)
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
 def test_journal_describes_entries_in_words(f_client: Client, m_timeline_use_case: MagicMock) -> None:
     response = f_client.get('/journal/')
 
@@ -678,3 +722,23 @@ def test_journal_redirects_anonymous_to_login(f_anonymous_client: Client) -> Non
     response = f_anonymous_client.get('/journal/')
 
     assert (response.status_code, response['Location']) == (302, '/login/?next=/journal/')
+
+
+def test_journal_words_the_settings_changed_in_the_panel(
+    f_russian_client: Client,
+    m_settings_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        [
+            'Кухня: пол в комфорте 28° → 27,5°' in content,
+            'Кухня, суббота: комфорт 08:00–23:30 → нет' in content,
+            'Управление нагрузкой: порог отключения 24 А → 25 А' in content,
+            'Бойлер 1 этаж: фаза неизвестна → L2' in content,
+        ],
+        content.count('#settings-2'),
+        'неизвестное событие' in content.lower(),
+        m_settings_timeline_use_case.init.call_count,
+    ) == ([True] * 4, 5, False, 1)

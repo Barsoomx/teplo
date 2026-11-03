@@ -1,0 +1,76 @@
+{% load i18n l10n panel_format %}<article class="schedule-zone" id="schedule-{{ zone.slug }}">
+  <header class="schedule-head">
+    <h2 class="schedule-name">{{ zone.name }}</h2>
+    <p class="schedule-lead">{% if zone.optimal_start %}{% blocktranslate with cap=schedule.lead_cap|duration lead=zone.preheat_lead|duration mornings=schedule.mornings_needed %}Air control starts the warm-up by what the room has learned, at most {{ cap }} before comfort. While the room has fewer than {{ mornings }} learned mornings, the warm-up starts {{ lead }} before comfort.{% endblocktranslate %}{% else %}{% blocktranslate with lead=zone.preheat_lead|duration %}Warm-up starts {{ lead }} before comfort.{% endblocktranslate %}{% endif %}</p>
+  </header>
+  <ol class="days" role="list">
+    {% for day in zone.days %}
+    <li class="day">
+      <h3 class="day-name">{{ day.weekday|weekday_name }}</h3>
+      <div class="day-bar" aria-hidden="true">{% for period in day.periods %}<span class="day-period day-period-{{ period.mode }}" style="--from: {{ period.start|unlocalize }}; --to: {{ period.end|unlocalize }};"></span>{% endfor %}</div>
+      <ul class="day-periods" role="list">{% for period in day.periods %}<li>{{ period|period_text }}</li>{% endfor %}</ul>
+      <ul class="windows" role="list">
+        {% for window in day.windows %}
+        <li class="window-item">
+          <details class="window"{% if failure.action == 'change' and failure.window == window.id %} open{% endif %}>
+            <summary class="window-chip"><span class="visually-hidden">{% translate 'Comfort window' %} </span>{{ window.start|time:'H:i' }}–{{ window.end|time:'H:i' }}</summary>
+            <form class="window-form" hx-post="{% url 'panel:change-comfort-window' window.id %}" hx-target="closest .schedule-zone" hx-swap="outerHTML" hx-disabled-elt="find button">
+              {% if failure.action == 'change' and failure.window == window.id %}
+              <label class="field field-time"><span class="field-label">{% translate 'From' %}</span><input type="time" name="start" step="900" required value="{{ failure.start }}"></label>
+              <label class="field field-time"><span class="field-label">{% translate 'To' %}</span><input type="time" name="end" step="900" required value="{{ failure.end }}"></label>
+              {% else %}
+              <label class="field field-time"><span class="field-label">{% translate 'From' %}</span><input type="time" name="start" step="900" required value="{{ window.start|time:'H:i' }}"></label>
+              <label class="field field-time"><span class="field-label">{% translate 'To' %}</span><input type="time" name="end" step="900" required value="{{ window.end|time:'H:i' }}"></label>
+              {% endif %}
+              <div class="form-actions">
+                <button class="button" type="submit">{% translate 'Save' %}</button>
+                {% blocktranslate asvar confirm with start=window.start|time:'H:i' end=window.end|time:'H:i' %}Delete the comfort window {{ start }}–{{ end }}?{% endblocktranslate %}
+                <button class="button button-quiet" type="button" hx-post="{% url 'panel:delete-comfort-window' window.id %}" hx-confirm="{{ confirm }}">{% translate 'Delete' %}</button>
+              </div>
+            </form>
+            {% if failure.action == 'change' and failure.window == window.id %}{% for message in failure.messages %}<p class="form-error" role="alert">{{ message }}</p>{% endfor %}{% endif %}
+          </details>
+        </li>
+        {% empty %}
+        <li class="window-none">{% translate 'No comfort: night all day' %}</li>
+        {% endfor %}
+      </ul>
+      <div class="day-tools">
+        <details class="day-tool"{% if failure.action == 'add' and failure.weekday == day.weekday %} open{% endif %}>
+          <summary class="tool-summary">{% translate 'Add a window' %}</summary>
+          <form class="window-form" hx-post="{% url 'panel:add-comfort-window' zone.slug day.weekday %}" hx-target="closest .schedule-zone" hx-swap="outerHTML" hx-disabled-elt="find button">
+            <label class="field field-time"><span class="field-label">{% translate 'From' %}</span><input type="time" name="start" step="900" required{% if failure.action == 'add' and failure.weekday == day.weekday %} value="{{ failure.start }}"{% endif %}></label>
+            <label class="field field-time"><span class="field-label">{% translate 'To' %}</span><input type="time" name="end" step="900" required{% if failure.action == 'add' and failure.weekday == day.weekday %} value="{{ failure.end }}"{% endif %}></label>
+            <div class="form-actions"><button class="button" type="submit">{% translate 'Add' %}</button></div>
+          </form>
+          {% if failure.action == 'add' and failure.weekday == day.weekday %}{% for message in failure.messages %}<p class="form-error" role="alert">{{ message }}</p>{% endfor %}{% endif %}
+        </details>
+        <details class="day-tool"{% if failure.action == 'copy' and failure.weekday == day.weekday %} open{% endif %}>
+          <summary class="tool-summary">{% translate 'Copy to other days' %}</summary>
+          <form class="copy-form" hx-post="{% url 'panel:copy-comfort-day' zone.slug day.weekday %}" hx-target="closest .schedule-zone" hx-swap="outerHTML" hx-disabled-elt="find button">
+            <fieldset class="picks">
+              <legend class="visually-hidden">{% blocktranslate with day=day.weekday|weekday_name %}Copy the windows of {{ day }} to{% endblocktranslate %}</legend>
+              {% for other in zone.days %}{% if other.weekday != day.weekday %}<label class="pick"><input type="checkbox" name="weekdays" value="{{ other.weekday }}"{% if failure.action == 'copy' and failure.weekday == day.weekday and other.weekday|stringformat:'d' in failure.chosen %} checked{% endif %}><span>{{ other.weekday|weekday_short }}</span></label>{% endif %}{% endfor %}
+            </fieldset>
+            <div class="form-actions"><button class="button" type="submit">{% translate 'Copy' %}</button></div>
+          </form>
+          {% if failure.action == 'copy' and failure.weekday == day.weekday %}{% for message in failure.messages %}<p class="form-error" role="alert">{{ message }}</p>{% endfor %}{% endif %}
+        </details>
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  {% if schedule.zones|length > 1 %}
+  <details class="week-tool"{% if failure.action == 'copy_week' and failure.zone == zone.slug %} open{% endif %}>
+    <summary class="tool-summary">{% translate 'Copy this week to other zones' %}</summary>
+    <form class="copy-form" hx-post="{% url 'panel:copy-comfort-week' zone.slug %}" hx-target="#schedule-zones" hx-swap="innerHTML" hx-disabled-elt="find button">
+      <fieldset class="picks">
+        <legend class="visually-hidden">{% blocktranslate with name=zone.name %}Copy the week of {{ name }} to{% endblocktranslate %}</legend>
+        {% for other in schedule.zones %}{% if other.slug != zone.slug %}<label class="pick"><input type="checkbox" name="zones" value="{{ other.slug }}"{% if failure.action == 'copy_week' and failure.zone == zone.slug and other.slug in failure.chosen %} checked{% endif %}><span>{{ other.name }}</span></label>{% endif %}{% endfor %}
+      </fieldset>
+      <div class="form-actions"><button class="button" type="submit">{% translate 'Copy the week' %}</button></div>
+    </form>
+    {% if failure.action == 'copy_week' and failure.zone == zone.slug %}{% for message in failure.messages %}<p class="form-error" role="alert">{{ message }}</p>{% endfor %}{% endif %}
+  </details>
+  {% endif %}
+</article>

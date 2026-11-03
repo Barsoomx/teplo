@@ -99,6 +99,9 @@
         {% elif entry.kind == 'load_phase_learned' %}
         <span class="event-mark">{% icon 'zap' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|load_phase_learned_text }}</p></div>
+        {% elif entry.kind == 'settings_changed' %}
+        <span class="event-mark">{% icon 'settings-2' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|settings_change_text }}</p></div>
         {% else %}
         <span class="event-mark">{% icon 'scroll-text' %}</span>
         <div class="event-body" title="{{ entry.kind }}"><p class="event-text">{% if entry.subject_name %}{% blocktranslate with name=entry.subject_name %}{{ name }}: unknown event{% endblocktranslate %}{% else %}{% translate 'Unknown event' %}{% endif %}</p></div>

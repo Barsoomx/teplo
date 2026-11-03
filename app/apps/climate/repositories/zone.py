@@ -1,8 +1,11 @@
+from collections.abc import Collection
+from dataclasses import asdict
 from datetime import datetime, timedelta
 
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
+from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.climate.models import Zone
 
 STAMPS = ('last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
@@ -34,6 +37,53 @@ class ZoneRepository:
         updated = Zone.objects.filter(slug=slug).update(boost_until=until, **cleared)
         if updated == 0:
             raise ZoneNotFoundError(slug)
+
+    @staticmethod
+    def config_records() -> list[ZoneConfigRecord]:
+        return [
+            ZoneConfigRecord(
+                id=zone.pk,
+                slug=zone.slug,
+                kind=ZoneKind(zone.kind),
+                config=_to_config(zone),
+                live_control=zone.live_control,
+                air_control_live=zone.air_control_live,
+            )
+            for zone in Zone.objects.order_by('slug')
+        ]
+
+    @staticmethod
+    def config(slug: str) -> ZoneConfig:
+        zone = Zone.objects.filter(slug=slug).first()
+        if zone is None:
+            raise ZoneNotFoundError(slug)
+
+        return _to_config(zone)
+
+    @staticmethod
+    def save_config(slug: str, config: ZoneConfig, fields: Collection[str]) -> None:
+        values = asdict(config)
+        if not fields:
+            return
+
+        updated = Zone.objects.filter(slug=slug).update(**{field: values[field] for field in fields})
+        if updated == 0:
+            raise ZoneNotFoundError(slug)
+
+
+def _to_config(zone: Zone) -> ZoneConfig:
+    return ZoneConfig(
+        name=zone.name,
+        heating_enabled=zone.heating_enabled,
+        comfort_floor_setpoint=zone.comfort_floor_setpoint,
+        night_floor_setpoint=zone.night_floor_setpoint,
+        boost_floor_setpoint=zone.boost_floor_setpoint,
+        idle_floor_setpoint=zone.idle_floor_setpoint,
+        floor_limit_setpoint=zone.floor_limit_setpoint,
+        comfort_air_target=zone.comfort_air_target,
+        night_air_target=zone.night_air_target,
+        preheat_lead_minutes=zone.preheat_lead_minutes,
+    )
 
 
 def _to_settings(zone: Zone) -> ZoneSettings:

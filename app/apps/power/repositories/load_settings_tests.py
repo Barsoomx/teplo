@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 
@@ -5,11 +6,28 @@ import pytest
 from django.db import IntegrityError
 
 from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
 from apps.power.factories import LoadSettingsFactory
 from apps.power.models import LoadSettings
 from apps.power.repositories.load_settings import LoadSettingsRepository
 
 pytestmark = pytest.mark.django_db
+
+DEFAULT_CONFIG = LoadSettingsConfig(
+    start_ceiling_amps=Decimal('20.0'),
+    shed_amps=Decimal('24.0'),
+    shed_hold_seconds=3,
+    restore_amps=Decimal('18.0'),
+    restore_hold_seconds=120,
+    start_interval_seconds=30,
+    meter_lost_after_seconds=60,
+    default_load_amps=Decimal('6.0'),
+)
+
+
+@pytest.fixture
+def f_live_settings() -> LoadSettings:
+    return LoadSettingsFactory.create(load_management_live=True, shed_interval_seconds=2, restore_interval_seconds=90)
 
 
 @pytest.fixture
@@ -80,3 +98,54 @@ def test_restore_threshold_may_reach_the_start_ceiling() -> None:
     LoadSettingsFactory.create(restore_amps=Decimal('20.0'))
 
     assert LoadSettingsRepository.control().thresholds.restore == Decimal('20.0')
+
+
+def test_config_record_without_load_settings_takes_the_defaults() -> None:
+    assert LoadSettingsRepository.config_record() == LoadSettingsRecord(
+        id=None,
+        config=DEFAULT_CONFIG,
+        load_management_live=False,
+    )
+
+
+def test_config_record_reads_the_stored_settings_and_the_gate(f_live_settings: LoadSettings) -> None:
+    assert LoadSettingsRepository.config_record() == LoadSettingsRecord(
+        id=f_live_settings.pk,
+        config=DEFAULT_CONFIG,
+        load_management_live=True,
+    )
+
+
+def test_saved_config_writes_the_named_fields_and_keeps_the_gate(f_live_settings: LoadSettings) -> None:
+    config = replace(DEFAULT_CONFIG, start_ceiling_amps=Decimal('25.0'), shed_amps=Decimal('26.0'), shed_hold_seconds=5)
+
+    LoadSettingsRepository.save_config(config, ('start_ceiling_amps', 'shed_amps'))
+
+    stored = LoadSettings.objects.get(pk=f_live_settings.pk)
+    assert (
+        stored.start_ceiling_amps,
+        stored.shed_amps,
+        stored.shed_hold_seconds,
+        stored.load_management_live,
+        stored.shed_interval_seconds,
+        stored.restore_interval_seconds,
+    ) == (Decimal('25.0'), Decimal('26.0'), 3, True, 2, 90)
+
+
+def test_saved_config_without_stored_settings_creates_them_with_load_management_off() -> None:
+    LoadSettingsRepository.save_config(
+        replace(DEFAULT_CONFIG, default_load_amps=Decimal('7.5')),
+        ('default_load_amps',),
+    )
+
+    stored = LoadSettings.objects.get()
+    assert (stored.default_load_amps, stored.shed_amps, stored.load_management_live) == (
+        Decimal('7.5'),
+        Decimal('24.0'),
+        False,
+    )
+
+
+def test_saved_config_refuses_to_write_the_load_management_gate() -> None:
+    with pytest.raises(KeyError):
+        LoadSettingsRepository.save_config(DEFAULT_CONFIG, ('load_management_live',))

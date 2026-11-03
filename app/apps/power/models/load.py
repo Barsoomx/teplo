@@ -1,12 +1,11 @@
-from decimal import Decimal
-
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.devices.domain.kinds import SWITCHABLE_PLUG_DRIVERS, DeviceKind
+from apps.power.domain.load_config import AMPS_MAX, AMPS_MIN, PRIORITY_MIN
 from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 
-AMPS_VALIDATORS = [MinValueValidator(Decimal('0.1')), MaxValueValidator(Decimal('63.0'))]
+AMPS_VALIDATORS = [MinValueValidator(AMPS_MIN), MaxValueValidator(AMPS_MAX)]
 PHASE_CHOICES = [(phase.value, phase.value) for phase in LoadPhase]
 SHEDDABLE_PLUGS = {
     'kind': DeviceKind.PLUG.value,
@@ -34,7 +33,7 @@ class Load(models.Model):
         related_name='load',
         limit_choices_to=SHEDDABLE_PLUGS,
     )
-    priority = models.PositiveIntegerField(unique=True, validators=[MinValueValidator(1)])
+    priority = models.PositiveIntegerField(unique=True, validators=[MinValueValidator(PRIORITY_MIN)])
     phase = models.CharField(max_length=16, choices=PHASE_CHOICES, default=LoadPhase.UNKNOWN.value)
     nominal_amps = models.DecimalField(
         max_digits=4,

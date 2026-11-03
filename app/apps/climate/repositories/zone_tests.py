@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 
@@ -7,6 +8,7 @@ from django.db import IntegrityError
 from apps.climate.domain.errors import ZoneNotFoundError
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
+from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.climate.factories import ComfortPeriodFactory, ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
@@ -16,6 +18,18 @@ from apps.devices.factories import DeviceFactory
 pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+KITCHEN_CONFIG = ZoneConfig(
+    name='Кухня',
+    heating_enabled=True,
+    comfort_floor_setpoint=Decimal('28.0'),
+    night_floor_setpoint=Decimal('22.0'),
+    boost_floor_setpoint=Decimal('30.0'),
+    idle_floor_setpoint=Decimal('18.0'),
+    floor_limit_setpoint=Decimal('30.0'),
+    comfort_air_target=Decimal('22.0'),
+    night_air_target=Decimal('19.5'),
+    preheat_lead_minutes=180,
+)
 
 
 @pytest.fixture
@@ -49,6 +63,26 @@ def f_air_controlled_zone() -> Zone:
         floor_limit_setpoint=Decimal('29.0'),
         last_air_dry_run_at=NOW,
     )
+
+
+@pytest.fixture
+def f_live_zone() -> Zone:
+    return ZoneFactory.create(
+        slug='kitchen',
+        name='Кухня',
+        kind=ZoneKind.AIR,
+        live_control=True,
+        air_control_live=True,
+        boost_until=NOW + timedelta(hours=1),
+        last_command_at=NOW - timedelta(minutes=5),
+        last_dry_run_at=NOW - timedelta(minutes=6),
+        last_air_dry_run_at=NOW - timedelta(minutes=7),
+    )
+
+
+@pytest.fixture
+def floor_zone() -> Zone:
+    return ZoneFactory.create(slug='bathroom-1f', name='Санузел 1 этаж', kind=ZoneKind.FLOOR, heating_enabled=False)
 
 
 @pytest.fixture
@@ -167,3 +201,90 @@ def test_boost_unknown_zone_raises() -> None:
 def test_comfort_period_must_end_after_start(f_zone: Zone) -> None:
     with pytest.raises(IntegrityError):
         ComfortPeriodFactory(zone=f_zone, weekday=1, start=time(23, 0), end=time(6, 0))
+
+
+@pytest.mark.usefixtures('floor_zone')
+def test_config_records_carry_the_settings_and_the_gates(f_live_zone: Zone) -> None:
+    assert [record for record in ZoneRepository.config_records() if record.slug == 'kitchen'] == [
+        ZoneConfigRecord(
+            id=f_live_zone.pk,
+            slug='kitchen',
+            kind=ZoneKind.AIR,
+            config=KITCHEN_CONFIG,
+            live_control=True,
+            air_control_live=True,
+        ),
+    ]
+
+
+@pytest.mark.usefixtures('f_live_zone', 'floor_zone')
+def test_config_records_list_every_zone_by_slug() -> None:
+    assert [
+        (record.slug, record.kind, record.config.heating_enabled) for record in ZoneRepository.config_records()
+    ] == [
+        ('bathroom-1f', ZoneKind.FLOOR, False),
+        ('kitchen', ZoneKind.AIR, True),
+    ]
+
+
+@pytest.mark.usefixtures('f_live_zone')
+def test_config_reads_the_settings_of_one_zone() -> None:
+    assert ZoneRepository.config('kitchen') == KITCHEN_CONFIG
+
+
+def test_config_of_an_unknown_zone_raises() -> None:
+    with pytest.raises(ZoneNotFoundError):
+        ZoneRepository.config('attic')
+
+
+def test_saved_config_writes_the_named_fields_only(f_live_zone: Zone) -> None:
+    config = replace(
+        KITCHEN_CONFIG,
+        name='Кухня-столовая',
+        comfort_floor_setpoint=Decimal('27.5'),
+        night_floor_setpoint=Decimal('21.0'),
+    )
+
+    ZoneRepository.save_config('kitchen', config, ('name', 'comfort_floor_setpoint'))
+
+    zone = Zone.objects.get(pk=f_live_zone.pk)
+    assert (zone.name, zone.comfort_floor_setpoint, zone.night_floor_setpoint) == (
+        'Кухня-столовая',
+        Decimal('27.5'),
+        Decimal('22.0'),
+    )
+
+
+def test_saved_config_keeps_the_gates_the_boost_and_the_write_stamps(f_live_zone: Zone) -> None:
+    ZoneRepository.save_config('kitchen', replace(KITCHEN_CONFIG, heating_enabled=False), ('heating_enabled',))
+
+    zone = Zone.objects.get(pk=f_live_zone.pk)
+    assert (
+        zone.heating_enabled,
+        zone.live_control,
+        zone.air_control_live,
+        zone.boost_until,
+        zone.last_command_at,
+        zone.last_dry_run_at,
+        zone.last_air_dry_run_at,
+    ) == (
+        False,
+        True,
+        True,
+        NOW + timedelta(hours=1),
+        NOW - timedelta(minutes=5),
+        NOW - timedelta(minutes=6),
+        NOW - timedelta(minutes=7),
+    )
+
+
+@pytest.mark.usefixtures('f_live_zone')
+@pytest.mark.parametrize('gate', ['live_control', 'air_control_live'])
+def test_saved_config_refuses_to_write_a_gate(gate: str) -> None:
+    with pytest.raises(KeyError):
+        ZoneRepository.save_config('kitchen', KITCHEN_CONFIG, (gate,))
+
+
+def test_saving_the_config_of_an_unknown_zone_raises() -> None:
+    with pytest.raises(ZoneNotFoundError):
+        ZoneRepository.save_config('attic', KITCHEN_CONFIG, ('name',))

@@ -3,9 +3,10 @@ from decimal import Decimal
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
+from apps.power.domain.load_config import SECONDS_MAX, SECONDS_MIN
 from apps.power.models.load import AMPS_VALIDATORS
 
-SECONDS_VALIDATORS = [MinValueValidator(1), MaxValueValidator(3600)]
+SECONDS_VALIDATORS = [MinValueValidator(SECONDS_MIN), MaxValueValidator(SECONDS_MAX)]
 
 
 class LoadSettings(models.Model):

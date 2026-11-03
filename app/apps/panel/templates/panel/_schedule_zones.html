@@ -1,0 +1,5 @@
+{% load i18n %}{% for zone in schedule.zones %}
+{% include 'panel/_schedule_zone.html' %}
+{% empty %}
+<p class="page-empty">{% translate 'No zones yet. Zones come from the site data and the admin.' %}</p>
+{% endfor %}

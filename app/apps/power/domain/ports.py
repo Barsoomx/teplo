@@ -1,8 +1,10 @@
+from collections.abc import Collection, Mapping
 from datetime import datetime
 from typing import Protocol
 
 from apps.devices.domain.kinds import DeviceKind
 from apps.power.domain.control import LoadControl
+from apps.power.domain.load_config import LoadConfig, LoadConfigRecord, LoadSettingsConfig, LoadSettingsRecord
 from apps.power.domain.loads import LearnedPhase, LiveShed, LoadRecord
 from apps.power.domain.outage import OutageRecord, PowerCut
 
@@ -43,3 +45,15 @@ class ZoneSwitch(Protocol):
 
 class ZoneWriteStamps(Protocol):
     def mark_commanded(self, slug: str, at: datetime) -> None: ...
+
+
+class LoadSettingsConfigStore(Protocol):
+    def config_record(self) -> LoadSettingsRecord: ...
+
+    def save_config(self, config: LoadSettingsConfig, fields: Collection[str]) -> None: ...
+
+
+class LoadConfigStore(Protocol):
+    def config_records(self) -> list[LoadConfigRecord]: ...
+
+    def save_configs(self, configs: Mapping[str, LoadConfig]) -> None: ...

@@ -1,0 +1,27 @@
+{% load i18n panel_format %}<article class="settings-card" id="loads-settings">
+  <form class="settings-form" hx-post="{% url 'panel:loads-settings' %}" hx-target="closest .settings-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <h3 class="settings-name">{% translate 'Shedding order' %}</h3>
+    <p class="settings-hint">{% translate 'Loads are shed from priority 1 up and returned from the last one down. Every load needs a priority of its own: to swap two loads, swap their numbers and save once.' %}</p>
+    {{ formset.management_form }}
+    {% for error in formset.non_form_errors %}<p class="form-error" role="alert">{{ error }}</p>{% endfor %}
+    <ol class="load-rows" role="list">
+      {% for row in rows %}
+      <li class="load-row">
+        {{ row.form.slug }}
+        <p class="load-row-name">{% if row.load %}{{ row.load.name }}{% else %}{{ row.form.slug.value }}{% endif %}</p>
+        {% include 'panel/_form_errors.html' with form=row.form %}
+        <div class="field-grid">
+          {% translate 'Priority' as label %}{% include 'panel/_field.html' with field=row.form.priority %}
+          {% translate 'Phase' as label %}{% include 'panel/_field.html' with field=row.form.phase %}
+          {% translate 'Nominal current, A' as label %}{% include 'panel/_field.html' with field=row.form.nominal_amps %}
+        </div>
+        {% if row.load %}{% url 'admin:power_load_change' row.load.id as admin_url %}{% translate 'Commands' as label %}{% include 'panel/_gate.html' with live=row.load.live url=admin_url %}{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+    <div class="settings-foot">
+      <button class="button" type="submit">{% translate 'Save' %}</button>
+      {% if outcome == 'saved' %}<p class="saved" role="status">{% translate 'Saved. Load management reads it within a minute.' %}</p>{% elif outcome == 'unchanged' %}<p class="saved" role="status">{% translate 'Nothing changed' %}</p>{% endif %}
+    </div>
+  </form>
+</article>

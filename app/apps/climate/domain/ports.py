@@ -1,12 +1,15 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
 from typing import Protocol
 
+from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
+from apps.climate.domain.comfort_windows import ZoneWeek
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
 from apps.climate.domain.write_guard import WriteReservation
-from apps.climate.domain.zone import ZoneSettings
+from apps.climate.domain.zone import ComfortWindow, ZoneSettings
+from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 
 
 class ZoneStore(Protocol):
@@ -45,3 +48,27 @@ class WriteGate(Protocol):
     def cancel(self, reservation: WriteReservation) -> None: ...
 
     def clear(self, zone: str) -> bool: ...
+
+
+class ZoneConfigStore(Protocol):
+    def config_records(self) -> list[ZoneConfigRecord]: ...
+
+    def config(self, slug: str) -> ZoneConfig: ...
+
+    def save_config(self, slug: str, config: ZoneConfig, fields: Collection[str]) -> None: ...
+
+
+class ClimateConfigStore(Protocol):
+    def config_record(self) -> ClimateConfigRecord: ...
+
+    def save_config(self, config: ClimateConfig, fields: Collection[str]) -> None: ...
+
+
+class ComfortWindowStore(Protocol):
+    def weeks(self) -> list[ZoneWeek]: ...
+
+    def week(self, slug: str) -> ZoneWeek: ...
+
+    def window_week(self, window_id: int) -> ZoneWeek: ...
+
+    def replace_days(self, slug: str, days: Mapping[int, Sequence[ComfortWindow]]) -> None: ...

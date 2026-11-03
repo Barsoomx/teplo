@@ -1,5 +1,8 @@
 import asyncio
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
+
+from apps.core.domain.settings import SettingChange
 
 
 class MonotonicClockStub:
@@ -35,3 +38,20 @@ class SleepStub:
             raise asyncio.CancelledError
 
         self._wakeups -= 1
+
+
+class SettingsRecorderStub:
+    def __init__(self, error: Exception | None) -> None:
+        self._error = error
+        self._records: list[tuple[tuple[SettingChange, ...], datetime]] = []
+
+    @property
+    def records(self) -> list[tuple[tuple[SettingChange, ...], datetime]]:
+        return self._records
+
+    def record(self, changes: Sequence[SettingChange], at: datetime, write: Callable[[], None]) -> None:
+        if self._error is not None:
+            raise self._error
+
+        write()
+        self._records.append((tuple(changes), at))

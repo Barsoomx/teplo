@@ -1,0 +1,51 @@
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.http import Http404, HttpRequest, HttpResponse
+from django.shortcuts import render
+from django.utils import timezone
+from django.views import View
+
+from apps.climate.domain.errors import ComfortWindowNotFoundError
+from apps.climate.usecases.change_comfort_window import ChangeComfortWindowInputDTO, ChangeComfortWindowUseCase
+from apps.core.domain.errors import SettingsRejectedError
+from apps.panel.forms.comfort_window import ComfortWindowForm
+from apps.panel.forms.problems import add_problems
+from apps.panel.forms.schedule_failure import ScheduleFailure, form_messages
+from apps.panel.usecases.get_schedule_page import GetSchedulePageInputDTO, GetSchedulePageUseCase
+
+
+class ChangeComfortWindowView(LoginRequiredMixin, View):
+    def post(self, request: HttpRequest, window_id: int) -> HttpResponse:
+        form = ComfortWindowForm(request.POST)
+        changed_zone = None
+        if form.is_valid():
+            try:
+                output = ChangeComfortWindowUseCase.init().execute(
+                    ChangeComfortWindowInputDTO(
+                        window=window_id,
+                        start=form.cleaned_data['start'],
+                        end=form.cleaned_data['end'],
+                        now=timezone.now(),
+                    ),
+                )
+            except ComfortWindowNotFoundError as error:
+                raise Http404(error.detail) from error
+            except SettingsRejectedError as error:
+                add_problems(form, error.problems)
+            else:
+                changed_zone = output.zone
+
+        schedule = GetSchedulePageUseCase.init().execute(GetSchedulePageInputDTO())
+        zone = schedule.zone_of_window(window_id) if changed_zone is None else schedule.zone(changed_zone)
+        if zone is None:
+            raise Http404(window_id)
+
+        failure = None
+        if form.errors:
+            failure = ScheduleFailure(
+                action='change',
+                messages=form_messages(form),
+                window=window_id,
+                start=str(request.POST.get('start', '')),
+                end=str(request.POST.get('end', '')),
+            )
+        return render(request, 'panel/_schedule_zone.html', {'zone': zone, 'schedule': schedule, 'failure': failure})

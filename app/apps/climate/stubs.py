@@ -1,11 +1,15 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal
 
+from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
+from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
 from apps.climate.domain.drive import StartAnswer, ZoneStart
+from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
-from apps.climate.domain.zone import ZoneSettings
+from apps.climate.domain.zone import ComfortWindow, ZoneSettings
+from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 
 ZoneStamp = tuple[str, str, datetime]
 
@@ -106,3 +110,81 @@ class LoadGateStub:
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]:  # noqa: ARG002
         self._asked.append(tuple(starts))
         return {start.zone: self._answers[start.zone] for start in starts if start.zone in self._answers}
+
+
+class ZoneConfigStoreStub:
+    def __init__(self, records: list[ZoneConfigRecord]) -> None:
+        self._records = records
+        self._saved: list[tuple[str, ZoneConfig, tuple[str, ...]]] = []
+
+    @property
+    def saved(self) -> list[tuple[str, ZoneConfig, tuple[str, ...]]]:
+        return self._saved
+
+    def config_records(self) -> list[ZoneConfigRecord]:
+        return list(self._records)
+
+    def config(self, slug: str) -> ZoneConfig:
+        record = next((record for record in self._records if record.slug == slug), None)
+        if record is None:
+            raise ZoneNotFoundError(slug)
+
+        return record.config
+
+    def save_config(self, slug: str, config: ZoneConfig, fields: Collection[str]) -> None:
+        self._saved.append((slug, config, tuple(fields)))
+
+
+class ClimateConfigStoreStub:
+    def __init__(self, record: ClimateConfigRecord) -> None:
+        self._record = record
+        self._saved: list[tuple[ClimateConfig, tuple[str, ...]]] = []
+
+    @property
+    def saved(self) -> list[tuple[ClimateConfig, tuple[str, ...]]]:
+        return self._saved
+
+    def config_record(self) -> ClimateConfigRecord:
+        return self._record
+
+    def save_config(self, config: ClimateConfig, fields: Collection[str]) -> None:
+        self._saved.append((config, tuple(fields)))
+
+
+class ComfortWindowStoreStub:
+    def __init__(self, weeks: list[ZoneWeek]) -> None:
+        self._weeks = weeks
+        self._replaced: list[tuple[str, dict[int, tuple[ComfortWindow, ...]]]] = []
+
+    @property
+    def replaced(self) -> list[tuple[str, dict[int, tuple[ComfortWindow, ...]]]]:
+        return self._replaced
+
+    def weeks(self) -> list[ZoneWeek]:
+        return list(self._weeks)
+
+    def week(self, slug: str) -> ZoneWeek:
+        week = next((week for week in self._weeks if week.slug == slug), None)
+        if week is None:
+            raise ZoneNotFoundError(slug)
+
+        return week
+
+    def window_week(self, window_id: int) -> ZoneWeek:
+        week = next((week for week in self._weeks if week.stored(window_id) is not None), None)
+        if week is None:
+            raise ComfortWindowNotFoundError(window_id)
+
+        return week
+
+    def replace_days(self, slug: str, days: Mapping[int, Sequence[ComfortWindow]]) -> None:
+        self._replaced.append((slug, {weekday: tuple(windows) for weekday, windows in days.items()}))
+        week = self.week(slug)
+        next_id = max((stored.id for each in self._weeks for stored in each.windows), default=0) + 1
+        kept = tuple(stored for stored in week.windows if stored.weekday not in days)
+        placed = [(weekday, window) for weekday in sorted(days) for window in days[weekday]]
+        added = tuple(
+            StoredWindow(id=next_id + offset, weekday=weekday, start=window.start, end=window.end)
+            for offset, (weekday, window) in enumerate(placed)
+        )
+        self._weeks = [replace(each, windows=kept + added) if each.slug == slug else each for each in self._weeks]

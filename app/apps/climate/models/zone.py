@@ -4,14 +4,15 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 from apps.climate.domain.modes import ZoneKind
+from apps.climate.domain.zone_config import NAME_MAX_LENGTH, PREHEAT_LEAD_MAX_MINUTES, SETPOINT_MAX, SETPOINT_MIN
 from apps.devices.domain.kinds import DeviceKind
 
-SETPOINT_VALIDATORS = [MinValueValidator(Decimal('5.0')), MaxValueValidator(Decimal('40.0'))]
+SETPOINT_VALIDATORS = [MinValueValidator(SETPOINT_MIN), MaxValueValidator(SETPOINT_MAX)]
 
 
 class Zone(models.Model):
     slug = models.SlugField(max_length=64, unique=True)
-    name = models.CharField(max_length=100)
+    name = models.CharField(max_length=NAME_MAX_LENGTH)
     kind = models.CharField(
         max_length=16,
         choices=[(kind.value, kind.value) for kind in ZoneKind],
@@ -71,7 +72,10 @@ class Zone(models.Model):
         default=Decimal('19.5'),
         validators=SETPOINT_VALIDATORS,
     )
-    preheat_lead_minutes = models.PositiveIntegerField(default=180, validators=[MaxValueValidator(240)])
+    preheat_lead_minutes = models.PositiveIntegerField(
+        default=180,
+        validators=[MaxValueValidator(PREHEAT_LEAD_MAX_MINUTES)],
+    )
     boost_until = models.DateTimeField(null=True, blank=True)
     last_command_at = models.DateTimeField(null=True, blank=True)
     last_dry_run_at = models.DateTimeField(null=True, blank=True)

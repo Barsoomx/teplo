@@ -1,3 +1,10 @@
+from collections.abc import Mapping
+
+from django.db import transaction
+from django.db.models import Max
+
+from apps.power.domain.errors import LoadNotFoundError
+from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LearnedPhase, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.models import Load
 
@@ -41,6 +48,39 @@ class LoadRepository:
             learned_amps=learned.amps,
             learning_samples=learned.samples,
         )
+
+    @staticmethod
+    def config_records() -> list[LoadConfigRecord]:
+        return [
+            LoadConfigRecord(
+                id=load.pk,
+                slug=load.slug,
+                name=load.name,
+                kind=LoadKind(load.kind),
+                config=LoadConfig(priority=load.priority, phase=LoadPhase(load.phase), nominal_amps=load.nominal_amps),
+                live=load.live,
+            )
+            for load in Load.objects.order_by('priority')
+        ]
+
+    @staticmethod
+    def save_configs(configs: Mapping[str, LoadConfig]) -> None:
+        with transaction.atomic():
+            priorities = dict(Load.objects.filter(slug__in=list(configs)).values_list('slug', 'priority'))
+            missing = sorted(set(configs) - set(priorities))
+            if missing:
+                raise LoadNotFoundError(missing[0])
+
+            top = Load.objects.aggregate(top=Max('priority'))['top'] or 0
+            moved = [slug for slug, config in configs.items() if config.priority != priorities[slug]]
+            for offset, slug in enumerate(moved, start=1):
+                Load.objects.filter(slug=slug).update(priority=top + offset)
+            for slug, config in configs.items():
+                Load.objects.filter(slug=slug).update(
+                    priority=config.priority,
+                    phase=config.phase,
+                    nominal_amps=config.nominal_amps,
+                )
 
 
 def _to_record(load: Load) -> LoadRecord | None:

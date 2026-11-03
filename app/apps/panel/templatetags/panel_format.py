@@ -1,14 +1,20 @@
+from collections.abc import Callable
 from datetime import datetime, timedelta
 
 from django import template
 from django.template.defaultfilters import floatformat
 from django.templatetags.static import static
 from django.utils import timezone
+from django.utils.dates import WEEKDAYS, WEEKDAYS_ABBR
 from django.utils.formats import date_format
+from django.utils.functional import Promise
 from django.utils.html import format_html
 from django.utils.safestring import SafeString
 from django.utils.translation import gettext, gettext_lazy
 
+from apps.climate.domain.comfort_windows import WEEKDAY_FIELDS
+from apps.climate.domain.modes import ScheduleMode
+from apps.climate.domain.week_plan import DayPeriod
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
@@ -153,6 +159,104 @@ OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before 
 UNMEASURED_OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut')
 ANY_OVERLOAD_BEFORE_CUT = gettext_lazy('A phase was overloaded right before the cut')
 DEVICE_LOAD_KINDS = {DeviceKind.PLUG: LoadKind.PLUG, DeviceKind.THERMOSTAT: LoadKind.ZONE}
+DAY_PERIODS = {
+    ScheduleMode.COMFORT: gettext_lazy('Comfort %(start)s–%(end)s'),
+    ScheduleMode.PREHEAT: gettext_lazy('Warm-up %(start)s–%(end)s'),
+    ScheduleMode.NIGHT: gettext_lazy('Night %(start)s–%(end)s'),
+}
+SETTINGS_SUBJECTS = {
+    'climate_settings': gettext_lazy('Climate'),
+    'load_settings': gettext_lazy('Load management'),
+}
+SETTING_CHANGED = gettext_lazy('%(name)s: %(field)s %(old)s → %(new)s')
+SETTINGS_CHANGED = gettext_lazy('%(name)s: settings changed')
+ZONE_RENAMED = gettext_lazy('%(name)s: renamed, was “%(old)s”')
+HEATING_SWITCHED = {
+    True: gettext_lazy('%(name)s: heating switched on'),
+    False: gettext_lazy('%(name)s: heating switched off'),
+}
+SCHEDULE_CHANGES = dict(
+    zip(
+        WEEKDAY_FIELDS,
+        (
+            gettext_lazy('%(name)s, Monday: comfort %(old)s → %(new)s'),
+            gettext_lazy('%(name)s, Tuesday: comfort %(old)s → %(new)s'),
+            gettext_lazy('%(name)s, Wednesday: comfort %(old)s → %(new)s'),
+            gettext_lazy('%(name)s, Thursday: comfort %(old)s → %(new)s'),
+            gettext_lazy('%(name)s, Friday: comfort %(old)s → %(new)s'),
+            gettext_lazy('%(name)s, Saturday: comfort %(old)s → %(new)s'),
+            gettext_lazy('%(name)s, Sunday: comfort %(old)s → %(new)s'),
+        ),
+        strict=True,
+    ),
+)
+NO_COMFORT = gettext_lazy('none')
+UNKNOWN_PHASE = gettext_lazy('not known')
+NOT_SET = gettext_lazy('not set')
+
+
+def _degrees(value: object) -> str:
+    return gettext('%(temperature)s°') % {'temperature': floatformat(value, -1)}
+
+
+def _fine_degrees(value: object) -> str:
+    return gettext('%(temperature)s°') % {'temperature': floatformat(value, -2)}
+
+
+def _amps(value: object) -> str:
+    return gettext('%(amps)s A') % {'amps': floatformat(value, -1)}
+
+
+def _optional_amps(value: object) -> str:
+    return str(NOT_SET) if value is None else _amps(value)
+
+
+def _seconds(value: object) -> str:
+    return gettext('%(seconds)s s') % {'seconds': value}
+
+
+def _minutes(value: object) -> str:
+    return duration_text(timedelta(minutes=value)) if isinstance(value, int) else str(value)
+
+
+def _number(value: object) -> str:
+    return str(value)
+
+
+def _phase(value: object) -> str:
+    return PHASE_LABELS.get(str(value), str(UNKNOWN_PHASE))
+
+
+SETTINGS_FIELDS: dict[tuple[str, str], tuple[Promise, Callable[[object], str]]] = {
+    ('zone', 'comfort_floor_setpoint'): (gettext_lazy('floor in comfort'), _degrees),
+    ('zone', 'night_floor_setpoint'): (gettext_lazy('floor at night'), _degrees),
+    ('zone', 'boost_floor_setpoint'): (gettext_lazy('floor in boost'), _degrees),
+    ('zone', 'idle_floor_setpoint'): (gettext_lazy('idle floor in air mode'), _degrees),
+    ('zone', 'floor_limit_setpoint'): (gettext_lazy('floor limit in air mode'), _degrees),
+    ('zone', 'comfort_air_target'): (gettext_lazy('air in comfort'), _degrees),
+    ('zone', 'night_air_target'): (gettext_lazy('air at night'), _degrees),
+    ('zone', 'preheat_lead_minutes'): (gettext_lazy('warm-up lead'), _minutes),
+    ('climate_settings', 'air_start_offset'): (gettext_lazy('heat below the target by'), _fine_degrees),
+    ('climate_settings', 'initial_early_stop_offset'): (gettext_lazy('first early stop'), _fine_degrees),
+    ('climate_settings', 'learned_mornings_needed'): (gettext_lazy('learned mornings needed'), _number),
+    ('climate_settings', 'preheat_lead_cap_minutes'): (gettext_lazy('longest warm-up'), _minutes),
+    ('climate_settings', 'second_floor_guard_threshold'): (gettext_lazy('second-floor guard below'), _degrees),
+    ('climate_settings', 'second_floor_guard_hysteresis'): (
+        gettext_lazy('second-floor guard hysteresis'),
+        _fine_degrees,
+    ),
+    ('load_settings', 'start_ceiling_amps'): (gettext_lazy('start ceiling'), _amps),
+    ('load_settings', 'shed_amps'): (gettext_lazy('shed threshold'), _amps),
+    ('load_settings', 'shed_hold_seconds'): (gettext_lazy('shed after'), _seconds),
+    ('load_settings', 'restore_amps'): (gettext_lazy('restore threshold'), _amps),
+    ('load_settings', 'restore_hold_seconds'): (gettext_lazy('restore after'), _seconds),
+    ('load_settings', 'start_interval_seconds'): (gettext_lazy('starts apart'), _seconds),
+    ('load_settings', 'meter_lost_after_seconds'): (gettext_lazy('meter lost after'), _seconds),
+    ('load_settings', 'default_load_amps'): (gettext_lazy('load current by default'), _amps),
+    ('load', 'priority'): (gettext_lazy('priority'), _number),
+    ('load', 'phase'): (gettext_lazy('phase'), _phase),
+    ('load', 'nominal_amps'): (gettext_lazy('nominal current'), _optional_amps),
+}
 
 
 @register.simple_tag
@@ -438,6 +542,63 @@ def load_phase_learned_text(entry: TimelineEntry) -> str:
         return _unknown_event(entry)
 
     return str(LOAD_PHASE_LEARNED) % {'name': load_name(entry), 'phase': phase, 'amps': amps}
+
+
+@register.filter
+def weekday_name(weekday: int) -> str:
+    return str(WEEKDAYS[weekday])
+
+
+@register.filter
+def weekday_short(weekday: int) -> str:
+    return str(WEEKDAYS_ABBR[weekday])
+
+
+@register.filter
+def day_minute(minutes: int) -> str:
+    hours, minute = divmod(minutes, 60)
+    return f'{hours:02d}:{minute:02d}'
+
+
+@register.filter
+def period_text(period: DayPeriod) -> str:
+    return str(DAY_PERIODS[period.mode]) % {'start': day_minute(period.start), 'end': day_minute(period.end)}
+
+
+@register.filter
+def settings_change_text(entry: TimelineEntry) -> str:
+    target = str(entry.payload.get('object'))
+    field = str(entry.payload.get('field'))
+    old = entry.payload.get('old')
+    new = entry.payload.get('new')
+    subject = SETTINGS_SUBJECTS.get(target)
+    name = load_name(entry) if subject is None else str(subject)
+    if target == 'schedule':
+        template = SCHEDULE_CHANGES.get(field)
+        if template is None:
+            return str(SETTINGS_CHANGED) % {'name': name}
+
+        return str(template) % {'name': name, 'old': _windows_text(old), 'new': _windows_text(new)}
+
+    if target == 'zone' and field == 'name':
+        return str(ZONE_RENAMED) % {'name': name, 'old': old}
+
+    if target == 'zone' and field == 'heating_enabled' and isinstance(new, bool):
+        return str(HEATING_SWITCHED[new]) % {'name': name}
+
+    known = SETTINGS_FIELDS.get((target, field))
+    if known is None:
+        return str(SETTINGS_CHANGED) % {'name': name}
+
+    label, value_text = known
+    return str(SETTING_CHANGED) % {'name': name, 'field': label, 'old': value_text(old), 'new': value_text(new)}
+
+
+def _windows_text(windows: object) -> str:
+    if not isinstance(windows, list) or not windows:
+        return str(NO_COMFORT)
+
+    return ', '.join(str(window).replace('-', '–') for window in windows)
 
 
 def _calm_note(entry: TimelineEntry) -> str:
