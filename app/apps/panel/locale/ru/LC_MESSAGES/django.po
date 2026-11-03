@@ -580,3 +580,406 @@ msgstr "Фазометр молчит, а фаза замолчала выше �
 #, python-format
 msgid "%(name)s: learned phase %(phase)s, %(amps)s A"
 msgstr "%(name)s: выучил фазу %(phase)s, %(amps)s А"
+
+msgid "Schedule"
+msgstr "Расписание"
+
+msgid "teplo schedule"
+msgstr "Расписание teplo"
+
+msgid "teplo settings"
+msgstr "Настройки teplo"
+
+msgid "The heating cycle follows a new schedule within a minute. A thermostat takes the new target at its zone’s next allowed write, at most one change per 30 minutes."
+msgstr "Цикл отопления следует новому расписанию в течение минуты. Термостат получает новую цель при следующей разрешённой записи своей зоны — не чаще одного изменения в 30 минут."
+
+msgid "No zones yet. Zones come from the site data and the admin."
+msgstr "Зон пока нет. Зоны задаются данными сайта и в админке."
+
+#, python-format
+msgid "Air control starts the warm-up by what the room has learned, at most %(cap)s before comfort. While the room has fewer than %(mornings)s learned mornings, the warm-up starts %(lead)s before comfort."
+msgstr "Режим по воздуху начинает разогрев по выученному, не раньше чем за %(cap)s до комфорта. Пока выученных утр меньше %(mornings)s, разогрев начинается за %(lead)s до комфорта."
+
+#, python-format
+msgid "Warm-up starts %(lead)s before comfort."
+msgstr "Разогрев начинается за %(lead)s до комфорта."
+
+#, python-format
+msgid "Comfort %(start)s–%(end)s"
+msgstr "Комфорт %(start)s–%(end)s"
+
+#, python-format
+msgid "Warm-up %(start)s–%(end)s"
+msgstr "Разогрев %(start)s–%(end)s"
+
+#, python-format
+msgid "Night %(start)s–%(end)s"
+msgstr "Ночь %(start)s–%(end)s"
+
+msgid "Comfort window"
+msgstr "Окно комфорта"
+
+msgid "No comfort: night all day"
+msgstr "Без комфорта: весь день ночь"
+
+msgid "From"
+msgstr "С"
+
+msgid "To"
+msgstr "До"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Delete"
+msgstr "Удалить"
+
+#, python-format
+msgid "Delete the comfort window %(start)s–%(end)s?"
+msgstr "Удалить окно комфорта %(start)s–%(end)s?"
+
+msgid "Add a window"
+msgstr "Добавить окно"
+
+msgid "Add"
+msgstr "Добавить"
+
+msgid "Copy to other days"
+msgstr "Копировать в другие дни"
+
+#, python-format
+msgid "Copy the windows of %(day)s to"
+msgstr "Копировать окна дня «%(day)s» в"
+
+msgid "Copy"
+msgstr "Копировать"
+
+msgid "Copy this week to other zones"
+msgstr "Копировать неделю в другие зоны"
+
+#, python-format
+msgid "Copy the week of %(name)s to"
+msgstr "Копировать неделю зоны «%(name)s» в"
+
+msgid "Copy the week"
+msgstr "Копировать неделю"
+
+msgid "Pick at least one day"
+msgstr "Выберите хотя бы один день"
+
+msgid "Pick at least one zone"
+msgstr "Выберите хотя бы одну зону"
+
+msgid "Changes take effect through the usual paths. The heating cycle reads them within a minute, and a thermostat takes a new setpoint at its zone’s next allowed write, at most one change per 30 minutes. Load management reads its settings within a minute."
+msgstr "Изменения действуют обычным путём. Цикл отопления читает их в течение минуты, а термостат получает новую уставку при следующей разрешённой записи своей зоны — не чаще одного изменения в 30 минут. Управление нагрузкой читает свои настройки в течение минуты."
+
+msgid "Watching only: teplo runs with TEPLO_DRY_RUN and sends no commands, whatever the switches below say."
+msgstr "Режим наблюдения: teplo запущен с TEPLO_DRY_RUN и не отправляет команды, что бы ни показывали переключатели ниже."
+
+msgid "Zones"
+msgstr "Зоны"
+
+msgid "Climate"
+msgstr "Климат"
+
+msgid "Load management"
+msgstr "Управление нагрузкой"
+
+msgid "Devices, sensors and the switches that let teplo act live stay in the admin"
+msgstr "Устройства, датчики и переключатели, которые разрешают teplo действовать, — в админке"
+
+msgid "Live"
+msgstr "Работает"
+
+msgid "Change in the admin"
+msgstr "Изменить в админке"
+
+msgid "Thermostat commands"
+msgstr "Команды термостату"
+
+msgid "Zone name"
+msgstr "Название"
+
+msgid "Heating on"
+msgstr "Отопление включено"
+
+msgid "Floor, °C"
+msgstr "Пол, °C"
+
+msgid "Idle in air mode"
+msgstr "Простой по воздуху"
+
+msgid "Limit in air mode"
+msgstr "Предел по воздуху"
+
+msgid "Air, °C"
+msgstr "Воздух, °C"
+
+msgid "Warm-up lead, min"
+msgstr "Разогрев заранее, мин"
+
+msgid "Saved. The thermostat takes it at the zone’s next allowed write."
+msgstr "Сохранено. Термостат получит это при следующей разрешённой записи зоны."
+
+msgid "Nothing changed"
+msgstr "Ничего не изменилось"
+
+msgid "Second-floor guard"
+msgstr "Защита второго этажа"
+
+msgid "Air mode, °C"
+msgstr "По воздуху, °C"
+
+msgid "Heat below the target by"
+msgstr "Греть, когда ниже цели на"
+
+msgid "Stop short of the target by, until learned"
+msgstr "Останавливать раньше цели на, пока не выучено"
+
+msgid "Optimal start"
+msgstr "Оптимальный старт"
+
+msgid "Learned mornings it needs"
+msgstr "Сколько утр выучить"
+
+msgid "Longest warm-up, min"
+msgstr "Самый долгий разогрев, мин"
+
+msgid "Second-floor guard, °C"
+msgstr "Защита второго этажа, °C"
+
+msgid "Turns on below"
+msgstr "Включается ниже"
+
+msgid "Releases above that by"
+msgstr "Отпускает выше порога на"
+
+msgid "Saved. The heating cycle reads it within a minute."
+msgstr "Сохранено. Цикл отопления учтёт это в течение минуты."
+
+msgid "Phase limits"
+msgstr "Пределы по фазам"
+
+msgid "Thresholds per phase"
+msgstr "Пороги на фазу"
+
+msgid "Start ceiling, A"
+msgstr "Порог включения, А"
+
+msgid "Shed above, A"
+msgstr "Отключать выше, А"
+
+msgid "Shed after, s"
+msgstr "Отключать через, с"
+
+msgid "Restore at or below, A"
+msgstr "Возвращать не выше, А"
+
+msgid "Restore after, s"
+msgstr "Возвращать через, с"
+
+msgid "Starts and the phase meter"
+msgstr "Включения и фазометр"
+
+msgid "Starts apart, s"
+msgstr "Между включениями, с"
+
+msgid "Meter lost after, s"
+msgstr "Фазометр потерян через, с"
+
+msgid "Load current by default, A"
+msgstr "Ток нагрузки по умолчанию, А"
+
+msgid "Saved. Load management reads it within a minute."
+msgstr "Сохранено. Управление нагрузкой учтёт это в течение минуты."
+
+msgid "Loads are shed from priority 1 up and returned from the last one down. Every load needs a priority of its own: to swap two loads, swap their numbers and save once."
+msgstr "Нагрузки отключаются начиная с приоритета 1, а возвращаются с последней. У каждой нагрузки свой приоритет: чтобы поменять две нагрузки местами, поменяйте их номера и сохраните один раз."
+
+msgid "Phase"
+msgstr "Фаза"
+
+msgid "Nominal current, A"
+msgstr "Номинальный ток, А"
+
+msgid "Commands"
+msgstr "Команды"
+
+msgid "Enter a name"
+msgstr "Введите название"
+
+msgid "The name is too long"
+msgstr "Слишком длинное название"
+
+msgid "Out of the allowed range"
+msgstr "Вне допустимого диапазона"
+
+msgid "Must not be above comfort"
+msgstr "Не может быть выше комфорта"
+
+msgid "Must not be below comfort"
+msgstr "Не может быть ниже комфорта"
+
+msgid "Must be below the floor limit"
+msgstr "Должно быть ниже предела"
+
+msgid "Must not be above the start ceiling"
+msgstr "Не может быть выше порога включения"
+
+msgid "Must be below the shed threshold"
+msgstr "Должно быть ниже порога отключения"
+
+msgid "Another load has this priority"
+msgstr "Этот приоритет уже у другой нагрузки"
+
+msgid "Use a time on the quarter hour: :00, :15, :30 or :45"
+msgstr "Время с шагом 15 минут: :00, :15, :30 или :45"
+
+msgid "The window must end after it starts, on the same day"
+msgstr "Окно должно заканчиваться позже начала, в тот же день"
+
+msgid "Comfort windows of a day must not overlap"
+msgstr "Окна комфорта одного дня не должны пересекаться"
+
+msgid "Not saved: check the values"
+msgstr "Не сохранено: проверьте значения"
+
+#, python-format
+msgid "%(temperature)s°"
+msgstr "%(temperature)s°"
+
+#, python-format
+msgid "%(seconds)s s"
+msgstr "%(seconds)s с"
+
+#, python-format
+msgid "%(name)s: %(field)s %(old)s → %(new)s"
+msgstr "%(name)s: %(field)s %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s: settings changed"
+msgstr "%(name)s: настройки изменены"
+
+#, python-format
+msgid "%(name)s: renamed, was “%(old)s”"
+msgstr "%(name)s: новое название, было «%(old)s»"
+
+#, python-format
+msgid "%(name)s: heating switched on"
+msgstr "%(name)s: отопление включено"
+
+#, python-format
+msgid "%(name)s: heating switched off"
+msgstr "%(name)s: отопление выключено"
+
+#, python-format
+msgid "%(name)s, Monday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, понедельник: комфорт %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s, Tuesday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, вторник: комфорт %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s, Wednesday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, среда: комфорт %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s, Thursday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, четверг: комфорт %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s, Friday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, пятница: комфорт %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s, Saturday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, суббота: комфорт %(old)s → %(new)s"
+
+#, python-format
+msgid "%(name)s, Sunday: comfort %(old)s → %(new)s"
+msgstr "%(name)s, воскресенье: комфорт %(old)s → %(new)s"
+
+msgid "none"
+msgstr "нет"
+
+msgid "not known"
+msgstr "неизвестна"
+
+msgid "not set"
+msgstr "не задан"
+
+msgid "floor in comfort"
+msgstr "пол в комфорте"
+
+msgid "floor at night"
+msgstr "пол ночью"
+
+msgid "floor in boost"
+msgstr "пол в бусте"
+
+msgid "idle floor in air mode"
+msgstr "пол в простое по воздуху"
+
+msgid "floor limit in air mode"
+msgstr "предел пола по воздуху"
+
+msgid "air in comfort"
+msgstr "воздух в комфорте"
+
+msgid "air at night"
+msgstr "воздух ночью"
+
+msgid "warm-up lead"
+msgstr "разогрев заранее"
+
+msgid "heat below the target by"
+msgstr "греть ниже цели на"
+
+msgid "first early stop"
+msgstr "первая ранняя остановка"
+
+msgid "learned mornings needed"
+msgstr "нужно выученных утр"
+
+msgid "longest warm-up"
+msgstr "самый долгий разогрев"
+
+msgid "second-floor guard below"
+msgstr "защита второго этажа ниже"
+
+msgid "second-floor guard hysteresis"
+msgstr "гистерезис защиты второго этажа"
+
+msgid "start ceiling"
+msgstr "порог включения"
+
+msgid "shed threshold"
+msgstr "порог отключения"
+
+msgid "shed after"
+msgstr "отключать через"
+
+msgid "restore threshold"
+msgstr "порог возврата"
+
+msgid "restore after"
+msgstr "возвращать через"
+
+msgid "starts apart"
+msgstr "между включениями"
+
+msgid "meter lost after"
+msgstr "фазометр потерян через"
+
+msgid "load current by default"
+msgstr "ток нагрузки по умолчанию"
+
+msgid "priority"
+msgstr "приоритет"
+
+msgid "phase"
+msgstr "фаза"
+
+msgid "nominal current"
+msgstr "номинальный ток"

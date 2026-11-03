@@ -8,6 +8,8 @@ import pytest
 from django.utils import translation
 from freezegun import freeze_time
 
+from apps.climate.domain.modes import ScheduleMode
+from apps.climate.domain.week_plan import DayPeriod
 from apps.core.domain.errors import DomainError, SecretMissingError
 from apps.devices.domain.errors import (
     BrokerUnavailableError,
@@ -26,6 +28,7 @@ from apps.panel.templatetags.panel_format import (
     alert_text,
     clock_note,
     command_summary,
+    day_minute,
     day_word,
     duration,
     failure_note,
@@ -41,11 +44,15 @@ from apps.panel.templatetags.panel_format import (
     optimal_start_text,
     outage_overload_note,
     outage_question,
+    period_text,
     phase_event_text,
     power_outage_text,
     second_floor_guard_text,
+    settings_change_text,
     start_wait_note,
     start_wait_text,
+    weekday_name,
+    weekday_short,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.panel.usecases.get_panel_overview import LoadOverview
@@ -745,3 +752,153 @@ def test_load_texts_follow_the_active_language() -> None:
         'Overload on phase L2: 26.4 A',
         'Phase L2, learned',
     )
+
+
+def _settings_entry(subject: str, name: str, payload: dict[str, object]) -> TimelineEntry:
+    return TimelineEntry(
+        kind='settings_changed',
+        subject=subject,
+        subject_name=name,
+        device_kind=None,
+        payload=payload,
+        created_at=datetime(2026, 11, 3, 12, 0, tzinfo=MOSCOW),
+    )
+
+
+@pytest.mark.parametrize(('minutes', 'expected'), [(0, '00:00'), (390, '06:30'), (1425, '23:45'), (1440, '24:00')])
+def test_day_minute_reads_minutes_after_midnight_as_a_clock(minutes: int, expected: str) -> None:
+    assert day_minute(minutes) == expected
+
+
+@pytest.mark.usefixtures('russian')
+def test_period_text_names_the_mode_and_its_hours() -> None:
+    assert [
+        period_text(DayPeriod(mode=ScheduleMode.PREHEAT, start=210, end=390)),
+        period_text(DayPeriod(mode=ScheduleMode.COMFORT, start=390, end=1410)),
+        period_text(DayPeriod(mode=ScheduleMode.NIGHT, start=1410, end=1440)),
+    ] == ['Разогрев 03:30–06:30', 'Комфорт 06:30–23:30', 'Ночь 23:30–24:00']
+
+
+@pytest.mark.usefixtures('russian')
+def test_weekday_names_follow_the_language() -> None:
+    assert ([weekday_name(0), weekday_name(6)], [weekday_short(0), weekday_short(6)]) == (
+        ['Понедельник', 'Воскресенье'],
+        ['Пн', 'Вс'],
+    )
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('entry', 'expected'),
+    [
+        (
+            _settings_entry(
+                'kitchen',
+                'Кухня',
+                {'object': 'zone', 'name': 'Кухня', 'field': 'comfort_floor_setpoint', 'old': '28.0', 'new': '27.5'},
+            ),
+            'Кухня: пол в комфорте 28° → 27,5°',
+        ),
+        (
+            _settings_entry(
+                'kitchen',
+                'Кухня',
+                {'object': 'zone', 'name': 'Кухня', 'field': 'preheat_lead_minutes', 'old': 180, 'new': 150},
+            ),
+            'Кухня: разогрев заранее 3 ч → 2 ч 30 мин',
+        ),
+        (
+            _settings_entry(
+                'kitchen',
+                'Кухня',
+                {'object': 'zone', 'name': 'Кухня', 'field': 'heating_enabled', 'old': True, 'new': False},
+            ),
+            'Кухня: отопление выключено',
+        ),
+        (
+            _settings_entry(
+                'kitchen',
+                'Кухня-столовая',
+                {'object': 'zone', 'name': 'Кухня-столовая', 'field': 'name', 'old': 'Кухня', 'new': 'Кухня-столовая'},
+            ),
+            'Кухня-столовая: новое название, было «Кухня»',
+        ),
+        (
+            _settings_entry(
+                'kitchen',
+                'Кухня',
+                {
+                    'object': 'schedule',
+                    'name': 'Кухня',
+                    'field': 'monday',
+                    'old': ['06:30-23:30'],
+                    'new': ['07:00-12:00', '14:00-23:30'],
+                },
+            ),
+            'Кухня, понедельник: комфорт 06:30–23:30 → 07:00–12:00, 14:00–23:30',
+        ),
+        (
+            _settings_entry(
+                'kitchen',
+                'Кухня',
+                {'object': 'schedule', 'name': 'Кухня', 'field': 'sunday', 'old': [], 'new': ['09:00-22:00']},
+            ),
+            'Кухня, воскресенье: комфорт нет → 09:00–22:00',
+        ),
+        (
+            _settings_entry(
+                '',
+                '',
+                {'object': 'climate_settings', 'name': '', 'field': 'air_start_offset', 'old': '0.30', 'new': '0.25'},
+            ),
+            'Климат: греть ниже цели на 0,30° → 0,25°',
+        ),
+        (
+            _settings_entry(
+                '',
+                '',
+                {'object': 'load_settings', 'name': '', 'field': 'shed_hold_seconds', 'old': 3, 'new': 5},
+            ),
+            'Управление нагрузкой: отключать через 3 с → 5 с',
+        ),
+        (
+            _settings_entry(
+                'boiler-1f',
+                'Бойлер 1 этаж',
+                {'object': 'load', 'name': 'Бойлер 1 этаж', 'field': 'nominal_amps', 'old': '6.0', 'new': None},
+            ),
+            'Бойлер 1 этаж: номинальный ток 6 А → не задан',
+        ),
+        (
+            _settings_entry(
+                'boiler-1f',
+                'Бойлер 1 этаж',
+                {'object': 'load', 'name': 'Бойлер 1 этаж', 'field': 'priority', 'old': 1, 'new': 2},
+            ),
+            'Бойлер 1 этаж: приоритет 1 → 2',
+        ),
+        (
+            _settings_entry(
+                'attic',
+                'attic',
+                {'object': 'zone', 'name': 'Чердак', 'field': 'colour', 'old': 'red', 'new': 'blue'},
+            ),
+            'Чердак: настройки изменены',
+        ),
+    ],
+    ids=[
+        'setpoint',
+        'lead',
+        'heating_off',
+        'rename',
+        'schedule_day',
+        'day_given_comfort',
+        'climate',
+        'load_management',
+        'nominal_current_cleared',
+        'priority',
+        'unknown_field_of_a_zone_gone',
+    ],
+)
+def test_settings_change_text_words_what_changed(entry: TimelineEntry, expected: str) -> None:
+    assert settings_change_text(entry) == expected

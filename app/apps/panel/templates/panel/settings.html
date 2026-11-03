@@ -1,0 +1,28 @@
+{% extends 'panel/base.html' %}
+{% load i18n panel_format %}
+{% block title %}{% translate 'teplo settings' %}{% endblock %}
+{% block content %}
+<div class="settings">
+  <h1 class="page-title">{% translate 'Settings' %}</h1>
+  <p class="page-note">{% icon 'clock' %}<span>{% translate 'Changes take effect through the usual paths. The heating cycle reads them within a minute, and a thermostat takes a new setpoint at its zone’s next allowed write, at most one change per 30 minutes. Load management reads its settings within a minute.' %}</span></p>
+  {% if page.dry_run %}<p class="page-note">{% icon 'eye' %}<span>{% translate 'Watching only: teplo runs with TEPLO_DRY_RUN and sends no commands, whatever the switches below say.' %}</span></p>{% endif %}
+  <section class="settings-section" aria-labelledby="zones-title">
+    <h2 class="section-title" id="zones-title">{% translate 'Zones' %}</h2>
+    <div class="settings-cards">
+      {% for zone, form in zone_forms %}{% include 'panel/_settings_zone.html' with outcome=None %}{% empty %}<p class="page-empty">{% translate 'No zones yet. Zones come from the site data and the admin.' %}</p>{% endfor %}
+    </div>
+  </section>
+  <section class="settings-section" aria-labelledby="climate-title">
+    <h2 class="section-title" id="climate-title">{% translate 'Climate' %}</h2>
+    {% include 'panel/_settings_climate.html' with climate=page.climate outcome=None %}
+  </section>
+  <section class="settings-section" aria-labelledby="load-management-title">
+    <h2 class="section-title" id="load-management-title">{% translate 'Load management' %}</h2>
+    <div class="settings-cards">
+      {% include 'panel/_settings_load_management.html' with load_settings=page.load_settings outcome=None %}
+      {% if rows %}{% include 'panel/_settings_loads.html' with outcome=None %}{% endif %}
+    </div>
+  </section>
+  <p class="settings-admin"><a class="admin-link" href="{% url 'admin:index' %}">{% icon 'external-link' %}<span>{% translate 'Devices, sensors and the switches that let teplo act live stay in the admin' %}</span></a></p>
+</div>
+{% endblock %}

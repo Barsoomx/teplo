@@ -1,0 +1,41 @@
+{% load i18n panel_format %}<article class="settings-card" id="zone-settings-{{ zone.slug }}">
+  <form class="settings-form" hx-post="{% url 'panel:zone-settings' zone.slug %}" hx-target="closest .settings-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <h3 class="settings-name">{{ zone.config.name }}</h3>
+    <div class="gates">
+      {% url 'admin:climate_zone_change' zone.id as admin_url %}
+      {% translate 'Thermostat commands' as label %}{% include 'panel/_gate.html' with live=zone.live_control url=admin_url %}
+      {% if zone.kind == 'air' %}{% translate 'Air mode' as label %}{% include 'panel/_gate.html' with live=zone.air_control_live url=admin_url %}{% endif %}
+    </div>
+    {% include 'panel/_form_errors.html' %}
+    <div class="field-grid">
+      {% translate 'Zone name' as label %}{% include 'panel/_field.html' with field=form.name %}
+      <label class="check">{{ form.heating_enabled }}<span>{% translate 'Heating on' %}</span></label>
+    </div>
+    <fieldset class="field-group">
+      <legend class="field-group-title">{% translate 'Floor, °C' %}</legend>
+      <div class="field-grid">
+        {% translate 'Comfort' as label %}{% include 'panel/_field.html' with field=form.comfort_floor_setpoint %}
+        {% translate 'Night' as label %}{% include 'panel/_field.html' with field=form.night_floor_setpoint %}
+        {% translate 'Boost' as label %}{% include 'panel/_field.html' with field=form.boost_floor_setpoint %}
+        {% translate 'Idle in air mode' as label %}{% include 'panel/_field.html' with field=form.idle_floor_setpoint %}
+        {% translate 'Limit in air mode' as label %}{% include 'panel/_field.html' with field=form.floor_limit_setpoint %}
+      </div>
+    </fieldset>
+    {% if zone.kind == 'air' %}
+    <fieldset class="field-group">
+      <legend class="field-group-title">{% translate 'Air, °C' %}</legend>
+      <div class="field-grid">
+        {% translate 'Comfort' as label %}{% include 'panel/_field.html' with field=form.comfort_air_target %}
+        {% translate 'Night' as label %}{% include 'panel/_field.html' with field=form.night_air_target %}
+      </div>
+    </fieldset>
+    {% endif %}
+    <div class="field-grid">
+      {% translate 'Warm-up lead, min' as label %}{% include 'panel/_field.html' with field=form.preheat_lead_minutes %}
+    </div>
+    <div class="settings-foot">
+      <button class="button" type="submit">{% translate 'Save' %}</button>
+      {% if outcome == 'saved' %}<p class="saved" role="status">{% translate 'Saved. The thermostat takes it at the zone’s next allowed write.' %}</p>{% elif outcome == 'unchanged' %}<p class="saved" role="status">{% translate 'Nothing changed' %}</p>{% endif %}
+    </div>
+  </form>
+</article>

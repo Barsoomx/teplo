@@ -40,6 +40,7 @@ teplo pre-heats rooms so they are warm by wake-up time. Its next stage keeps eve
 - **Power cuts on record.** After a power cut the panel asks whether our breaker tripped or the village lost power, so outages of the grid never count as overloads.
 - **Water heaters in view.** The dashboard shows each water heater plug's relay state, power and voltage, and the history keeps its current as well; teplo switches the plugs only to shed them, and load management still runs in dry-run.
 - **Sensors in view.** ESPHome nodes report the air temperature and humidity of the rooms, the outdoor temperature and the current on each phase. The dashboard shows a room's air beside its floor reading, the outdoor temperature above the rooms and the phase currents as bars refreshed every 3 seconds; the history keeps them, and `api/v1/sensors` and `api/v1/phases` give them as JSON. Air control from the room and outdoor sensors ships in dry-run and is switched on zone by zone in the admin; load management on the phase currents ships in dry-run too and is switched on load by load.
+- **Edited in the panel.** A schedule page sets each zone's comfort windows by weekday, shows when the warm-up starts and copies a day or a week; a settings page holds the setpoints, the climate and load thresholds and the shedding order. Every change lands in the journal, and the switches that let teplo act live stay in the admin.
 - **Reusable.** A house is a site app with data migrations. Device keys, the panel password, the Telegram bot token and the MQTT credentials stay in a secrets file on the router.
 
 ## Panel
@@ -142,7 +143,7 @@ app/
     telemetry/      samples and the event journal
     notifications/  Telegram alerts: policy, outbox, Bot API client
     system/         trusted clock
-    panel/          dashboard, journal, API v1
+    panel/          dashboard, schedule, settings, journal, API v1
   sites/
     example/        a two-zone sample house
     barsoom/        the house teplo heats today
@@ -199,7 +200,7 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 - [ ] **Phase meter:** load management on the measured phase currents: a shedding priority, staggered starts, a limp mode for a lost meter, passive phase learning and EV detection. Shipped in dry-run: the journal shows what it would shed, restore or hold back and the dashboard shows the shedding order and the EV badge, until it is switched on in the admin, load by load.
 - [ ] **Air sensors:** air-temperature regulation, a learned optimal start and a guard for the unheated second floor. Shipped in dry-run: the journal shows what they would do, and each room tile names the path that drives it and its air target, until they are switched on in the admin, air control zone by zone.
 - [ ] **Smart plugs:** water heaters as sheddable loads, shipped in dry-run with load management; washing machine monitoring.
-- [ ] Schedule and settings pages in the panel.
+- [x] **Schedule and settings pages:** comfort windows per weekday with the warm-up they lead to, copied by day or by zone; zone setpoints, climate and load thresholds and the shedding order. Every change is journaled; the gates stay in the admin.
 
 Each stage first runs in dry-run, journaling the decisions it would make, before it is allowed to switch devices.
 

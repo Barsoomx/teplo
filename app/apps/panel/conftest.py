@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -8,8 +8,12 @@ from django.contrib.auth.models import User
 from django.test import Client
 from django.utils import translation
 
+from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
+from apps.climate.domain.comfort_windows import StoredWindow
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.schedule import ScheduleTransition
+from apps.climate.domain.week_plan import DayPeriod
+from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
@@ -20,6 +24,9 @@ from apps.panel.usecases.get_panel_overview import (
     ZoneRegime,
 )
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO, PhaseCurrent, PhaseMeterOverview
+from apps.panel.usecases.get_schedule_page import GetSchedulePageOutputDTO, ScheduleDay, ZoneSchedule
+from apps.panel.usecases.get_settings_page import GetSettingsPageOutputDTO
+from apps.power.domain.load_config import LoadConfig, LoadConfigRecord, LoadSettingsConfig, LoadSettingsRecord
 from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
@@ -176,6 +183,136 @@ def phase_currents() -> GetPhaseCurrentsOutputDTO:
         scale_amps=Decimal(25),
         start_ceiling_amps=Decimal(20),
         shed_amps=Decimal(24),
+    )
+
+
+@pytest.fixture
+def schedule_page() -> GetSchedulePageOutputDTO:
+    monday = (
+        DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=210),
+        DayPeriod(mode=ScheduleMode.PREHEAT, start=210, end=390),
+        DayPeriod(mode=ScheduleMode.COMFORT, start=390, end=1410),
+        DayPeriod(mode=ScheduleMode.NIGHT, start=1410, end=1440),
+    )
+    night = (DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=1440),)
+    return GetSchedulePageOutputDTO(
+        zones=(
+            ZoneSchedule(
+                slug='kitchen',
+                name='Кухня',
+                preheat_lead=timedelta(hours=3),
+                optimal_start=False,
+                days=(
+                    ScheduleDay(
+                        weekday=0,
+                        windows=(StoredWindow(id=1, weekday=0, start=time(6, 30), end=time(23, 30)),),
+                        periods=monday,
+                    ),
+                    *(ScheduleDay(weekday=weekday, windows=(), periods=night) for weekday in range(1, 7)),
+                ),
+            ),
+            ZoneSchedule(
+                slug='living-room',
+                name='Гостиная',
+                preheat_lead=timedelta(hours=3),
+                optimal_start=True,
+                days=tuple(ScheduleDay(weekday=weekday, windows=(), periods=night) for weekday in range(7)),
+            ),
+        ),
+        lead_cap=timedelta(hours=4),
+        mornings_needed=3,
+    )
+
+
+@pytest.fixture
+def settings_page() -> GetSettingsPageOutputDTO:
+    kitchen = ZoneConfig(
+        name='Кухня',
+        heating_enabled=True,
+        comfort_floor_setpoint=Decimal('28.0'),
+        night_floor_setpoint=Decimal('22.0'),
+        boost_floor_setpoint=Decimal('30.0'),
+        idle_floor_setpoint=Decimal('18.0'),
+        floor_limit_setpoint=Decimal('30.0'),
+        comfort_air_target=Decimal('22.0'),
+        night_air_target=Decimal('19.5'),
+        preheat_lead_minutes=180,
+    )
+    return GetSettingsPageOutputDTO(
+        zones=(
+            ZoneConfigRecord(
+                id=3,
+                slug='kitchen',
+                kind=ZoneKind.AIR,
+                config=kitchen,
+                live_control=True,
+                air_control_live=False,
+            ),
+            ZoneConfigRecord(
+                id=4,
+                slug='bathroom-1f',
+                kind=ZoneKind.FLOOR,
+                config=ZoneConfig(
+                    name='Санузел 1 этаж',
+                    heating_enabled=True,
+                    comfort_floor_setpoint=Decimal('18.0'),
+                    night_floor_setpoint=Decimal('18.0'),
+                    boost_floor_setpoint=Decimal('30.0'),
+                    idle_floor_setpoint=Decimal('18.0'),
+                    floor_limit_setpoint=Decimal('30.0'),
+                    comfort_air_target=Decimal('22.0'),
+                    night_air_target=Decimal('19.5'),
+                    preheat_lead_minutes=120,
+                ),
+                live_control=False,
+                air_control_live=False,
+            ),
+        ),
+        climate=ClimateConfigRecord(
+            id=1,
+            config=ClimateConfig(
+                air_start_offset=Decimal('0.30'),
+                initial_early_stop_offset=Decimal('0.30'),
+                learned_mornings_needed=3,
+                preheat_lead_cap_minutes=240,
+                second_floor_guard_threshold=Decimal('19.0'),
+                second_floor_guard_hysteresis=Decimal('0.30'),
+            ),
+            second_floor_guard_live=False,
+        ),
+        load_settings=LoadSettingsRecord(
+            id=1,
+            config=LoadSettingsConfig(
+                start_ceiling_amps=Decimal('20.0'),
+                shed_amps=Decimal('24.0'),
+                shed_hold_seconds=3,
+                restore_amps=Decimal('18.0'),
+                restore_hold_seconds=120,
+                start_interval_seconds=30,
+                meter_lost_after_seconds=60,
+                default_load_amps=Decimal('6.0'),
+            ),
+            load_management_live=False,
+        ),
+        loads=(
+            LoadConfigRecord(
+                id=1,
+                slug='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                config=LoadConfig(priority=1, phase=LoadPhase.UNKNOWN, nominal_amps=Decimal('6.0')),
+                live=True,
+            ),
+            LoadConfigRecord(
+                id=2,
+                slug='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                config=LoadConfig(priority=2, phase=LoadPhase.L2, nominal_amps=None),
+                live=False,
+            ),
+        ),
+        dry_run=True,
     )
 
 

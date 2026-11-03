@@ -1,0 +1,1 @@
+{% load i18n panel_format %}<p class="gate"><span class="gate-label">{{ label }}</span>{% if live %}<span class="chip gate-live">{% icon 'zap' %}{% translate 'Live' %}</span>{% else %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}<a class="gate-link" href="{{ url }}">{% translate 'Change in the admin' %}</a></p>

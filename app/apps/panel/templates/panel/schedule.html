@@ -1,0 +1,17 @@
+{% extends 'panel/base.html' %}
+{% load i18n panel_format %}
+{% block title %}{% translate 'teplo schedule' %}{% endblock %}
+{% block content %}
+<div class="schedule">
+  <h1 class="page-title">{% translate 'Schedule' %}</h1>
+  <p class="page-note">{% icon 'clock' %}<span>{% translate 'The heating cycle follows a new schedule within a minute. A thermostat takes the new target at its zone’s next allowed write, at most one change per 30 minutes.' %}</span></p>
+  <ul class="legend" role="list">
+    <li class="legend-item"><span class="swatch swatch-comfort" aria-hidden="true"></span>{% translate 'Comfort' %}</li>
+    <li class="legend-item"><span class="swatch swatch-preheat" aria-hidden="true"></span>{% translate 'Warm-up' %}</li>
+    <li class="legend-item"><span class="swatch swatch-night" aria-hidden="true"></span>{% translate 'Night' %}</li>
+  </ul>
+  <div class="schedule-zones" id="schedule-zones">
+    {% include 'panel/_schedule_zones.html' with failure=None %}
+  </div>
+</div>
+{% endblock %}

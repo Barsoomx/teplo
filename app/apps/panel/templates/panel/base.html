@@ -17,14 +17,17 @@
 <body class="{% block body_class %}{% endblock %}" hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
   {% block header %}
   <header class="topbar">
-    <a class="wordmark" href="{% url 'panel:dashboard' %}">teplo</a>
+    {% with section=request.resolver_match.url_name %}
+    <a class="wordmark" href="{% url 'panel:dashboard' %}"{% if section == 'dashboard' %} aria-current="page"{% endif %}>teplo</a>
     {% if user.is_authenticated %}
     <nav class="nav" aria-label="{% translate 'Sections' %}">
-      <a class="nav-link" href="{% url 'panel:journal' %}"{% if request.resolver_match.url_name == 'journal' %} aria-current="page"{% endif %}>{% icon 'scroll-text' %}<span class="nav-label">{% translate 'Journal' %}</span></a>
-      <a class="nav-link" href="{% url 'admin:index' %}">{% icon 'settings-2' %}<span class="nav-label">{% translate 'Settings' %}</span></a>
+      <a class="nav-link" href="{% url 'panel:schedule' %}"{% if section == 'schedule' %} aria-current="page"{% endif %}>{% icon 'calendar' %}<span class="nav-label">{% translate 'Schedule' %}</span></a>
+      <a class="nav-link" href="{% url 'panel:settings' %}"{% if section == 'settings' %} aria-current="page"{% endif %}>{% icon 'settings-2' %}<span class="nav-label">{% translate 'Settings' %}</span></a>
+      <a class="nav-link" href="{% url 'panel:journal' %}"{% if section == 'journal' %} aria-current="page"{% endif %}>{% icon 'scroll-text' %}<span class="nav-label">{% translate 'Journal' %}</span></a>
       <form class="nav-form" method="post" action="{% url 'panel:logout' %}">{% csrf_token %}<button class="nav-link" type="submit">{% icon 'log-out' %}<span class="nav-label">{% translate 'Log out' %}</span></button></form>
     </nav>
     {% endif %}
+    {% endwith %}
   </header>
   {% endblock %}
   <main class="page">{% block content %}{% endblock %}</main>

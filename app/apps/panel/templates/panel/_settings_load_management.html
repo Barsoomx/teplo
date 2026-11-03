@@ -1,0 +1,32 @@
+{% load i18n panel_format %}<article class="settings-card" id="load-management-settings">
+  <form class="settings-form" hx-post="{% url 'panel:load-settings' %}" hx-target="closest .settings-card" hx-swap="outerHTML" hx-disabled-elt="find button">
+    <h3 class="settings-name">{% translate 'Phase limits' %}</h3>
+    <div class="gates">
+      {% if load_settings.id %}{% url 'admin:power_loadsettings_change' load_settings.id as admin_url %}{% else %}{% url 'admin:power_loadsettings_changelist' as admin_url %}{% endif %}
+      {% translate 'Load management' as label %}{% include 'panel/_gate.html' with live=load_settings.load_management_live url=admin_url %}
+    </div>
+    {% include 'panel/_form_errors.html' with form=load_settings_form %}
+    <fieldset class="field-group">
+      <legend class="field-group-title">{% translate 'Thresholds per phase' %}</legend>
+      <div class="field-grid">
+        {% translate 'Start ceiling, A' as label %}{% include 'panel/_field.html' with field=load_settings_form.start_ceiling_amps %}
+        {% translate 'Shed above, A' as label %}{% include 'panel/_field.html' with field=load_settings_form.shed_amps %}
+        {% translate 'Shed after, s' as label %}{% include 'panel/_field.html' with field=load_settings_form.shed_hold_seconds %}
+        {% translate 'Restore at or below, A' as label %}{% include 'panel/_field.html' with field=load_settings_form.restore_amps %}
+        {% translate 'Restore after, s' as label %}{% include 'panel/_field.html' with field=load_settings_form.restore_hold_seconds %}
+      </div>
+    </fieldset>
+    <fieldset class="field-group">
+      <legend class="field-group-title">{% translate 'Starts and the phase meter' %}</legend>
+      <div class="field-grid">
+        {% translate 'Starts apart, s' as label %}{% include 'panel/_field.html' with field=load_settings_form.start_interval_seconds %}
+        {% translate 'Meter lost after, s' as label %}{% include 'panel/_field.html' with field=load_settings_form.meter_lost_after_seconds %}
+        {% translate 'Load current by default, A' as label %}{% include 'panel/_field.html' with field=load_settings_form.default_load_amps %}
+      </div>
+    </fieldset>
+    <div class="settings-foot">
+      <button class="button" type="submit">{% translate 'Save' %}</button>
+      {% if outcome == 'saved' %}<p class="saved" role="status">{% translate 'Saved. Load management reads it within a minute.' %}</p>{% elif outcome == 'unchanged' %}<p class="saved" role="status">{% translate 'Nothing changed' %}</p>{% endif %}
+    </div>
+  </form>
+</article>
