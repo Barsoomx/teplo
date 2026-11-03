@@ -19,6 +19,7 @@ class StartRefusal(StrEnum):
     NO_HEADROOM = 'no_headroom'
     PHASE_OVERLOADED = 'phase_overloaded'
     PHASE_NOT_CALM = 'phase_not_calm'
+    PHASE_WOULD_OVERLOAD = 'phase_would_overload'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -63,7 +64,15 @@ def decide_start(
     if excess is not None:
         return StartDecision(load=load.slug, refusal=StartRefusal.NO_HEADROOM, overrun=excess)
 
-    return StartDecision(load=load.slug, refusal=_silent_refusal(load, view, handed_back), overrun=None)
+    refusal = _silent_refusal(load, view, handed_back)
+    if refusal is not None:
+        return StartDecision(load=load.slug, refusal=refusal, overrun=None)
+
+    excess = overrun(load.phase, load.amps, view.silent_currents, thresholds.shed)
+    if excess is not None:
+        return StartDecision(load=load.slug, refusal=StartRefusal.PHASE_WOULD_OVERLOAD, overrun=excess)
+
+    return StartDecision(load=load.slug, refusal=None, overrun=None)
 
 
 def decide_starts(

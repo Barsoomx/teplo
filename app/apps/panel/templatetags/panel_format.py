@@ -125,7 +125,12 @@ LOAD_COMMANDS_FAILED = {
 }
 ANY_LOAD_COMMAND_FAILED = gettext_lazy('%(name)s: a load management command failed')
 START_WOULD_WAIT = gettext_lazy('%(name)s: would put off switching on')
-START_WAITS_FOR_HEADROOM = gettext_lazy('Phase %(phase)s would reach %(amps)s A')
+START_WAITS_FOR_ROOM = {
+    'no_headroom': gettext_lazy('Phase %(phase)s would reach %(amps)s A'),
+    'phase_would_overload': gettext_lazy(
+        'The phase meter is silent and phase %(phase)s would reach %(amps)s A by its last reading',
+    ),
+}
 START_REFUSALS = {
     'too_soon': gettext_lazy('Another load has just started'),
     'meter_stale': gettext_lazy('No fresh readings from the phase meter'),
@@ -404,7 +409,8 @@ def start_wait_text(entry: TimelineEntry) -> str:
 @register.filter
 def start_wait_note(entry: TimelineEntry) -> str:
     reason = str(entry.payload.get('reason'))
-    if reason != 'no_headroom':
+    template = START_WAITS_FOR_ROOM.get(reason)
+    if template is None:
         return str(START_REFUSALS.get(reason, ''))
 
     phase = PHASE_LABELS.get(str(entry.payload.get('phase')))
@@ -412,7 +418,7 @@ def start_wait_note(entry: TimelineEntry) -> str:
     if phase is None or not amps:
         return ''
 
-    return str(START_WAITS_FOR_HEADROOM) % {'phase': phase, 'amps': amps}
+    return str(template) % {'phase': phase, 'amps': amps}
 
 
 @register.filter

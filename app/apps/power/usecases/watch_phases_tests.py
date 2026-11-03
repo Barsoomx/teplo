@@ -67,6 +67,7 @@ class GuardRig:
     meter: PhaseMeterStore
     plugs: PlugStateStore
     loads: LoadStoreStub
+    book: GuardBook
     events: list[DomainEvent]
     use_case: WatchPhasesUseCase
 
@@ -87,6 +88,16 @@ def _second(rig: GuardRig, amps: dict[LoadPhase, str], boiler_on: bool | None = 
 
 def _seconds(rig: GuardRig, count: int, amps: dict[LoadPhase, str]) -> list[WatchPhasesOutputDTO]:
     return [_second(rig, amps) for _ in range(count)]
+
+
+def _seconds_without(rig: GuardRig, count: int, silent: LoadPhase) -> None:
+    for _ in range(count):
+        rig.clock.advance(1)
+        second = int(rig.clock() - START)
+        for phase, load_phase in zip(Phase, (LoadPhase.L1, LoadPhase.L2, LoadPhase.L3), strict=True):
+            if load_phase is not silent:
+                rig.meter.record_current(METER, phase, Decimal(QUIET[load_phase]), _at(second))
+        rig.use_case.execute(WatchPhasesInputDTO(now=_at(second)))
 
 
 def _switch_boiler_three_times(rig: GuardRig) -> list[WatchPhasesOutputDTO]:
@@ -116,11 +127,13 @@ def _rig(write_errors: tuple[Exception, ...]) -> GuardRig:
     meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=timedelta(minutes=10), clock=clock)
     plugs = PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
     loads = LoadStoreStub(records=[BOILER], live_zones=frozenset(), write_errors=write_errors)
+    book = GuardBook()
     return GuardRig(
         clock=clock,
         meter=meter,
         plugs=plugs,
         loads=loads,
+        book=book,
         events=events,
         use_case=WatchPhasesUseCase(
             loads=loads,
@@ -129,7 +142,7 @@ def _rig(write_errors: tuple[Exception, ...]) -> GuardRig:
             meter=meter,
             thermostats=ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
             plugs=plugs,
-            book=GuardBook(),
+            book=book,
             clock=clock,
             dispatcher=dispatcher,
         ),
@@ -149,6 +162,12 @@ def f_rig_whose_database_fails() -> GuardRig:
 @pytest.fixture
 def f_overloaded_rig(f_rig: GuardRig) -> GuardRig:
     _seconds(f_rig, 4, {LoadPhase.L2: '26.0'})
+    return f_rig
+
+
+@pytest.fixture
+def f_rig_whose_l2_read_nineteen_amperes(f_rig: GuardRig) -> GuardRig:
+    _seconds(f_rig, 3, {LoadPhase.L2: '19.0'})
     return f_rig
 
 
@@ -227,3 +246,12 @@ def test_rise_no_load_explains_held_five_minutes_is_an_ev_charging_until_it_drop
         EvChargingStarted(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(306)),
         EvChargingStopped(phase=LoadPhase.L3, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(357)),
     ]
+
+
+def test_phase_that_goes_silent_keeps_its_last_reading_however_long_it_stays_silent(
+    f_rig_whose_l2_read_nineteen_amperes: GuardRig,
+) -> None:
+    _seconds_without(f_rig_whose_l2_read_nineteen_amperes, 180, LoadPhase.L2)
+
+    state = f_rig_whose_l2_read_nineteen_amperes.book.state()
+    assert (None if state is None else state.phases.silent_currents) == {LoadPhase.L2: Decimal('19.0')}

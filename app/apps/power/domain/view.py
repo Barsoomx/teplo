@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 
 from apps.power.domain.load_status import LoadStatus
@@ -12,3 +12,4 @@ class GuardView:
     loads: tuple[LoadStatus, ...]
     overloaded: frozenset[LoadPhase] = frozenset()
     calming: frozenset[LoadPhase] = frozenset()
+    silent_currents: Mapping[LoadPhase, Decimal] = field(default_factory=dict)

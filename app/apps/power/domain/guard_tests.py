@@ -121,6 +121,20 @@ def f_state_with_a_live_and_a_dry_run_shed() -> GuardState:
 
 
 @pytest.fixture
+def f_state_whose_l2_went_silent(f_state_with_a_live_and_a_dry_run_shed: GuardState) -> GuardState:
+    return replace(
+        f_state_with_a_live_and_a_dry_run_shed,
+        phases=replace(
+            f_state_with_a_live_and_a_dry_run_shed.phases,
+            currents={LoadPhase.L1: Decimal('12.0'), LoadPhase.L3: Decimal('4.0')},
+            read_at={LoadPhase.L1: AT, LoadPhase.L3: AT},
+            last_currents=CURRENTS,
+            last_read_at={**READ_AT, LoadPhase.L2: AT - 90},
+        ),
+    )
+
+
+@pytest.fixture
 def f_state_with_watched_phases(f_state_with_a_live_and_a_dry_run_shed: GuardState) -> GuardState:
     return replace(
         f_state_with_a_live_and_a_dry_run_shed,
@@ -249,6 +263,21 @@ def test_start_view_credits_no_live_shed_whose_drop_the_meter_has_not_shown(
             live=live,
         ).loads,
     )
+
+
+@pytest.mark.parametrize(
+    ('live', 'l2'),
+    [(True, Decimal('26.0')), (False, Decimal('20.0'))],
+    ids=['live_start_on_the_last_measured_current', 'dry_run_start_less_the_dry_run_sheds'],
+)
+def test_start_view_gives_a_silent_phase_its_last_reading_as_the_start_of_its_view_takes_it(
+    f_state_whose_l2_went_silent: GuardState,
+    live: bool,
+    l2: Decimal,
+) -> None:
+    view = start_view(f_state_whose_l2_went_silent, f_state_whose_l2_went_silent.shedding, live=live)
+
+    assert (set(view.currents), view.silent_currents) == ({LoadPhase.L1, LoadPhase.L3}, {LoadPhase.L2: l2})
 
 
 @pytest.mark.parametrize(

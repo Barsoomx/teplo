@@ -562,6 +562,10 @@ msgstr "%(name)s: отложил бы включение"
 msgid "Phase %(phase)s would reach %(amps)s A"
 msgstr "Фаза %(phase)s дошла бы до %(amps)s А"
 
+#, python-format
+msgid "The phase meter is silent and phase %(phase)s would reach %(amps)s A by its last reading"
+msgstr "Фазометр молчит, а фаза %(phase)s по последнему показанию дошла бы до %(amps)s А"
+
 msgid "Another load has just started"
 msgstr "Другая нагрузка только что включилась"
 

@@ -233,6 +233,8 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             read_at=read_at,
             watches={phase: step.watch for phase, step in steps.items()},
             samples=follow_samples(state.phases.samples, currents, at),
+            last_currents={**state.phases.last_currents, **currents},
+            last_read_at={**state.phases.last_read_at, **read_at},
         )
         return phases, steps
 

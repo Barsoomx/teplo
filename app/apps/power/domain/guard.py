@@ -48,6 +48,12 @@ class PhaseState:
     read_at: Mapping[LoadPhase, float]
     watches: Mapping[LoadPhase, PhaseWatch]
     samples: tuple[PhaseSample, ...]
+    last_currents: Mapping[LoadPhase, Decimal] = field(default_factory=dict)
+    last_read_at: Mapping[LoadPhase, float] = field(default_factory=dict)
+
+    @property
+    def silent_currents(self) -> dict[LoadPhase, Decimal]:
+        return {phase: amps for phase, amps in self.last_currents.items() if phase not in self.currents}
 
     @classmethod
     def started(cls, at: float) -> 'PhaseState':
@@ -182,15 +188,13 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
 
 
 def start_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardView:
+    dry_run_sheds = tuple(shed for shed in shedding.sheds.values() if not shed.live and not live)
     return GuardView(
-        currents=relieved_currents(
-            state.phases.currents,
-            state.phases.read_at,
-            (shed for shed in shedding.sheds.values() if not shed.live and not live),
-        ),
+        currents=relieved_currents(state.phases.currents, state.phases.read_at, dry_run_sheds),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
         overloaded=overloaded_phases(state.phases.watches, live=live),
         calming=calming_phases(state.phases.watches, live=live),
+        silent_currents=relieved_currents(state.phases.silent_currents, state.phases.last_read_at, dry_run_sheds),
     )
 
 

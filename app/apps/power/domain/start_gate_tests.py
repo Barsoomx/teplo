@@ -77,6 +77,7 @@ def _decide(
     overloaded: frozenset[LoadPhase] = frozenset(),
     calming: frozenset[LoadPhase] = frozenset(),
     handed_back: Shed | None = None,
+    silent_currents: dict[LoadPhase, Decimal] | None = None,
 ) -> StartDecision:
     return decide_start(
         load,
@@ -86,6 +87,7 @@ def _decide(
             loads=(load,) if loads is None else tuple(loads),
             overloaded=overloaded,
             calming=calming,
+            silent_currents={} if silent_currents is None else silent_currents,
         ),
         last_permit_at=last_permit_at,
         at=AT,
@@ -288,6 +290,59 @@ def test_lost_meter_starts_a_floor_handed_back_from_an_overload_only_as_its_rest
     decision = _decide(KITCHEN, MeterCondition.LOST, currents=L1_SILENT, calming=calming, handed_back=handed_back)
 
     assert decision == expected
+
+
+@pytest.mark.parametrize(
+    ('load', 'silent_currents', 'expected'),
+    [
+        (KITCHEN, {LoadPhase.L1: Decimal('16.0')}, GRANTED),
+        (
+            KITCHEN,
+            {LoadPhase.L1: Decimal('16.5')},
+            StartDecision(
+                load='kitchen',
+                refusal=StartRefusal.PHASE_WOULD_OVERLOAD,
+                overrun=PhaseOverrun(phase=LoadPhase.L1, amps=Decimal('24.5')),
+            ),
+        ),
+        (KITCHEN, {}, GRANTED),
+        (
+            replace(UNKNOWN_KITCHEN, amps=Decimal('5.0')),
+            {LoadPhase.L1: Decimal('19.5')},
+            StartDecision(
+                load='kitchen',
+                refusal=StartRefusal.PHASE_WOULD_OVERLOAD,
+                overrun=PhaseOverrun(phase=LoadPhase.L1, amps=Decimal('24.5')),
+            ),
+        ),
+    ],
+    ids=[
+        'last_reading_reaches_the_shed_threshold',
+        'last_reading_overruns_the_shed_threshold',
+        'no_reading_since_the_start',
+        'unknown_phase_on_every_silent_phase',
+    ],
+)
+def test_lost_meter_starts_a_floor_on_a_silent_phase_only_where_its_last_reading_keeps_it_at_the_shed_threshold(
+    load: LoadStatus,
+    silent_currents: dict[LoadPhase, Decimal],
+    expected: StartDecision,
+) -> None:
+    decision = _decide(load, MeterCondition.LOST, currents=L1_SILENT, silent_currents=silent_currents)
+
+    assert decision == expected
+
+
+def test_lost_meter_keeps_a_silent_phase_to_one_floor_whatever_its_last_reading_leaves() -> None:
+    decision = _decide(
+        KITCHEN,
+        MeterCondition.LOST,
+        loads=[KITCHEN, HALLWAY],
+        currents=L1_SILENT,
+        silent_currents={LoadPhase.L1: Decimal('4.0')},
+    )
+
+    assert decision == StartDecision(load='kitchen', refusal=StartRefusal.PHASE_TAKEN, overrun=None)
 
 
 @pytest.mark.parametrize(
