@@ -21,6 +21,7 @@ pytestmark = pytest.mark.django_db
 NOW = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 WRITTEN_AT = NOW - timedelta(minutes=40)
 HEATING_WRITE_AT = NOW - timedelta(minutes=5)
+HEATING_WRITE_DUE_AT = HEATING_WRITE_AT + timedelta(minutes=30)
 START = 1000.0
 
 
@@ -48,13 +49,13 @@ def unreachable_thermostat() -> FloorThermostatStub:
 
 
 @pytest.fixture
-def clock() -> MonotonicClockStub:
+def f_clock() -> MonotonicClockStub:
     return MonotonicClockStub(now=START)
 
 
 @pytest.fixture
-def f_writes(clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=NOW))
+def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
+    return ZoneWriteGate(clock=f_clock, wall_clock=WallClockStub(now=NOW))
 
 
 @pytest.fixture
@@ -141,13 +142,15 @@ def test_switch_on_powers_the_thermostat_on_and_stamps_the_write(
 def test_switch_off_takes_the_zones_write_slot_within_its_budget_and_holds_the_next_write(
     f_switch: ThermostatZoneSwitch,
     f_writes: ZoneWriteGate,
+    f_clock: MonotonicClockStub,
     f_thermostat: FloorThermostatStub,
 ) -> None:
     f_switch.switch_off('kitchen', 'thermostat-kitchen', NOW)
+    f_clock.advance((HEATING_WRITE_DUE_AT - NOW).total_seconds())
 
     assert (
         f_thermostat.commands,
-        f_writes.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=HEATING_WRITE_AT),
+        f_writes.reserve('kitchen', HEATING_WRITE_DUE_AT, stamped_at=HEATING_WRITE_AT),
     ) == ([('power', False)], None)
 
 
@@ -169,6 +172,7 @@ def test_switch_on_within_the_zones_write_budget_writes_and_stamps_nothing(
 @pytest.mark.parametrize('switch', [_switch_off, _switch_on], ids=['off', 'on'])
 def test_failed_switch_still_spends_the_write_budget(
     f_unreachable_switch: ThermostatZoneSwitch,
+    f_writes: ZoneWriteGate,
     f_kitchen: Zone,
     switch: Callable[[ThermostatZoneSwitch], object],
 ) -> None:
@@ -176,7 +180,10 @@ def test_failed_switch_still_spends_the_write_budget(
         switch(f_unreachable_switch)
 
     f_kitchen.refresh_from_db()
-    assert f_kitchen.last_command_at == NOW
+    assert (
+        f_kitchen.last_command_at,
+        f_writes.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=WRITTEN_AT),
+    ) == (NOW, None)
 
 
 @pytest.mark.parametrize('switch', [_switch_off, _switch_on], ids=['off', 'on'])
