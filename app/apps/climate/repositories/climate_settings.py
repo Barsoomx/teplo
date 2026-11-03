@@ -1,6 +1,9 @@
+from collections.abc import Collection
+from dataclasses import asdict
 from datetime import timedelta
 
 from apps.climate.domain.air_policy import AirRegulationSettings
+from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.optimal_start import OptimalStartSettings
 from apps.climate.domain.second_floor_guard import SecondFloorGuardSettings
@@ -40,6 +43,37 @@ class ClimateSettingsRepository:
                 live=climate_settings.second_floor_guard_live,
             ),
         )
+
+    @staticmethod
+    def config_record() -> ClimateConfigRecord:
+        stored = ClimateSettings.objects.order_by('pk').first()
+        climate_settings = ClimateSettings() if stored is None else stored
+        return ClimateConfigRecord(
+            id=None if stored is None else stored.pk,
+            config=ClimateConfig(
+                air_start_offset=climate_settings.air_start_offset,
+                initial_early_stop_offset=climate_settings.initial_early_stop_offset,
+                learned_mornings_needed=climate_settings.learned_mornings_needed,
+                preheat_lead_cap_minutes=climate_settings.preheat_lead_cap_minutes,
+                second_floor_guard_threshold=climate_settings.second_floor_guard_threshold,
+                second_floor_guard_hysteresis=climate_settings.second_floor_guard_hysteresis,
+            ),
+            second_floor_guard_live=climate_settings.second_floor_guard_live,
+        )
+
+    @staticmethod
+    def save_config(config: ClimateConfig, fields: Collection[str]) -> None:
+        values = asdict(config)
+        changes = {field: values[field] for field in fields}
+        if not changes:
+            return
+
+        stored = ClimateSettings.objects.order_by('pk').first()
+        if stored is None:
+            ClimateSettings.objects.create(**changes)
+            return
+
+        ClimateSettings.objects.filter(pk=stored.pk).update(**changes)
 
 
 def _stored_or_default() -> ClimateSettings:

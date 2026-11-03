@@ -1,0 +1,122 @@
+from datetime import UTC, datetime, time
+
+import pytest
+
+from apps.climate.domain.comfort_windows import StoredWindow, ZoneWeek
+from apps.climate.domain.errors import ZoneNotFoundError
+from apps.climate.domain.zone import ComfortWindow
+from apps.climate.stubs import ComfortWindowStoreStub
+from apps.climate.usecases.copy_comfort_day import (
+    CopyComfortDayInputDTO,
+    CopyComfortDayOutputDTO,
+    CopyComfortDayUseCase,
+)
+from apps.core.domain.errors import SettingsRejectedError
+from apps.core.domain.settings import SettingChange, SettingProblem
+from apps.core.stubs import SettingsRecorderStub
+
+NOW = datetime(2026, 11, 3, 9, 0, tzinfo=UTC)
+KITCHEN_WEEK = ZoneWeek(
+    slug='kitchen',
+    name='Кухня',
+    windows=(
+        StoredWindow(id=1, weekday=0, start=time(6, 30), end=time(23, 30)),
+        StoredWindow(id=2, weekday=5, start=time(8, 0), end=time(12, 0)),
+        StoredWindow(id=3, weekday=5, start=time(14, 0), end=time(23, 30)),
+    ),
+)
+
+
+def _schedule_change(field: str, old: tuple[str, ...], new: tuple[str, ...]) -> SettingChange:
+    return SettingChange(target='schedule', subject='kitchen', name='Кухня', field=field, old=old, new=new)
+
+
+@pytest.fixture
+def f_windows() -> ComfortWindowStoreStub:
+    return ComfortWindowStoreStub(weeks=[KITCHEN_WEEK])
+
+
+@pytest.fixture
+def f_recorder() -> SettingsRecorderStub:
+    return SettingsRecorderStub(error=None)
+
+
+@pytest.fixture
+def f_use_case(f_windows: ComfortWindowStoreStub, f_recorder: SettingsRecorderStub) -> CopyComfortDayUseCase:
+    return CopyComfortDayUseCase(windows=f_windows, recorder=f_recorder)
+
+
+@pytest.fixture
+def f_off_grid_use_case() -> CopyComfortDayUseCase:
+    week = ZoneWeek(
+        slug='kitchen',
+        name='Кухня',
+        windows=(StoredWindow(id=1, weekday=0, start=time(6, 30), end=time(23, 59)),),
+    )
+    return CopyComfortDayUseCase(
+        windows=ComfortWindowStoreStub(weeks=[week]),
+        recorder=SettingsRecorderStub(error=None),
+    )
+
+
+def test_day_copied_to_other_days_replaces_their_windows(
+    f_use_case: CopyComfortDayUseCase,
+    f_windows: ComfortWindowStoreStub,
+    f_recorder: SettingsRecorderStub,
+) -> None:
+    output = f_use_case.execute(CopyComfortDayInputDTO(zone='kitchen', weekday=0, to_weekdays=(5, 1), now=NOW))
+
+    changes = (
+        _schedule_change('tuesday', (), ('06:30-23:30',)),
+        _schedule_change('saturday', ('08:00-12:00', '14:00-23:30'), ('06:30-23:30',)),
+    )
+    assert (output, f_windows.replaced, f_recorder.records) == (
+        CopyComfortDayOutputDTO(zone='kitchen', changes=changes),
+        [
+            (
+                'kitchen',
+                {
+                    1: (ComfortWindow(weekday=1, start=time(6, 30), end=time(23, 30)),),
+                    5: (ComfortWindow(weekday=5, start=time(6, 30), end=time(23, 30)),),
+                },
+            ),
+        ],
+        [(changes, NOW)],
+    )
+
+
+def test_day_without_comfort_copied_clears_the_other_days(
+    f_use_case: CopyComfortDayUseCase,
+    f_windows: ComfortWindowStoreStub,
+) -> None:
+    f_use_case.execute(CopyComfortDayInputDTO(zone='kitchen', weekday=2, to_weekdays=(0, 3), now=NOW))
+
+    assert f_windows.replaced == [('kitchen', {0: ()})]
+
+
+@pytest.mark.parametrize('to_weekdays', [(0,), ()], ids=['onto_itself', 'nowhere'])
+def test_day_copied_onto_itself_or_nowhere_changes_nothing(
+    f_use_case: CopyComfortDayUseCase,
+    f_windows: ComfortWindowStoreStub,
+    f_recorder: SettingsRecorderStub,
+    to_weekdays: tuple[int, ...],
+) -> None:
+    output = f_use_case.execute(CopyComfortDayInputDTO(zone='kitchen', weekday=0, to_weekdays=to_weekdays, now=NOW))
+
+    assert (output, f_windows.replaced, f_recorder.records) == (
+        CopyComfortDayOutputDTO(zone='kitchen', changes=()),
+        [],
+        [],
+    )
+
+
+def test_day_with_a_window_off_the_grid_is_not_copied(f_off_grid_use_case: CopyComfortDayUseCase) -> None:
+    with pytest.raises(SettingsRejectedError) as raised:
+        f_off_grid_use_case.execute(CopyComfortDayInputDTO(zone='kitchen', weekday=0, to_weekdays=(1,), now=NOW))
+
+    assert raised.value.problems == (SettingProblem(field='end', code='off_grid'),)
+
+
+def test_day_of_an_unknown_zone_raises(f_use_case: CopyComfortDayUseCase) -> None:
+    with pytest.raises(ZoneNotFoundError):
+        f_use_case.execute(CopyComfortDayInputDTO(zone='attic', weekday=0, to_weekdays=(1,), now=NOW))
