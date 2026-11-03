@@ -28,6 +28,7 @@ POSTED = {
     'second_floor_guard_threshold': '18.5',
     'second_floor_guard_hysteresis': '0.50',
 }
+BELOW_MIN_BAND = 'Не может быть меньше минимального зазора, иначе обогрев остановится выше цели'
 
 
 @pytest.fixture
@@ -118,11 +119,12 @@ def test_refused_climate_setting_is_explained_at_its_field(
     content = response.content.decode()
     assert (
         response.status_code,
-        'Вне допустимого диапазона' in content,
+        response.context['climate_form'].errors,
+        '<span class="field-error">Вне допустимого диапазона</span>' in content,
         'name="preheat_lead_cap_minutes" value="210"' in content,
         m_rejecting_update_use_case.init.call_count,
         m_settings_use_case.init.call_count,
-    ) == (200, True, True, 1, 1)
+    ) == (200, {'preheat_lead_cap_minutes': ['Вне допустимого диапазона']}, True, True, 1, 1)
 
 
 def test_climate_setting_out_of_range_is_refused_before_the_use_case(
@@ -150,11 +152,12 @@ def test_start_offset_below_the_min_band_is_refused_at_its_field_before_the_use_
     content = response.content.decode()
     assert (
         response.status_code,
-        'Не может быть меньше минимального зазора, иначе обогрев остановится выше цели' in content,
+        response.context['climate_form'].errors,
+        f'<span class="field-error">{BELOW_MIN_BAND}</span>' in content,
         'name="air_start_offset" value="0.15"' in content,
         m_update_use_case.init.call_count,
         m_settings_use_case.init.call_count,
-    ) == (200, True, True, 0, 1)
+    ) == (200, {'air_start_offset': [BELOW_MIN_BAND]}, True, True, 0, 1)
 
 
 def test_start_offset_the_use_case_finds_below_the_min_band_is_explained_at_its_field(
@@ -167,11 +170,12 @@ def test_start_offset_the_use_case_finds_below_the_min_band_is_explained_at_its_
     content = response.content.decode()
     assert (
         response.status_code,
-        'Не может быть меньше минимального зазора, иначе обогрев остановится выше цели' in content,
-        'name="air_min_band" value="0.20"' in content,
+        response.context['climate_form'].errors,
+        f'<span class="field-error">{BELOW_MIN_BAND}</span>' in content,
+        'name="air_start_offset" value="0.25"' in content,
         m_band_rejecting_update_use_case.init.call_count,
         m_settings_use_case.init.call_count,
-    ) == (200, True, True, 1, 1)
+    ) == (200, {'air_start_offset': [BELOW_MIN_BAND]}, True, True, 1, 1)
 
 
 def test_saving_climate_settings_requires_login(f_anonymous_client: Client, m_update_use_case: MagicMock) -> None:
