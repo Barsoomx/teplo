@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.services.write_gate import ZoneWriteGate
-from apps.core.stubs import MonotonicClockStub
+from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.devices.domain.errors import PlugNotSwitchableError
 from apps.devices.domain.readings import PlugState
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
@@ -61,7 +61,7 @@ def f_other_plug() -> SwitchablePlugStub:
 
 @pytest.fixture
 def writes() -> ZoneWriteGate:
-    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0), wall_clock=WallClockStub(now=NOW))
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.write_gate import ZoneWriteGate
-from apps.core.stubs import MonotonicClockStub
+from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
 from apps.power.services.zone_switch import ThermostatZoneSwitch
@@ -48,13 +48,13 @@ def unreachable_thermostat() -> FloorThermostatStub:
 
 
 @pytest.fixture
-def f_clock() -> MonotonicClockStub:
+def clock() -> MonotonicClockStub:
     return MonotonicClockStub(now=START)
 
 
 @pytest.fixture
-def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock)
+def f_writes(clock: MonotonicClockStub) -> ZoneWriteGate:
+    return ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=NOW))
 
 
 @pytest.fixture

@@ -5,6 +5,7 @@ import pytest
 from apps.climate.domain.write_guard import WriteSlot, slot_free, write_allowed
 
 NOW = datetime(2026, 10, 29, 6, 0, tzinfo=UTC)
+CURRENT = NOW + timedelta(seconds=30)
 MOMENT = 5000.0
 
 
@@ -38,7 +39,7 @@ def test_slot_nobody_took_since_the_start_follows_the_stamp_the_caller_read(
     stamped_at: datetime | None,
     expected: bool,
 ) -> None:
-    assert slot_free(None, stamped_at=stamped_at, now=NOW, moment=MOMENT) is expected
+    assert slot_free(None, stamped_at=stamped_at, now=NOW, current=CURRENT, moment=MOMENT) is expected
 
 
 @pytest.mark.parametrize(
@@ -46,11 +47,16 @@ def test_slot_nobody_took_since_the_start_follows_the_stamp_the_caller_read(
     [
         (WriteSlot(at=NOW - timedelta(minutes=29), moment=MOMENT - 1740), False),
         (WriteSlot(at=NOW - timedelta(minutes=30), moment=MOMENT - 60), True),
+        (WriteSlot(at=NOW + timedelta(hours=1), moment=MOMENT - 60), True),
     ],
-    ids=['within_thirty_minutes_of_the_stamp', 'thirty_minutes_after_the_stamp_whatever_the_monotonic_clock'],
+    ids=[
+        'within_thirty_minutes_of_the_stamp',
+        'thirty_minutes_after_the_stamp_whatever_the_monotonic_clock',
+        'stamped_later_than_the_clock_reads_since_it_was_set_back',
+    ],
 )
 def test_slot_whose_stamp_the_caller_read_follows_that_stamp_as_before(slot: WriteSlot, expected: bool) -> None:
-    assert slot_free(slot, stamped_at=slot.at, now=NOW, moment=MOMENT) is expected
+    assert slot_free(slot, stamped_at=slot.at, now=NOW, current=CURRENT, moment=MOMENT) is expected
 
 
 @pytest.mark.parametrize(
@@ -73,4 +79,4 @@ def test_slot_the_caller_has_not_seen_waits_thirty_minutes_on_the_monotonic_cloc
     stamped_at: datetime | None,
     expected: bool,
 ) -> None:
-    assert slot_free(slot, stamped_at=stamped_at, now=NOW, moment=MOMENT) is expected
+    assert slot_free(slot, stamped_at=stamped_at, now=NOW, current=CURRENT, moment=MOMENT) is expected

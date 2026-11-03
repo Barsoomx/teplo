@@ -3,24 +3,28 @@ import time
 from collections.abc import Callable
 from datetime import datetime
 
+from django.utils import timezone
+
 from apps.climate.domain.write_guard import WriteReservation, WriteSlot, slot_free
 
 
 class ZoneWriteGate:
-    def __init__(self, clock: Callable[[], float]) -> None:
+    def __init__(self, clock: Callable[[], float], wall_clock: Callable[[], datetime]) -> None:
         self._clock = clock
+        self._wall_clock = wall_clock
         self._slots: dict[str, WriteSlot] = {}
         self._lock = threading.Lock()
 
     @classmethod
     def init(cls) -> 'ZoneWriteGate':
-        return cls(clock=time.monotonic)
+        return cls(clock=time.monotonic, wall_clock=timezone.now)
 
     def reserve(self, zone: str, at: datetime, *, stamped_at: datetime | None) -> WriteReservation | None:
         with self._lock:
             moment = self._clock()
             previous = self._slots.get(zone)
-            if not slot_free(previous, stamped_at=stamped_at, now=at, moment=moment):
+            current = self._wall_clock()
+            if not slot_free(previous, stamped_at=stamped_at, now=at, current=current, moment=moment):
                 return None
 
             slot = WriteSlot(at=at, moment=moment)

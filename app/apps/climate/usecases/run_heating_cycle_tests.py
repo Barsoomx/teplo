@@ -38,7 +38,7 @@ from apps.climate.usecases.run_heating_cycle import (
     RunHeatingCycleUseCase,
 )
 from apps.core.domain.events import DomainEvent, EventDispatcher
-from apps.core.stubs import MonotonicClockStub
+from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.devices.domain.capabilities import FloorThermostat
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
@@ -253,10 +253,14 @@ def _use_case(
         provider=ThermostatProviderStub(thermostats=thermostats),
         book=book,
         gate=LoadGateStub(held=frozenset(), gated=frozenset(), answers={}) if gate is None else gate,
-        writes=ZoneWriteGate(clock=MonotonicClockStub(now=0.0)) if writes is None else writes,
+        writes=_write_gate(MonotonicClockStub(now=0.0)) if writes is None else writes,
         dry_run=dry_run,
         dispatcher=dispatcher,
     )
+
+
+def _write_gate(clock: MonotonicClockStub) -> ZoneWriteGate:
+    return ZoneWriteGate(clock=clock, wall_clock=WallClockStub(now=MORNING))
 
 
 def _cycle(
@@ -2709,7 +2713,7 @@ def f_kitchen_shed_while_the_third_clamp_is_silent(
     DeviceFactory.create(slug=GUARD_METER, kind=DeviceKind.PHASE_METER, driver=DeviceDriver.ESPHOME_PHASE_METER)
     store.record_state(KITCHEN, _state('28.0', heating=True))
     meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=UNAVAILABLE_AFTER, clock=clock)
-    writes = ZoneWriteGate(clock=clock)
+    writes = _write_gate(clock)
     zone_switch = ThermostatZoneSwitch(
         stamps=ZoneRepository(),
         thermostats=ThermostatProviderStub(thermostats={KITCHEN: f_thermostat}),
@@ -3113,7 +3117,7 @@ def test_zone_shed_while_the_cycle_writes_another_is_held_from_its_turn(
 
 @pytest.fixture
 def write_gate(clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=clock)
+    return _write_gate(clock)
 
 
 @pytest.fixture
@@ -3132,7 +3136,7 @@ def f_gated_house(
     store.record_state(KITCHEN, _state('22.0'))
 
     def cycle() -> RunHeatingCycleUseCase:
-        writes = write_gate if one_gate else ZoneWriteGate(clock=clock)
+        writes = write_gate if one_gate else _write_gate(clock)
         return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, writes=writes)
 
     return GatedHouse(

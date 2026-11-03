@@ -5,7 +5,7 @@ import pytest
 
 from apps.climate.domain.write_guard import WriteReservation, WriteSlot
 from apps.climate.services.write_gate import ZoneWriteGate
-from apps.core.stubs import MonotonicClockStub
+from apps.core.stubs import MonotonicClockStub, WallClockStub
 
 NOW = datetime(2026, 11, 3, 7, 0, tzinfo=UTC)
 START = 1000.0
@@ -32,8 +32,13 @@ def f_clock() -> MonotonicClockStub:
 
 
 @pytest.fixture
-def f_gate(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock)
+def f_wall_clock() -> WallClockStub:
+    return WallClockStub(now=NOW)
+
+
+@pytest.fixture
+def f_gate(f_clock: MonotonicClockStub, f_wall_clock: WallClockStub) -> ZoneWriteGate:
+    return ZoneWriteGate(clock=f_clock, wall_clock=f_wall_clock)
 
 
 @pytest.fixture
@@ -122,6 +127,29 @@ def test_writer_that_read_the_stamp_of_the_slot_waits_for_it_on_that_stamp_as_be
     reservation = f_gate.reserve('kitchen', NOW + later, stamped_at=NOW)
 
     assert (reservation is not None) is allowed
+
+
+@pytest.mark.usefixtures('f_reservation')
+def test_writer_that_took_its_time_before_the_slot_was_reserved_waits_for_it_on_the_monotonic_clock(
+    f_gate: ZoneWriteGate,
+) -> None:
+    assert f_gate.reserve('kitchen', NOW - timedelta(seconds=5), stamped_at=NOW) is None
+
+
+@pytest.mark.usefixtures('f_reservation')
+def test_writer_reads_a_stamp_later_than_a_clock_set_back_as_before(
+    f_gate: ZoneWriteGate,
+    f_clock: MonotonicClockStub,
+    f_wall_clock: WallClockStub,
+) -> None:
+    f_clock.advance(60)
+    f_wall_clock.advance(timedelta(minutes=-59))
+
+    assert f_gate.reserve('kitchen', NOW - timedelta(minutes=59), stamped_at=NOW) == WriteReservation(
+        zone='kitchen',
+        slot=WriteSlot(at=NOW - timedelta(minutes=59), moment=START + 60),
+        previous=WRITTEN,
+    )
 
 
 @pytest.mark.usefixtures('f_reservation')

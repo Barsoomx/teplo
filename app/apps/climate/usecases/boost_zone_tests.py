@@ -11,7 +11,7 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.write_gate import ZoneWriteGate
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO, BoostZoneUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
-from apps.core.stubs import MonotonicClockStub
+from apps.core.stubs import MonotonicClockStub, WallClockStub
 
 pytestmark = pytest.mark.django_db
 
@@ -26,7 +26,7 @@ def f_zone() -> Zone:
 
 @pytest.fixture
 def f_writes() -> ZoneWriteGate:
-    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0))
+    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0), wall_clock=WallClockStub(now=NOW))
     writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None)
     return writes
 
