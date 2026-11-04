@@ -11,6 +11,7 @@ WHOLE_NUMBER = re.compile(r'[0-9]+')
 FLOOR_NUMBER = re.compile(r'[1-9]')
 PREPOSITIONS = frozenset({'в', 'во', 'на', 'у'})
 GUESTS_LEFT = frozenset({'все', 'стоп', 'нет', 'уехали', 'выкл'})
+NIGHTS_WORD = 'ноч'
 FLOOR_ORDINALS = (('перв', 1), ('втор', 2), ('трет', 3))
 FLOOR_WORD = 'этаж'
 STATUS_WORD = 'статус'
@@ -99,11 +100,12 @@ def _guests(words: Sequence[str]) -> OwnerCommand:
     if not words:
         return OwnerCommand(kind=CommandKind.GUESTS, nights=1)
 
-    if words[0] in GUESTS_LEFT:
+    first, *rest = words
+    if first in GUESTS_LEFT and not rest:
         return OwnerCommand(kind=CommandKind.GUESTS_OFF)
 
-    if WHOLE_NUMBER.fullmatch(words[0]):
-        return OwnerCommand(kind=CommandKind.GUESTS, nights=int(words[0]))
+    if WHOLE_NUMBER.fullmatch(first) and len(rest) <= 1 and all(word.startswith(NIGHTS_WORD) for word in rest):
+        return OwnerCommand(kind=CommandKind.GUESTS, nights=int(first))
 
     return OwnerCommand(kind=CommandKind.HELP)
 
