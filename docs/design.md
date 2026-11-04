@@ -222,7 +222,7 @@ The owner switches the gates in the admin. A zone's `air_control_live` is ticked
 
 ### Schedules and targets
 
-A room holds the comfort: its weekly comfort windows and its comfort and night air targets (`RoomClimate`) apply to all its zones; each period selects a mode with a target. Each zone keeps its own pre-heat lead and optimal start, so the open space has one schedule and one target while each of its floors warms up on its own lead. A zone without a room, or whose room has no room climate, keeps the windows and targets stored on the zone. The owner edits a room's comfort windows on the panel's schedule page and its targets on the room's card of the settings page (section 10).
+A room holds the comfort: its weekly comfort windows and its comfort and night air targets (`RoomClimate`) apply to all its zones; each period selects a mode with a target. Each zone keeps its own pre-heat lead and optimal start, so the open space has one schedule and one target while each of its floors warms up on its own lead. A zone without a room, or whose room has no room climate, keeps the windows and targets stored on the zone. A room's windows are rows of its own: the site data copied them from the zone that held them, and every zone keeps its own rows, unread while its room holds the comfort, so deleting a zone never takes the room's schedule with it, and a release that predates rooms, editing a zone's windows on the new schema, never changes the room's. The owner edits a room's comfort windows on the panel's schedule page and its targets on the room's card of the settings page (section 10).
 
 | Mode | Air target | Default period |
 |---|---|---|

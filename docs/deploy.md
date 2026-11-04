@@ -321,7 +321,7 @@ Rolling back past the room comfort takes one step. `migrate climate 0009` undoes
 ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate climate 0009'
 ```
 
-Rolling back past the floors and rooms takes one step: undo the site's placement, then the room columns and the floor and room tables. `migrate climate 0008` also undoes the site's `0008_house`, which names «Воздух: спальня» «Воздух: 2 этаж» again and keeps the oven, dishwasher and washing machine plugs:
+Rolling back past the floors and rooms takes one step: undo the site's placement, then the room columns and the floor and room tables. `migrate climate 0008` also undoes the site's `0008_house`, which names «Воздух: спальня» «Воздух: 2 этаж» again, keeps the oven, dishwasher and washing machine plugs and deletes the site's floors with every room on them, rooms added or renamed in the admin included:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; manage="/opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py"; $manage migrate climate 0008 && $manage migrate devices 0002 && $manage migrate house zero'

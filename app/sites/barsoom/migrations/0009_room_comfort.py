@@ -47,7 +47,12 @@ def move_comfort(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -> N
             comfort_target=zone.comfort_air_target,
             setback_target=min(zone.night_air_target, zone.comfort_air_target),
         )
-        period_model.objects.filter(zone=zone).update(room_climate=climate)
+        period_model.objects.bulk_create(
+            [
+                period_model(room_climate=climate, zone=None, weekday=period.weekday, start=period.start, end=period.end)
+                for period in period_model.objects.filter(zone=zone)
+            ],
+        )
     if BEDROOM in rooms:
         climate_model.objects.create(room=rooms[BEDROOM], **_bedroom(apps))
     if OFFICE in rooms:

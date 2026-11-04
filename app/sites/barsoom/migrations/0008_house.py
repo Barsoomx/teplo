@@ -79,8 +79,11 @@ def unplace_house(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -> 
     device_model.objects.filter(slug=BEDROOM_AIR, name=BEDROOM_AIR_NAME).update(name=BEDROOM_AIR_OLD_NAME)
     apps.get_model('climate', 'Zone').objects.update(room=None)
     device_model.objects.update(room=None)
-    apps.get_model('house', 'Room').objects.filter(slug__in=[room[0] for room in ROOMS]).delete()
-    apps.get_model('house', 'Floor').objects.filter(slug__in=[floor[0] for floor in FLOORS]).delete()
+    floors = [floor[0] for floor in FLOORS]
+    room_model = apps.get_model('house', 'Room')
+    room_model.objects.filter(floor__slug__in=floors).delete()
+    room_model.objects.filter(slug__in=[room[0] for room in ROOMS]).delete()
+    apps.get_model('house', 'Floor').objects.filter(slug__in=floors).delete()
 
 
 class Migration(migrations.Migration):
