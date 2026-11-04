@@ -190,6 +190,7 @@ Heat your own house:
 | Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | regulation in 3, in dry-run until switched on per zone |
 | Smart plugs | Tuya Wi-Fi plugs with power metering | Tuya local protocol 3.5 | switching in 4, in dry-run until switched on per load |
 | Convector | Tuya Wi-Fi heater (tested: Thermex Frame 2000E) | Tuya local protocol 3.5 | house model block B, in dry-run until its gates are switched on |
+| Presence | the office computer now, HLK-LD2410C mmWave radars on the air nodes later | MQTT like an ESPHome node | house model block C, only watched until a room's `follows occupancy` is ticked |
 | Heat pump, air conditioner, EV charger | any | driver stub | later |
 
 The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM); teplo takes about 70 MB of it.
@@ -205,6 +206,7 @@ The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM
 - [ ] **Smart plugs:** water heaters as sheddable loads, shipped in dry-run with load management; washing machine monitoring.
 - [x] **House model, block A:** floors and rooms, comfort windows, targets and backup heat per room, guests, 2-hour room overrides and commands from the Telegram chat.
 - [ ] **House model, block B:** an estimate of the unclamped phase, the fireplace kept out of what the floors learn, a 2-hour hold for a floor changed on its thermostat, and the office convector driven from the office's targets and shed as a load. Shipped behind gates switched on in the admin.
+- [ ] **House model, block C:** each room's occupancy from the presence sources in it, the office computer first and radars later, shown and journaled, and followed by the heat sources of a room without a floor once its gate is ticked; then the bedroom air conditioner.
 - [x] **Schedule and settings pages:** comfort windows per weekday with the warm-up they lead to, copied by day or by room; room air targets, zone setpoints, climate and load thresholds and the shedding order. Every change is journaled; the gates stay in the admin.
 
 Each stage first runs in dry-run, journaling the decisions it would make, before it is allowed to switch devices.

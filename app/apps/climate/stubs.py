@@ -23,6 +23,7 @@ from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.house.domain.errors import RoomNotFoundError
+from apps.presence.domain.occupancy import Occupancy
 
 ZoneStamp = tuple[str, str, datetime]
 
@@ -418,6 +419,14 @@ class RoomOverrideStoreStub:
     def save_override(self, slug: str, override: RoomOverride | None) -> None:
         self._saved.append((slug, override))
         self._rooms = [replace(room, override=override) if room.slug == slug else room for room in self._rooms]
+
+
+class OccupancyStoreStub:
+    def __init__(self, occupancy: dict[str, Occupancy]) -> None:
+        self._occupancy = occupancy
+
+    def snapshot(self) -> dict[str, Occupancy]:
+        return dict(self._occupancy)
 
 
 class GuestsStoreStub:

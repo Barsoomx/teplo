@@ -6,6 +6,7 @@ from apps.devices.domain.capabilities import (
     ControllableClimateUnit,
     FloorThermostat,
     MeteredPlug,
+    PresenceSensor,
     SwitchablePlug,
 )
 from apps.devices.domain.errors import (
@@ -14,7 +15,7 @@ from apps.devices.domain.errors import (
     DriverNotImplementedError,
     PlugNotSwitchableError,
 )
-from apps.devices.domain.readings import ClimateUnitState, PlugState, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import ClimateUnitState, PlugState, PresenceReading, ThermostatMode, ThermostatState
 
 
 class FloorThermostatStub:
@@ -241,6 +242,32 @@ class ControllableClimateUnitProviderStub:
             raise ClimateUnitNotControllableError(slug, 'no controlling driver')
 
         return self._units[slug]
+
+
+class PresenceSensorStub:
+    def __init__(self, reading: PresenceReading | None, error: DomainError | None = None) -> None:
+        self._reading = reading
+        self._error = error
+
+    def read_presence(self) -> PresenceReading:
+        if self._error is not None:
+            raise self._error
+
+        if self._reading is None:
+            raise DeviceUnavailableError('no presence configured')
+
+        return self._reading
+
+
+class PresenceSensorProviderStub:
+    def __init__(self, sensors: dict[str, PresenceSensor]) -> None:
+        self._sensors = sensors
+
+    def presence_sensor(self, slug: str) -> PresenceSensor:
+        if slug not in self._sensors:
+            raise DriverNotImplementedError(slug)
+
+        return self._sensors[slug]
 
 
 class MqttReceiverStub:

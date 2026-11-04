@@ -1,10 +1,16 @@
 from decimal import Decimal
 
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.modes import CommandSource
-from apps.climate.domain.room_climate import BACKUP_MARGIN
+from apps.climate.domain.room_climate import (
+    BACKUP_MARGIN,
+    VACANT_AFTER_MINUTES_DEFAULT,
+    VACANT_AFTER_MINUTES_MAX,
+    VACANT_AFTER_MINUTES_MIN,
+)
 from apps.climate.models.climate_settings import OFFSET_VALIDATORS, TEMPERATURE_SENSORS
 from apps.climate.models.zone import SETPOINT_VALIDATORS
 
@@ -14,6 +20,13 @@ SETBACK_ABOVE_COMFORT = gettext_lazy('The night target must not be above the com
 BACKUP_NOT_BELOW_SETBACK = gettext_lazy(
     'Backup heat must turn on at least 0.5° below the night target, or it fights the night target',
 )
+FOLLOWS_OCCUPANCY_HELP = gettext_lazy(
+    'While on and the room’s occupancy is known, the heat sources teplo commands hold the comfort target while '
+    'someone is here and the night target once nobody has been here for the minutes below, inside and outside the '
+    'comfort windows; an override and staying guests still win, and a room with a heated floor never follows '
+    'occupancy. While off, occupancy is only shown and journaled',
+)
+VACANT_AFTER_HELP = gettext_lazy('Minutes without anyone before the room counts as empty')
 
 
 class RoomClimate(models.Model):
@@ -73,6 +86,13 @@ class RoomClimate(models.Model):
         blank=True,
         default='',
         db_default='',
+    )
+    follows_occupancy = models.BooleanField(default=False, db_default=False, help_text=FOLLOWS_OCCUPANCY_HELP)
+    vacant_after_minutes = models.PositiveSmallIntegerField(
+        default=VACANT_AFTER_MINUTES_DEFAULT,
+        db_default=VACANT_AFTER_MINUTES_DEFAULT,
+        validators=[MinValueValidator(VACANT_AFTER_MINUTES_MIN), MaxValueValidator(VACANT_AFTER_MINUTES_MAX)],
+        help_text=VACANT_AFTER_HELP,
     )
     updated_at = models.DateTimeField(auto_now=True)
 

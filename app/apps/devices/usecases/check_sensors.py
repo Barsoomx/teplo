@@ -9,6 +9,7 @@ from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import phase_meter_store
+from apps.devices.services.presence_store import presence_store
 from apps.devices.services.state_store import temperature_state_store
 
 
@@ -60,6 +61,7 @@ class CheckSensorsUseCase(BaseUseCase[CheckSensorsInputDTO, CheckSensorsOutputDT
             stores={
                 DeviceKind.TEMPERATURE_SENSOR: temperature_state_store,
                 DeviceKind.PHASE_METER: phase_meter_store,
+                DeviceKind.PRESENCE_SENSOR: presence_store,
             },
         )
 

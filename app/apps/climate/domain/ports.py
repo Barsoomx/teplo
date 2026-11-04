@@ -22,6 +22,7 @@ from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.write_guard import WriteReservation
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
+from apps.presence.domain.occupancy import Occupancy
 
 
 class ZoneStore(Protocol):
@@ -211,6 +212,10 @@ class RoomClimateConfigStore(Protocol):
     def config_for_update(self, slug: str) -> RoomClimateConfigRecord: ...
 
     def save_config(self, slug: str, config: RoomClimateConfig, fields: Collection[str]) -> None: ...
+
+
+class OccupancyStore(Protocol):
+    def snapshot(self) -> Mapping[str, Occupancy]: ...
 
 
 class ComfortWindowStore(Protocol):

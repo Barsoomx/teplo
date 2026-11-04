@@ -11,8 +11,8 @@ from apps.climate.domain.drive import PendingWrite, pending_write
 from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.learning import ZoneLearningRecord
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
-from apps.climate.domain.room_climate import RoomClimateSettings
-from apps.climate.domain.room_intent import RoomIntent, RoomIntents, guests_active
+from apps.climate.domain.room_climate import VACANT_AFTER_MINUTES_DEFAULT, RoomClimateSettings
+from apps.climate.domain.room_intent import RoomIntent, RoomIntents, guests_active, occupancy_holds
 from apps.climate.domain.room_status import SourceStatus
 from apps.climate.domain.schedule import ScheduleTransition, next_transition
 from apps.climate.domain.zone import ZoneSettings
@@ -27,7 +27,9 @@ from apps.climate.services.source_status import SourceStatusReader
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
+from apps.devices.drivers.esphome_protocol import NODE_PREFIX
 from apps.devices.repositories.device import DeviceRepository
+from apps.devices.services.presence_store import PresenceStore, presence_store
 from apps.devices.services.state_store import (
     PlugStateStore,
     TemperatureStateStore,
@@ -49,6 +51,7 @@ from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.repositories.outage import OutageRepository
 from apps.power.services.guard_book import GuardBook, guard_book
 from apps.power.services.outage_overloads import OutageOverloads
+from apps.presence.domain.occupancy import Occupancy
 from apps.system.domain.clock import ClockStatus, ClockTrustSource
 from apps.system.services.clock_trust import clock_trust_source
 
@@ -181,6 +184,28 @@ class SourceOverview:
 
 
 @dataclass(frozen=True, kw_only=True)
+class PresenceOverview:
+    slug: str
+    name: str
+    room: str | None
+    node: str
+    available: bool
+    present: bool | None
+    age_seconds: int | None
+    seen_age_seconds: int | None
+    error_code: str | None
+    error: str | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class OccupancyOverview:
+    state: Occupancy
+    follows: bool
+    sources: tuple[PresenceOverview, ...]
+    vacant_after_minutes: int = VACANT_AFTER_MINUTES_DEFAULT
+
+
+@dataclass(frozen=True, kw_only=True)
 class RoomOverview:
     slug: str
     name: str
@@ -194,10 +219,13 @@ class RoomOverview:
     adjustable: bool = False
     guest_room: bool = False
     sources: tuple[SourceOverview, ...] = ()
+    occupancy: OccupancyOverview | None = None
+    follows_occupancy: bool = False
+    back_to_occupancy: bool = False
 
     @property
     def shown(self) -> bool:
-        return bool(self.zones or self.sensors or self.plugs or self.sources)
+        return bool(self.zones or self.sensors or self.plugs or self.sources or self.occupancy)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -228,6 +256,7 @@ class GetPanelOverviewOutputDTO:
     guests_until: datetime | None = None
     guest_rooms: tuple[str, ...] = ()
     sources: tuple[SourceOverview, ...] = ()
+    presence: tuple[PresenceOverview, ...] = ()
 
 
 class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOverviewOutputDTO]):
@@ -246,6 +275,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         thermostat_store: ThermostatStateStore,
         plug_store: PlugStateStore,
         temperature_store: TemperatureStateStore,
+        presence_store: PresenceStore,
         book: ControlBook,
         guard_book: GuardBook,
         sources: SourceStatusReader,
@@ -266,6 +296,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self._thermostat_store = thermostat_store
         self._plug_store = plug_store
         self._temperature_store = temperature_store
+        self._presence_store = presence_store
         self._book = book
         self._guard_book = guard_book
         self._sources = sources
@@ -288,6 +319,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             thermostat_store=thermostat_state_store,
             plug_store=plug_state_store,
             temperature_store=temperature_state_store,
+            presence_store=presence_store,
             book=control_book,
             guard_book=guard_book,
             sources=SourceStatusReader.init(),
@@ -324,6 +356,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             for zone in zones
         )
         plugs = tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG)
+        presence = tuple(self._presence(device) for device in devices if device.kind == DeviceKind.PRESENCE_SENSOR)
         zone_air = {zone.air_sensor_slug for zone in zones}
         room_sensors = tuple(sensor for slug, sensor in sensors.items() if slug not in zone_air)
         sources = _room_sources(intents, self._book.burning_rooms(), self._sources.statuses(intents))
@@ -335,6 +368,8 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             intents,
             self._comforts(intents.rooms, zones),
             sources,
+            presence,
+            guests.until,
         )
         placed = frozenset(room.slug for floor in floors for room in floor.rooms)
         return GetPanelOverviewOutputDTO(
@@ -358,6 +393,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             guests_until=guests.until if guests_active(guests.until, now) else None,
             guest_rooms=tuple(room.name for room in intents.rooms if room.guest_room),
             sources=tuple(source for floor in floors for room in floor.rooms for source in sources.get(room.slug, ())),
+            presence=presence,
         )
 
     def _floors(
@@ -369,6 +405,8 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         intents: RoomIntents,
         comforts: dict[str, RoomComfortOverview],
         sources: Mapping[str, tuple[SourceOverview, ...]],
+        presence: tuple[PresenceOverview, ...],
+        guests_until: datetime | None,
     ) -> tuple[FloorOverview, ...]:
         climates = {room.slug: room for room in intents.rooms}
         return tuple(
@@ -385,9 +423,11 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                             devices,
                             comforts.get(room.slug),
                             sources.get(room.slug, ()),
+                            _occupancy(room.slug, presence, intents, climates.get(room.slug)),
                         ),
                         climates.get(room.slug),
-                        intents.of(room.slug),
+                        intents,
+                        guests_until,
                     )
                     for room in floor.rooms
                 ),
@@ -567,6 +607,21 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             room=device.room_slug,
         )
 
+    def _presence(self, device: DeviceSettings) -> PresenceOverview:
+        snapshot = self._presence_store.snapshot(device.slug)
+        return PresenceOverview(
+            slug=device.slug,
+            name=device.name,
+            room=device.room_slug,
+            node=f'{NODE_PREFIX}{device.node or device.slug}',
+            available=snapshot.available,
+            present=snapshot.present,
+            age_seconds=_seconds(snapshot.age),
+            seen_age_seconds=_seconds(snapshot.seen_age),
+            error_code=snapshot.error_code,
+            error=snapshot.error,
+        )
+
     def _sensor(self, device: DeviceSettings) -> SensorOverview:
         snapshot = self._temperature_store.snapshot(device.slug)
         reading = snapshot.state
@@ -592,6 +647,7 @@ def _room(
     devices: list[DeviceSettings],
     comfort: RoomComfortOverview | None,
     sources: tuple[SourceOverview, ...],
+    occupancy: OccupancyOverview | None,
 ) -> RoomOverview:
     return RoomOverview(
         slug=room.slug,
@@ -603,7 +659,30 @@ def _room(
         devices=tuple(sorted(device.slug for device in devices if device.room_slug == room.slug)),
         comfort=comfort,
         sources=sources,
+        occupancy=occupancy,
     )
+
+
+def _occupancy(
+    room: str,
+    presence: tuple[PresenceOverview, ...],
+    intents: RoomIntents,
+    climate: RoomClimateSettings | None,
+) -> OccupancyOverview | None:
+    sources = tuple(source for source in presence if source.room == room)
+    if not sources:
+        return None
+
+    return OccupancyOverview(
+        state=intents.occupancy.get(room, Occupancy.UNKNOWN),
+        follows=_follows_occupancy(climate),
+        sources=sources,
+        vacant_after_minutes=VACANT_AFTER_MINUTES_DEFAULT if climate is None else climate.vacant_after_minutes,
+    )
+
+
+def _follows_occupancy(climate: RoomClimateSettings | None) -> bool:
+    return climate is not None and climate.follows_occupancy and not climate.has_floor
 
 
 def _room_sources(
@@ -664,11 +743,28 @@ def _source_drawing(source: SourceOverview) -> bool | None:
     return source.on
 
 
-def _with_climate(room: RoomOverview, climate: RoomClimateSettings | None, intent: RoomIntent | None) -> RoomOverview:
+def _with_climate(
+    room: RoomOverview,
+    climate: RoomClimateSettings | None,
+    intents: RoomIntents,
+    guests_until: datetime | None,
+) -> RoomOverview:
     if climate is None:
         return room
 
-    return replace(room, intent=intent, adjustable=climate.adjustable, guest_room=climate.guest_room)
+    occupancy = intents.occupancy.get(room.slug, Occupancy.UNKNOWN)
+    return replace(
+        room,
+        intent=intents.of(room.slug),
+        adjustable=climate.adjustable,
+        guest_room=climate.guest_room,
+        follows_occupancy=_follows_occupancy(climate),
+        back_to_occupancy=occupancy_holds(climate, occupancy, guests_until=guests_until, now=intents.now),
+    )
+
+
+def _seconds(age: timedelta | None) -> int | None:
+    return None if age is None else int(age.total_seconds())
 
 
 def _air_sensor(zone: ZoneSettings, sensors: dict[str, SensorOverview]) -> SensorOverview | None:

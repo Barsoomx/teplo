@@ -31,7 +31,7 @@ from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.source_status import SourceStatusReader
-from apps.climate.stubs import SourceLoadGateStub
+from apps.climate.stubs import OccupancyStoreStub, SourceLoadGateStub
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import (
@@ -45,6 +45,7 @@ from apps.devices.domain.readings import (
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
+from apps.devices.services.presence_store import PresenceStore
 from apps.devices.services.state_store import (
     ClimateUnitStateStore,
     PlugStateStore,
@@ -58,7 +59,9 @@ from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
     GetPanelOverviewUseCase,
     LoadOverview,
+    OccupancyOverview,
     PlugOverview,
+    PresenceOverview,
     RoomComfortOverview,
     SensorOverview,
     SourceOverview,
@@ -83,6 +86,7 @@ from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.repositories.outage import OutageRepository
 from apps.power.services.guard_book import GuardBook
 from apps.power.services.outage_overloads import OutageOverloads
+from apps.presence.domain.occupancy import Occupancy
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 from apps.system.stubs import ClockStub
 from apps.telemetry.factories import JournalEntryFactory
@@ -171,20 +175,27 @@ def _source_statuses(units: ClimateUnitStateStore | None = None) -> SourceStatus
     )
 
 
-def _intents(book: ControlBook) -> RoomIntentReader:
+def _intents(book: ControlBook, occupancy: dict[str, Occupancy] | None = None) -> RoomIntentReader:
     return RoomIntentReader(
         rooms=RoomClimateRepository(),
         guests=ClimateSettingsRepository(),
         fireplaces=HeatSourceRepository(),
         gates=ClimateSettingsRepository(),
         book=book,
+        occupancy=OccupancyStoreStub(occupancy={} if occupancy is None else occupancy),
     )
 
 
-def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPanelOverviewUseCase:
+def _use_case(
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    *,
+    presence: PresenceStore | None = None,
+    occupancy: dict[str, Occupancy] | None = None,
+) -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
-        intents=_intents(book),
+        intents=_intents(book, occupancy),
         devices=DeviceRepository(),
         house=HouseRepository(),
         climate_settings=ClimateSettingsRepository(),
@@ -196,6 +207,7 @@ def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPane
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=temperatures,
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)) if presence is None else presence,
         book=book,
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -234,6 +246,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -262,6 +275,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=store,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -293,6 +307,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -324,6 +339,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -350,6 +366,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -399,6 +416,7 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=plug_store,
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -473,6 +491,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=store,
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -503,6 +522,7 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -602,6 +622,7 @@ def f_outages_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -718,6 +739,7 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
         thermostat_store=thermostats,
         plug_store=plugs,
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=guard_book,
         sources=_source_statuses(),
@@ -864,11 +886,51 @@ def f_office_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase
         thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=book,
         guard_book=GuardBook(),
         sources=_source_statuses(units),
         clock=ClockStub(trusted=True),
         dry_run=False,
+    )
+
+
+@pytest.fixture
+def f_presence_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
+    upstairs = FloorFactory.create(slug='floor-2', name='2 этаж', level=2)
+    bedroom = RoomFactory.create(slug='bedroom', name='Спальня', floor=upstairs, position=1)
+    office = RoomClimateFactory.create(
+        room=RoomFactory.create(slug='office', name='Кабинет', floor=upstairs, position=2),
+        comfort_target=Decimal('21.5'),
+        setback_target=Decimal('19.0'),
+        follows_occupancy=request.param,
+    )
+    ComfortPeriodFactory.create_batch(7, zone=None, room_climate=office, start=time(13, 0), end=time(23, 45))
+    for slug, name, node, room in (
+        ('pc-office', 'Компьютер: кабинет', '', office.room),
+        ('presence-office', 'Радар: кабинет', 'air-office', office.room),
+        ('presence-bedroom', 'Радар: спальня', '', bedroom),
+    ):
+        DeviceFactory.create(
+            slug=slug,
+            name=name,
+            kind=DeviceKind.PRESENCE_SENSOR,
+            driver=DeviceDriver.ESPHOME_PRESENCE,
+            node=node,
+            room=room,
+        )
+    clock = MonotonicClockStub(now=1000.0)
+    presence = PresenceStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    presence.record('pc-office', present=True, read_at=MORNING)
+    presence.record_failure(
+        'presence-office', error_code='sensor_reading_failed', error='presence: the node reported nan'
+    )
+    clock.advance(30)
+    return _use_case(
+        TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        ControlBook(),
+        presence=presence,
+        occupancy={'office': Occupancy.VACANT},
     )
 
 
@@ -916,6 +978,7 @@ def f_pending_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCas
         thermostat_store=thermostats,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=guard_book,
         sources=_source_statuses(),
@@ -954,6 +1017,7 @@ def f_held_by_hand_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewU
         thermostat_store=thermostats,
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
         sources=_source_statuses(),
@@ -1771,3 +1835,88 @@ def test_overview_counts_the_convector_s_load_drawing_whenever_it_is_on(
     loads = f_office_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).loads
 
     assert [load.state for load in loads] == [state]
+
+
+PC_OFFICE = PresenceOverview(
+    slug='pc-office',
+    name='Компьютер: кабинет',
+    room='office',
+    node='teplo-pc-office',
+    available=True,
+    present=True,
+    age_seconds=30,
+    seen_age_seconds=30,
+    error_code=None,
+    error=None,
+)
+RADAR_OFFICE = PresenceOverview(
+    slug='presence-office',
+    name='Радар: кабинет',
+    room='office',
+    node='teplo-air-office',
+    available=False,
+    present=None,
+    age_seconds=None,
+    seen_age_seconds=None,
+    error_code='sensor_reading_failed',
+    error='presence: the node reported nan',
+)
+RADAR_BEDROOM = PresenceOverview(
+    slug='presence-bedroom',
+    name='Радар: спальня',
+    room='bedroom',
+    node='teplo-presence-bedroom',
+    available=False,
+    present=None,
+    age_seconds=None,
+    seen_age_seconds=None,
+    error_code=None,
+    error=None,
+)
+
+
+@pytest.mark.parametrize('f_presence_use_case', [False], indirect=True)
+def test_overview_lists_the_presence_sources_by_name_with_the_node_they_are_heard_on(
+    f_presence_use_case: GetPanelOverviewUseCase,
+) -> None:
+    overview = f_presence_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert overview.presence == (PC_OFFICE, RADAR_OFFICE, RADAR_BEDROOM)
+
+
+@pytest.mark.parametrize(
+    ('f_presence_use_case', 'follows', 'reason'),
+    [(False, False, IntentReason.SETBACK), (True, True, IntentReason.VACANT)],
+    ids=['watching', 'following'],
+    indirect=['f_presence_use_case'],
+)
+def test_room_with_presence_sources_shows_its_occupancy_and_whether_it_follows_it(
+    f_presence_use_case: GetPanelOverviewUseCase,
+    follows: bool,
+    reason: IntentReason,
+) -> None:
+    overview = f_presence_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    bedroom, office = overview.floors[0].rooms
+    assert (
+        office.occupancy,
+        office.follows_occupancy,
+        office.back_to_occupancy,
+        office.intent.reason if office.intent else None,
+        bedroom.occupancy,
+        bedroom.follows_occupancy,
+        [room.slug for room in overview.floors[0].shown_rooms],
+    ) == (
+        OccupancyOverview(
+            state=Occupancy.VACANT,
+            follows=follows,
+            sources=(PC_OFFICE, RADAR_OFFICE),
+            vacant_after_minutes=20,
+        ),
+        follows,
+        follows,
+        reason,
+        OccupancyOverview(state=Occupancy.UNKNOWN, follows=False, sources=(RADAR_BEDROOM,), vacant_after_minutes=20),
+        False,
+        ['bedroom', 'office'],
+    )

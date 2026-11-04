@@ -7,9 +7,16 @@ from structlog.testing import capture_logs
 from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import Phase, PhaseCurrents, TemperatureReading
-from apps.devices.drivers.esphome_messages import EsphomeMessageHandler, PhaseMeterSink, TemperatureSink
+from apps.devices.drivers.esphome_messages import (
+    EsphomeMessageHandler,
+    NodeDevice,
+    PhaseMeterSink,
+    PresenceSink,
+    TemperatureSink,
+)
 from apps.devices.factories import DeviceFactory
 from apps.devices.services.phase_meter_store import PhaseMeterStore
+from apps.devices.services.presence_store import PresenceSnapshot, PresenceStore
 from apps.devices.services.state_store import TemperatureSnapshot, TemperatureStateStore
 
 pytestmark = pytest.mark.django_db
@@ -19,6 +26,10 @@ KITCHEN_TEMPERATURE = 'teplo/teplo-air-kitchen/sensor/temperature/state'
 KITCHEN_HUMIDITY = 'teplo/teplo-air-kitchen/sensor/humidity/state'
 KITCHEN_STATUS = 'teplo/teplo-air-kitchen/status'
 OUTDOOR_STATUS = 'teplo/teplo-outdoor/status'
+PC_PRESENCE = 'teplo/teplo-pc-office/sensor/presence/state'
+OFFICE_TEMPERATURE = 'teplo/teplo-air-office/sensor/temperature/state'
+OFFICE_PRESENCE = 'teplo/teplo-air-office/sensor/presence/state'
+OFFICE_STATUS = 'teplo/teplo-air-office/status'
 
 
 @pytest.fixture
@@ -42,14 +53,30 @@ def f_phase_store(monotonic: MonotonicClockStub) -> PhaseMeterStore:
 
 
 @pytest.fixture
+def f_presence_store(monotonic: MonotonicClockStub) -> PresenceStore:
+    return PresenceStore(unavailable_after=timedelta(minutes=10), clock=monotonic)
+
+
+@pytest.fixture
 def f_handler(
     f_temperature_store: TemperatureStateStore,
     f_phase_store: PhaseMeterStore,
+    f_presence_store: PresenceStore,
     wall_clock: WallClockStub,
 ) -> EsphomeMessageHandler:
     temperature = TemperatureSink(store=f_temperature_store)
+    presence = PresenceSink(store=f_presence_store)
     return EsphomeMessageHandler(
-        sinks={'air-kitchen': temperature, 'outdoor': temperature, 'phase-meter': PhaseMeterSink(store=f_phase_store)},
+        nodes={
+            'air-kitchen': (NodeDevice(slug='air-kitchen', sink=temperature),),
+            'outdoor': (NodeDevice(slug='outdoor', sink=temperature),),
+            'phase-meter': (NodeDevice(slug='phase-meter', sink=PhaseMeterSink(store=f_phase_store)),),
+            'pc-office': (NodeDevice(slug='pc-office', sink=presence),),
+            'air-office': (
+                NodeDevice(slug='air-office', sink=temperature),
+                NodeDevice(slug='presence-office', sink=presence),
+            ),
+        },
         clock=wall_clock,
     )
 
@@ -100,6 +127,32 @@ def f_routed_handler() -> EsphomeMessageHandler:
     DeviceFactory(slug='air-attic', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.UNSUPPORTED)
     DeviceFactory(slug='thermostat-kitchen')
     return EsphomeMessageHandler.init()
+
+
+@pytest.fixture
+def f_routed_presence_handler() -> EsphomeMessageHandler:
+    DeviceFactory(slug='air-office', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.ESPHOME_TEMPERATURE)
+    DeviceFactory(
+        slug='presence-office',
+        kind=DeviceKind.PRESENCE_SENSOR,
+        driver=DeviceDriver.ESPHOME_PRESENCE,
+        node='air-office',
+    )
+    DeviceFactory(slug='pc-office', kind=DeviceKind.PRESENCE_SENSOR, driver=DeviceDriver.ESPHOME_PRESENCE)
+    return EsphomeMessageHandler.init()
+
+
+@pytest.fixture
+def present_handler(f_handler: EsphomeMessageHandler, monotonic: MonotonicClockStub) -> EsphomeMessageHandler:
+    f_handler.receive(PC_PRESENCE, b'1', retained=False)
+    monotonic.advance(30)
+    return f_handler
+
+
+@pytest.fixture
+def f_presence_disconnected_handler(present_handler: EsphomeMessageHandler) -> EsphomeMessageHandler:
+    present_handler.connection_lost('mqtt connection lost: Unspecified error')
+    return present_handler
 
 
 def test_temperature_becomes_a_reading_stamped_on_arrival(
@@ -384,4 +437,123 @@ def test_init_routes_only_the_esphome_devices(f_routed_handler: EsphomeMessageHa
         {'event': 'esphome_node_online', 'device': 'phase-meter', 'log_level': 'info'},
         {'event': 'esphome_node_unknown', 'node': 'teplo-air-attic', 'log_level': 'info'},
         {'event': 'esphome_node_unknown', 'node': 'teplo-thermostat-kitchen', 'log_level': 'info'},
+    ]
+
+
+def test_presence_report_reaches_the_device_on_its_node(
+    f_handler: EsphomeMessageHandler,
+    f_presence_store: PresenceStore,
+) -> None:
+    f_handler.receive(PC_PRESENCE, b'1', retained=False)
+
+    assert f_presence_store.snapshot('pc-office') == PresenceSnapshot(
+        slug='pc-office',
+        present=True,
+        read_at=NOW,
+        age=timedelta(0),
+        seen_age=timedelta(0),
+        watched_for=timedelta(0),
+        available=True,
+        error_code=None,
+        error=None,
+    )
+
+
+def test_node_of_two_devices_routes_each_reading_to_the_device_that_reads_it(
+    f_handler: EsphomeMessageHandler,
+    f_temperature_store: TemperatureStateStore,
+    f_presence_store: PresenceStore,
+) -> None:
+    f_handler.receive(OFFICE_TEMPERATURE, b'20.5', retained=False)
+    f_handler.receive(OFFICE_PRESENCE, b'0', retained=False)
+
+    assert (
+        f_temperature_store.snapshot('air-office').state,
+        f_temperature_store.snapshot('presence-office').state,
+        f_presence_store.snapshot('presence-office').present,
+        f_presence_store.snapshot('air-office').present,
+    ) == (TemperatureReading(temperature=Decimal('20.5'), humidity=None, read_at=NOW), None, False, None)
+
+
+def test_unreadable_presence_fails_only_the_presence_device(
+    f_handler: EsphomeMessageHandler,
+    f_temperature_store: TemperatureStateStore,
+    f_presence_store: PresenceStore,
+) -> None:
+    f_handler.receive(OFFICE_TEMPERATURE, b'20.5', retained=False)
+    f_handler.receive(OFFICE_PRESENCE, b'2', retained=False)
+
+    presence = f_presence_store.snapshot('presence-office')
+    assert (
+        f_temperature_store.snapshot('air-office').error_code,
+        presence.available,
+        presence.error_code,
+        presence.error,
+    ) == (None, False, 'device_protocol_error', "presence: not 0 or 1: b'2'")
+
+
+def test_offline_node_fails_every_device_on_it(
+    f_handler: EsphomeMessageHandler,
+    f_temperature_store: TemperatureStateStore,
+    f_presence_store: PresenceStore,
+    f_phase_store: PhaseMeterStore,
+) -> None:
+    with capture_logs() as logs:
+        f_handler.receive(OFFICE_STATUS, b'offline', retained=False)
+        f_handler.receive('teplo/teplo-phase-meter/status', b'offline', retained=False)
+
+    failures = [
+        (snapshot.error_code, snapshot.error)
+        for snapshot in (
+            f_temperature_store.snapshot('air-office'),
+            f_presence_store.snapshot('presence-office'),
+            f_phase_store.snapshot('phase-meter'),
+        )
+    ]
+    assert (failures, logs) == (
+        [('device_unavailable', 'the node went offline')] * 3,
+        [
+            {'event': 'esphome_node_offline', 'device': 'air-office', 'log_level': 'warning'},
+            {'event': 'esphome_node_offline', 'device': 'presence-office', 'log_level': 'warning'},
+            {'event': 'esphome_node_offline', 'device': 'phase-meter', 'log_level': 'warning'},
+        ],
+    )
+
+
+@pytest.mark.usefixtures('f_presence_disconnected_handler')
+def test_lost_broker_makes_a_presence_device_unavailable_at_once(f_presence_store: PresenceStore) -> None:
+    snapshot = f_presence_store.snapshot('pc-office')
+
+    assert (snapshot.available, snapshot.error_code, snapshot.error) == (
+        False,
+        'broker_unavailable',
+        'mqtt connection lost: Unspecified error',
+    )
+
+
+def test_connection_clears_the_lost_broker_but_a_presence_device_waits_for_its_next_report(
+    f_presence_disconnected_handler: EsphomeMessageHandler,
+    f_presence_store: PresenceStore,
+) -> None:
+    f_presence_disconnected_handler.connection_made()
+    waiting = f_presence_store.snapshot('pc-office')
+    f_presence_disconnected_handler.receive(PC_PRESENCE, b'0', retained=False)
+    reported = f_presence_store.snapshot('pc-office')
+
+    assert (
+        (waiting.available, waiting.error_code),
+        (reported.available, reported.present, reported.seen_age, reported.watched_for),
+    ) == ((False, None), (True, False, timedelta(seconds=30), timedelta(0)))
+
+
+def test_init_hears_a_device_on_the_node_it_names(f_routed_presence_handler: EsphomeMessageHandler) -> None:
+    with capture_logs() as logs:
+        for node in ('teplo-air-office', 'teplo-pc-office', 'teplo-presence-office'):
+            f_routed_presence_handler.receive(f'teplo/{node}/status', b'online', retained=False)
+
+    assert logs == [
+        {'event': 'esphome_node_online', 'device': 'air-office', 'log_level': 'info'},
+        {'event': 'esphome_node_online', 'device': 'presence-office', 'log_level': 'info'},
+        {'event': 'esphome_node_online', 'device': 'pc-office', 'log_level': 'info'},
+        {'event': 'esphome_node_unknown', 'node': 'teplo-presence-office', 'log_level': 'info'},
     ]

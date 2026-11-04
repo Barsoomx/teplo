@@ -53,6 +53,17 @@ BEDROOM_POSTED = {
     'setback_target': '19.5',
     'backup_below': '19.0',
     'backup_hysteresis': '0.30',
+    'vacant_after_minutes': '20',
+}
+OCCUPANCY_POSTED = {**BEDROOM_POSTED, 'comfort_target': '21.5', 'setback_target': '19.0', 'backup_below': '18.0'}
+FLOORS_NEVER_FOLLOW_OCCUPANCY = 'This room has a heated floor: floors never follow occupancy'
+CHANGELIST_POSTED = {
+    'form-TOTAL_FORMS': '1',
+    'form-INITIAL_FORMS': '1',
+    'form-MIN_NUM_FORMS': '0',
+    'form-MAX_NUM_FORMS': '1000',
+    'form-0-follows_occupancy': 'on',
+    '_save': 'Save',
 }
 SENSOR_OF_A_ZONE = 'This sensor is the air sensor of a zone'
 SENSOR_IN_ANOTHER_ROOM = 'This sensor is placed in another room'
@@ -530,6 +541,16 @@ def test_room_climate_page_explains_its_refusals_in_the_page_language(
 
 
 @pytest.fixture
+def f_occupancy_climates() -> dict[str, RoomClimate]:
+    office = RoomClimateFactory.create(room=RoomFactory.create(slug='office', name='Кабинет'))
+    open_space = RoomClimateFactory.create(
+        room=RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая')
+    )
+    ZoneFactory.create(slug='living-room', room=open_space.room)
+    return {'office': office, 'open-space': open_space}
+
+
+@pytest.fixture
 def f_heat_source_admin() -> HeatSourceAdmin:
     return HeatSourceAdmin(HeatSource, admin.site)
 
@@ -765,6 +786,61 @@ def test_heat_source_page_explains_its_refusal_in_the_page_language(
     assert form.errors == {
         '__all__': ['У камина нет устройства, а любому другому источнику тепла нужно его устройство'],
     }
+
+
+@pytest.mark.parametrize(
+    ('room', 'errors'),
+    [('office', {}), ('open-space', {'follows_occupancy': [FLOORS_NEVER_FOLLOW_OCCUPANCY]})],
+    ids=['room_without_a_floor', 'room_with_a_floor'],
+)
+def test_room_climate_page_refuses_the_occupancy_gate_in_a_room_with_a_floor(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+    f_occupancy_climates: dict[str, RoomClimate],
+    room: str,
+    errors: dict[str, list[str]],
+) -> None:
+    climate = f_occupancy_climates[room]
+    form = f_room_climate_admin.get_form(f_request, climate, change=True)(
+        {**OCCUPANCY_POSTED, 'follows_occupancy': 'on'},
+        instance=climate,
+    )
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+def test_room_climate_list_edits_the_occupancy_gate_beside_the_backup_gate(
+    f_room_climate_admin: RoomClimateAdmin,
+    f_request: HttpRequest,
+) -> None:
+    assert (
+        f_room_climate_admin.list_editable,
+        f_room_climate_admin.get_list_display(f_request)[-2:],
+    ) == (('backup_live', 'follows_occupancy'), ('follows_occupancy', 'vacant_after_minutes'))
+
+
+@pytest.mark.parametrize(
+    ('room', 'status', 'refused', 'stored'),
+    [('office', 302, False, True), ('open-space', 200, True, False)],
+    ids=['room_without_a_floor', 'room_with_a_floor'],
+)
+def test_room_climate_list_refuses_the_occupancy_gate_in_a_room_with_a_floor_and_stores_nothing(
+    f_admin_client: Client,
+    f_occupancy_climates: dict[str, RoomClimate],
+    room: str,
+    status: int,
+    refused: bool,
+    stored: bool,
+) -> None:
+    climate = f_occupancy_climates[room]
+
+    response = f_admin_client.post('/admin/climate/roomclimate/', {**CHANGELIST_POSTED, 'form-0-id': str(climate.pk)})
+
+    assert (
+        response.status_code,
+        'В этой комнате тёплый пол: полы не следуют присутствию' in response.content.decode(),
+        RoomClimate.objects.get(pk=climate.pk).follows_occupancy,
+    ) == (status, refused, stored)
 
 
 def test_reset_learning_action_resets_the_zones_that_learned_and_names_them(

@@ -221,10 +221,22 @@ def f_capped_use_case(
 
 
 @pytest.fixture
-def f_office_use_case(zones: ZoneStoreStub, house: HouseStoreStub) -> GetSchedulePageUseCase:
+def f_office_use_case(
+    request: pytest.FixtureRequest,
+    zones: ZoneStoreStub,
+    house: HouseStoreStub,
+) -> GetSchedulePageUseCase:
+    follows, minutes = getattr(request, 'param', (False, 20))
+    office = RoomWeek(
+        slug='office',
+        name='Кабинет',
+        windows=(OFFICE_WINDOW,),
+        follows_occupancy=follows,
+        vacant_after_minutes=minutes,
+    )
     return GetSchedulePageUseCase(
         zones=zones,
-        windows=ComfortWindowStoreStub(weeks=[RoomWeek(slug='office', name='Кабинет', windows=(OFFICE_WINDOW,))]),
+        windows=ComfortWindowStoreStub(weeks=[office]),
         house=house,
         climate_settings=_climate_settings(240),
         sources=HeatSourceStoreStub(sources=[CONVECTOR], errors={}),
@@ -365,3 +377,18 @@ def test_room_heated_by_a_source_teplo_commands_names_it_and_warms_up_nothing(
             DayPeriod(mode=ScheduleMode.NIGHT, start=1425, end=1440),
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ('f_office_use_case', 'expected'),
+    [((False, 20), (False, 20)), ((True, 30), (True, 30))],
+    ids=['watching', 'following'],
+    indirect=['f_office_use_case'],
+)
+def test_schedule_says_whether_a_room_follows_occupancy_and_after_how_long_it_is_empty(
+    f_office_use_case: GetSchedulePageUseCase,
+    expected: tuple[bool, int],
+) -> None:
+    office = f_office_use_case.execute(GetSchedulePageInputDTO()).room('office')
+
+    assert (None if office is None else (office.follows_occupancy, office.vacant_after_minutes)) == expected

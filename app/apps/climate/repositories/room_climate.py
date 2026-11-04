@@ -15,6 +15,8 @@ from apps.climate.domain.room_climate import (
 from apps.climate.domain.zone import AirTargets, ComfortWindow
 from apps.climate.models import HeatSource, RoomClimate, Zone
 from apps.core.repositories.write_lock import lock_for_update
+from apps.devices.domain.kinds import DeviceKind
+from apps.devices.models import Device
 from apps.house.domain.errors import RoomNotFoundError
 
 NO_OVERRIDE = {'override_target': None, 'override_until': None, 'override_source': ''}
@@ -23,16 +25,18 @@ NO_OVERRIDE = {'override_target': None, 'override_until': None, 'override_source
 class RoomClimateRepository:
     @staticmethod
     def all_settings() -> list[RoomClimateSettings]:
-        climates = _settings_climates().annotate(adjustable=_adjustable())
-        return [_to_settings(climate, adjustable=climate.adjustable) for climate in climates]
+        climates = _settings_climates().annotate(adjustable=_adjustable(), has_floor=_has_floor())
+        return [
+            _to_settings(climate, adjustable=climate.adjustable, has_floor=climate.has_floor) for climate in climates
+        ]
 
     @staticmethod
     def comfort_for_update(slug: str) -> RoomClimateSettings:
         if lock_for_update(RoomClimate.objects.filter(room__slug=slug)) == 0:
             raise RoomNotFoundError(slug)
 
-        climate = _settings_climates().annotate(adjustable=_adjustable()).get(room__slug=slug)
-        return _to_settings(climate, adjustable=climate.adjustable)
+        climate = _settings_climates().annotate(adjustable=_adjustable(), has_floor=_has_floor()).get(room__slug=slug)
+        return _to_settings(climate, adjustable=climate.adjustable, has_floor=climate.has_floor)
 
     @staticmethod
     def save_override(slug: str, override: RoomOverride | None) -> None:
@@ -50,14 +54,18 @@ class RoomClimateRepository:
 
     @staticmethod
     def config_records() -> list[RoomClimateConfigRecord]:
-        return [_to_record(climate) for climate in _config_climates()]
+        climates = _config_climates().annotate(has_presence=_has_presence(), has_floor=_has_floor())
+        return [
+            _to_record(climate, has_presence=climate.has_presence, has_floor=climate.has_floor) for climate in climates
+        ]
 
     @staticmethod
     def config_for_update(slug: str) -> RoomClimateConfigRecord:
         if lock_for_update(RoomClimate.objects.filter(room__slug=slug)) == 0:
             raise RoomNotFoundError(slug)
 
-        return _to_record(_config_climates().get(room__slug=slug))
+        climate = _config_climates().annotate(has_presence=_has_presence(), has_floor=_has_floor()).get(room__slug=slug)
+        return _to_record(climate, has_presence=climate.has_presence, has_floor=climate.has_floor)
 
     @staticmethod
     def save_config(slug: str, config: RoomClimateConfig, fields: Collection[str]) -> None:
@@ -82,6 +90,14 @@ def _config_climates() -> QuerySet[RoomClimate]:
     return _climates().prefetch_related('room__heat_sources')
 
 
+def _has_floor() -> Exists:
+    return Exists(Zone.objects.filter(room=OuterRef('room')))
+
+
+def _has_presence() -> Exists:
+    return Exists(Device.objects.filter(room=OuterRef('room'), kind=DeviceKind.PRESENCE_SENSOR))
+
+
 def _adjustable() -> ExpressionWrapper:
     reads_the_air = Exists(Zone.objects.filter(room=OuterRef('room'), kind=ZoneKind.AIR, air_sensor__isnull=False))
     commanded_source = Exists(
@@ -94,7 +110,7 @@ def _adjustable() -> ExpressionWrapper:
     return ExpressionWrapper(Q(reads_the_air) | Q(commanded_source), output_field=BooleanField())
 
 
-def _to_settings(climate: RoomClimate, *, adjustable: bool) -> RoomClimateSettings:
+def _to_settings(climate: RoomClimate, *, adjustable: bool, has_floor: bool) -> RoomClimateSettings:
     return RoomClimateSettings(
         slug=climate.room.slug,
         name=climate.room.name,
@@ -113,6 +129,9 @@ def _to_settings(climate: RoomClimate, *, adjustable: bool) -> RoomClimateSettin
         guest_room=climate.guest_room,
         override=_override(climate),
         adjustable=adjustable,
+        follows_occupancy=climate.follows_occupancy,
+        has_floor=has_floor,
+        vacant_after_minutes=climate.vacant_after_minutes,
     )
 
 
@@ -128,7 +147,7 @@ def _override(climate: RoomClimate) -> RoomOverride | None:
     )
 
 
-def _to_record(climate: RoomClimate) -> RoomClimateConfigRecord:
+def _to_record(climate: RoomClimate, *, has_presence: bool, has_floor: bool) -> RoomClimateConfigRecord:
     return RoomClimateConfigRecord(
         id=climate.pk,
         slug=climate.room.slug,
@@ -149,4 +168,7 @@ def _to_record(climate: RoomClimate) -> RoomClimateConfigRecord:
             SourceGate(id=source.pk, name=source.name, kind=HeatSourceKind(source.kind), live=source.live)
             for source in climate.room.heat_sources.all()
         ),
+        follows_occupancy=climate.follows_occupancy,
+        vacant_after_minutes=climate.vacant_after_minutes,
+        occupancy_gate=has_presence and not has_floor,
     )

@@ -6,6 +6,7 @@ from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.external_heat import FireEnd
 from apps.climate.domain.modes import AirState, CommandSource, ScheduleMode
 from apps.core.domain.events import DomainEvent
+from apps.presence.domain.occupancy import Occupancy
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -70,6 +71,17 @@ class SourceManualChange(DomainEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class OccupancyDryRun(DomainEvent):
+    source: str
+    name: str
+    room: str
+    room_name: str
+    occupancy: Occupancy
+    power: bool
+    setpoint: Decimal | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class AirControlDryRun(DomainEvent):
     zone: str
     air: Decimal
@@ -128,6 +140,7 @@ class RoomOverrideCleared(DomainEvent):
     room: str
     name: str
     source: CommandSource
+    occupancy: Occupancy | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

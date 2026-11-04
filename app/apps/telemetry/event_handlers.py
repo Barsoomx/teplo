@@ -9,6 +9,7 @@ from apps.climate.domain.events import (
     FireplaceMarked,
     GuestsCleared,
     GuestsSet,
+    OccupancyDryRun,
     OptimalStartDryRun,
     RoomOverridden,
     RoomOverrideCleared,
@@ -39,6 +40,7 @@ from apps.power.domain.events import (
     PhaseOverloaded,
     StartWouldWaitDryRun,
 )
+from apps.presence.domain.events import RoomOccupancyChanged
 from apps.telemetry.repositories.journal import JournalRepository
 
 
@@ -160,6 +162,16 @@ def journal_room_overridden(event: RoomOverridden) -> None:
 @domain_event_handler(RoomOverrideCleared)
 def journal_room_override_cleared(event: RoomOverrideCleared) -> None:
     _journal('room_override_cleared', event.room, event)
+
+
+@domain_event_handler(RoomOccupancyChanged)
+def journal_room_occupancy_changed(event: RoomOccupancyChanged) -> None:
+    _journal('room_occupancy_changed', event.room, event)
+
+
+@domain_event_handler(OccupancyDryRun)
+def journal_occupancy_dry_run(event: OccupancyDryRun) -> None:
+    _journal('occupancy_dry_run', event.source, event)
 
 
 @domain_event_handler(FireplaceMarked)

@@ -1,7 +1,7 @@
 import pytest
 from django.db import IntegrityError
 
-from apps.devices.domain.device import DeviceSettings
+from apps.devices.domain.device import DeviceSettings, EsphomeDevice
 from apps.devices.domain.errors import DeviceNotFoundError
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
@@ -55,6 +55,27 @@ def f_sensors() -> list[Device]:
 
 
 @pytest.fixture
+def presence_sensors(f_sensors: list[Device]) -> list[Device]:
+    return [
+        *f_sensors,
+        DeviceFactory.create(
+            slug='presence-office',
+            name='Радар: кабинет',
+            kind=DeviceKind.PRESENCE_SENSOR,
+            driver=DeviceDriver.ESPHOME_PRESENCE,
+            node='air-office',
+        ),
+        DeviceFactory.create(
+            slug='pc-office',
+            name='Компьютер: кабинет',
+            kind=DeviceKind.PRESENCE_SENSOR,
+            driver=DeviceDriver.ESPHOME_PRESENCE,
+        ),
+        DeviceFactory.create(slug='air-attic', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.UNSUPPORTED),
+    ]
+
+
+@pytest.fixture
 def placed_devices() -> None:
     open_space = RoomFactory.create(slug='open-space')
     DeviceFactory.create(slug='thermostat-kitchen', room=open_space)
@@ -103,6 +124,26 @@ def test_all_settings_name_the_room_of_each_device() -> None:
         ('air-kitchen', 'open-space'),
         ('outdoor', None),
         ('thermostat-kitchen', 'open-space'),
+    ]
+
+
+@pytest.mark.usefixtures('presence_sensors')
+def test_esphome_devices_name_the_node_each_device_is_heard_on() -> None:
+    assert DeviceRepository.esphome_devices() == [
+        EsphomeDevice(slug='air-kitchen', node='air-kitchen', driver=DeviceDriver.ESPHOME_TEMPERATURE),
+        EsphomeDevice(slug='outdoor', node='outdoor', driver=DeviceDriver.ESPHOME_TEMPERATURE),
+        EsphomeDevice(slug='pc-office', node='pc-office', driver=DeviceDriver.ESPHOME_PRESENCE),
+        EsphomeDevice(slug='phase-meter', node='phase-meter', driver=DeviceDriver.ESPHOME_PHASE_METER),
+        EsphomeDevice(slug='presence-office', node='air-office', driver=DeviceDriver.ESPHOME_PRESENCE),
+    ]
+
+
+@pytest.mark.usefixtures('presence_sensors')
+def test_all_settings_carry_the_stored_node() -> None:
+    assert [(device.slug, device.kind, device.node) for device in DeviceRepository.all_settings()][3:6] == [
+        ('pc-office', DeviceKind.PRESENCE_SENSOR, ''),
+        ('phase-meter', DeviceKind.PHASE_METER, ''),
+        ('presence-office', DeviceKind.PRESENCE_SENSOR, 'air-office'),
     ]
 
 

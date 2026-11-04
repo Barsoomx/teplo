@@ -29,6 +29,7 @@ from apps.notifications.services.command_replies import (
     zone_state_line,
     zone_write_line,
 )
+from apps.presence.domain.occupancy import Occupancy
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
@@ -59,6 +60,24 @@ OPEN_SPACE = RoomStatus(
     guest_room=True,
     zones=(KITCHEN,),
 )
+OFFICE = RoomStatus(
+    slug='office',
+    name='Кабинет',
+    air=None,
+    intent=RoomIntent(
+        room='office',
+        reason=IntentReason.COMFORT,
+        target=Decimal('21.5'),
+        until=datetime(2026, 11, 4, 23, 45, tzinfo=MOSCOW),
+        forced=(),
+    ),
+    adjustable=True,
+    guest_room=False,
+    zones=(),
+    occupancy=Occupancy.VACANT,
+)
+FOLLOWING_OFFICE = replace(OFFICE, follows_occupancy=True)
+VACANT_INTENT = RoomIntent(room='office', reason=IntentReason.VACANT, target=Decimal('19.0'), until=None, forced=())
 
 CONVECTOR = SourceStatus(
     slug='convector-office',
@@ -232,6 +251,41 @@ def test_zone_state_line_gives_the_readings(zone: ZoneStatus, expected: str) -> 
     ids=['comfort', 'override_with_air', 'guests', 'night_without_a_window', 'untrusted_clock'],
 )
 def test_room_line_gives_the_target_and_why(room: RoomStatus, expected: str) -> None:
+    assert room_line(room, NOW) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('room', 'expected'),
+    [
+        (OFFICE, 'Кабинет: цель 21,5°, комфорт до 23:45; никого (наблюдение)'),
+        (
+            replace(OFFICE, occupancy=Occupancy.UNKNOWN),
+            'Кабинет: цель 21,5°, комфорт до 23:45; нет данных о присутствии (наблюдение)',
+        ),
+        (replace(FOLLOWING_OFFICE, intent=VACANT_INTENT), 'Кабинет: цель 19,0°, никого'),
+        (
+            replace(
+                FOLLOWING_OFFICE,
+                occupancy=Occupancy.OCCUPIED,
+                intent=replace(VACANT_INTENT, reason=IntentReason.OCCUPIED, target=Decimal('21.5')),
+            ),
+            'Кабинет: цель 21,5°, занято',
+        ),
+        (
+            replace(FOLLOWING_OFFICE, occupancy=Occupancy.UNKNOWN),
+            'Кабинет: цель 21,5°, комфорт до 23:45; нет данных о присутствии',
+        ),
+        (
+            replace(
+                FOLLOWING_OFFICE, intent=replace(OFFICE.intent, reason=IntentReason.OVERRIDE, target=Decimal('22.5'))
+            ),
+            'Кабинет: цель 22,5°, вручную до 23:45; никого',
+        ),
+    ],
+    ids=['watching', 'watching_without_data', 'vacant', 'occupied', 'live_without_data', 'override_over_occupancy'],
+)
+def test_room_line_names_the_occupancy_of_a_room_with_a_presence_source(room: RoomStatus, expected: str) -> None:
     assert room_line(room, NOW) == expected
 
 

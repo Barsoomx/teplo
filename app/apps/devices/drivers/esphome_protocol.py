@@ -10,27 +10,28 @@ NODE_ONLINE = b'online'
 NODE_OFFLINE = b'offline'
 TEMPERATURE = 'temperature'
 HUMIDITY = 'humidity'
+PRESENCE = 'presence'
 PHASE_CURRENTS = {'l1_current': Phase.A, 'l2_current': Phase.B, 'l3_current': Phase.C}
 SHOWN_PAYLOAD_BYTES = 32
 
 
 @dataclass(frozen=True, kw_only=True)
 class SensorStateTopic:
-    slug: str
+    node: str
     object_id: str
 
 
 @dataclass(frozen=True, kw_only=True)
 class NodeStatusTopic:
-    slug: str
+    node: str
 
 
 def parse_topic(topic: str) -> SensorStateTopic | NodeStatusTopic | None:
     match topic.split('/'):
         case ['teplo', node, 'sensor', object_id, 'state'] if node.startswith(NODE_PREFIX):
-            return SensorStateTopic(slug=node.removeprefix(NODE_PREFIX), object_id=object_id)
+            return SensorStateTopic(node=node.removeprefix(NODE_PREFIX), object_id=object_id)
         case ['teplo', node, 'status'] if node.startswith(NODE_PREFIX):
-            return NodeStatusTopic(slug=node.removeprefix(NODE_PREFIX))
+            return NodeStatusTopic(node=node.removeprefix(NODE_PREFIX))
         case _:
             return None
 
@@ -46,5 +47,8 @@ def parse_value(object_id: str, payload: bytes) -> Decimal:
 
     if value.is_infinite():
         raise DeviceProtocolError(f'{object_id}: not a finite number: {payload[:SHOWN_PAYLOAD_BYTES]!r}')
+
+    if object_id == PRESENCE and value not in (0, 1):
+        raise DeviceProtocolError(f'presence: not 0 or 1: {payload[:SHOWN_PAYLOAD_BYTES]!r}')
 
     return value

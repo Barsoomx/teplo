@@ -18,6 +18,7 @@ from apps.devices.domain.readings import (
 from apps.devices.factories import DeviceFactory
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
+from apps.devices.services.presence_store import PresenceStore
 from apps.devices.services.state_store import (
     ClimateUnitStateStore,
     PlugStateStore,
@@ -123,6 +124,7 @@ def f_use_case(
         temperature_store=temperature_store,
         phase_meter_store=f_phase_meter_store,
         climate_unit_store=climate_unit_store,
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)),
         buffer=f_buffer,
     )
 
@@ -160,6 +162,7 @@ def f_sensor_use_case(
         temperature_store=temperature_store,
         phase_meter_store=f_phase_meter_store,
         climate_unit_store=ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10), clock=clock),
         buffer=f_buffer,
     )
 
@@ -189,6 +192,36 @@ def f_silent_meter_use_case(
         temperature_store=temperature_store,
         phase_meter_store=f_phase_meter_store,
         climate_unit_store=ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        presence_store=PresenceStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        buffer=f_buffer,
+    )
+
+
+@pytest.fixture
+def f_presence_use_case(f_buffer: SampleBuffer, clock: MonotonicClockStub) -> CaptureSamplesUseCase:
+    for slug in ('pc-office', 'presence-bedroom', 'presence-office', 'presence-attic'):
+        DeviceFactory(slug=slug, kind=DeviceKind.PRESENCE_SENSOR, driver=DeviceDriver.ESPHOME_PRESENCE)
+    store = PresenceStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record('presence-office', present=True, read_at=NOW)
+    clock.advance(30)
+    store.record('pc-office', present=True, read_at=NOW)
+    store.record('presence-bedroom', present=False, read_at=NOW)
+    store.record('presence-attic', present=True, read_at=NOW)
+    store.record_failure('presence-attic', error_code='sensor_reading_failed', error='presence: the node reported nan')
+    clock.advance(31)
+    store.record('presence-office', present=False, read_at=NOW)
+    return CaptureSamplesUseCase(
+        devices=DeviceRepository(),
+        thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        phase_meter_store=PhaseMeterStore(
+            stale_after=timedelta(seconds=10),
+            unavailable_after=timedelta(minutes=10),
+            clock=clock,
+        ),
+        climate_unit_store=ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        presence_store=store,
         buffer=f_buffer,
     )
 
@@ -253,4 +286,20 @@ def test_unavailable_phase_meter_is_skipped_and_its_currents_dropped(
         CaptureSamplesOutputDTO(captured=0),
         [],
         {},
+    )
+
+
+def test_capture_samples_whether_an_available_presence_source_saw_someone_in_the_last_minute(
+    f_presence_use_case: CaptureSamplesUseCase,
+    f_buffer: SampleBuffer,
+) -> None:
+    output = f_presence_use_case.execute(CaptureSamplesInputDTO(now=NOW))
+
+    assert (output, f_buffer.drain()) == (
+        CaptureSamplesOutputDTO(captured=3),
+        [
+            SampleValue(metric='presence', subject='pc-office', value=1.0, recorded_at=NOW),
+            SampleValue(metric='presence', subject='presence-bedroom', value=0.0, recorded_at=NOW),
+            SampleValue(metric='presence', subject='presence-office', value=0.0, recorded_at=NOW),
+        ],
     )

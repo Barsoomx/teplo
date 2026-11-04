@@ -10,7 +10,7 @@ from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
 from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
-from apps.climate.models import Zone
+from apps.climate.models import RoomClimate, Zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
@@ -19,13 +19,14 @@ from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.room_status import RoomStatusReader
 from apps.climate.services.source_status import SourceStatusReader
-from apps.climate.stubs import LoadGateStub, SourceLoadGateStub
+from apps.climate.stubs import LoadGateStub, OccupancyStoreStub, SourceLoadGateStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import TemperatureReading, ThermostatMode, ThermostatState
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.services.state_store import ClimateUnitStateStore, TemperatureStateStore, ThermostatStateStore
 from apps.house.factories import FloorFactory, RoomFactory
+from apps.presence.domain.occupancy import Occupancy
 
 pytestmark = pytest.mark.django_db
 
@@ -48,6 +49,7 @@ def _reader(
     temperatures: TemperatureStateStore,
     *,
     dry_run: bool,
+    occupancy: dict[str, Occupancy] | None = None,
 ) -> RoomStatusReader:
     return RoomStatusReader(
         zones=ZoneRepository(),
@@ -57,6 +59,7 @@ def _reader(
             fireplaces=HeatSourceRepository(),
             gates=ClimateSettingsRepository(),
             book=ControlBook(),
+            occupancy=OccupancyStoreStub(occupancy={} if occupancy is None else occupancy),
         ),
         temperatures=temperatures,
         thermostats=thermostats,
@@ -167,6 +170,21 @@ def temperatures() -> TemperatureStateStore:
 @pytest.fixture
 def f_reader(thermostats: ThermostatStateStore, temperatures: TemperatureStateStore) -> RoomStatusReader:
     return _reader(thermostats, temperatures, dry_run=False)
+
+
+@pytest.fixture
+def followed_rooms() -> None:
+    RoomClimate.objects.filter(room__slug__in=('open-space', 'bedroom')).update(follows_occupancy=True)
+
+
+@pytest.fixture
+def f_occupancy_reader(thermostats: ThermostatStateStore, temperatures: TemperatureStateStore) -> RoomStatusReader:
+    return _reader(
+        thermostats,
+        temperatures,
+        dry_run=False,
+        occupancy={'open-space': Occupancy.OCCUPIED, 'bedroom': Occupancy.VACANT},
+    )
 
 
 @pytest.fixture
@@ -331,4 +349,18 @@ def test_floors_changed_on_their_thermostats_say_until_when_teplo_leaves_them_al
         ('living-room', PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
         ('kitchen', PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
         ('hallway', PendingWrite(kind=PendingKind.HELD, at=None)),
+    ]
+
+
+@pytest.mark.usefixtures('house', 'followed_rooms')
+def test_rooms_give_the_occupancy_of_the_rooms_followed_and_whether_their_target_follows_it(
+    f_occupancy_reader: RoomStatusReader,
+) -> None:
+    rooms = f_occupancy_reader.rooms(NOW, clock_trusted=True)
+
+    assert [(room.slug, room.occupancy, room.follows_occupancy, room.intent.reason) for room in rooms] == [
+        ('open-space', Occupancy.OCCUPIED, False, IntentReason.OVERRIDE),
+        ('bathroom-1f', None, False, IntentReason.COMFORT),
+        ('bedroom', Occupancy.VACANT, True, IntentReason.VACANT),
+        ('bathroom-2f', None, False, IntentReason.SETBACK),
     ]

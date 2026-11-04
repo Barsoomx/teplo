@@ -83,6 +83,7 @@ def test_teplo_jobs_schedule() -> None:
         ('poll_climate_units', timedelta(seconds=30), timedelta(0)),
         ('guard_phases', timedelta(seconds=1), timedelta(0)),
         ('check_sensors', timedelta(seconds=30), timedelta(minutes=1)),
+        ('track_occupancy', timedelta(seconds=30), timedelta(0)),
         ('capture_samples', timedelta(minutes=1), timedelta(0)),
         ('run_heating_cycle', timedelta(minutes=1), timedelta(0)),
         ('run_source_cycle', timedelta(minutes=1), timedelta(seconds=30)),

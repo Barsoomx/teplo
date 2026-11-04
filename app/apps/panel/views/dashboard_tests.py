@@ -19,6 +19,7 @@ from apps.climate.domain.zone_intent import ForcedTarget
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
+    OccupancyOverview,
     RoomComfortOverview,
     SensorOverview,
     SourceOverview,
@@ -27,6 +28,7 @@ from apps.panel.usecases.get_panel_overview import (
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO
 from apps.power.domain.loads import LoadPhase
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
+from apps.presence.domain.occupancy import Occupancy
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 pytestmark = pytest.mark.django_db
@@ -343,6 +345,26 @@ def m_convector_overview_use_case(
     floors = (ground, replace(upstairs, rooms=(bedroom, office)))
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = replace(house_overview, floors=floors)
+        yield use_case
+
+
+@pytest.fixture
+def m_occupancy_overview_use_case(
+    request: pytest.FixtureRequest,
+    occupancy_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    ground, upstairs = occupancy_overview.floors
+    bedroom, office = upstairs.rooms
+    if request.param:
+        office = replace(
+            office,
+            occupancy=OccupancyOverview(state=Occupancy.VACANT, follows=True, sources=occupancy_overview.presence),
+            follows_occupancy=True,
+            back_to_occupancy=True,
+        )
+    floors = (ground, replace(upstairs, rooms=(bedroom, office)))
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(occupancy_overview, floors=floors)
         yield use_case
 
 
@@ -1059,3 +1081,36 @@ def test_dashboard_shows_the_office_convector_and_when_teplo_s_target_reaches_it
         m_convector_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == ([True] * len(shown), [False] * len(hidden), True, 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_occupancy_overview_use_case', 'watching', 'button'),
+    [(False, True, 'Вернуть расписание'), (True, False, 'Снова по присутствию')],
+    ids=['watching', 'following'],
+    indirect=['m_occupancy_overview_use_case'],
+)
+def test_dashboard_shows_a_room_s_occupancy_and_the_source_that_lost_its_connection(
+    f_russian_client: Client,
+    m_occupancy_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    watching: bool,
+    button: str,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    office_at = content.index('id="room-office"')
+    header = content[office_at : content.index('</header>', office_at)]
+    room = content[office_at : content.index('</section>', office_at)]
+    assert (
+        'class="chip occupancy occupancy-vacant" title="Компьютер: кабинет: кто-то был 5 мин назад · '
+        'Радар: кабинет: нет связи"' in header,
+        'icons.svg#user-x' in header,
+        'Никого' in header,
+        'Наблюдение' in header,
+        'Радар: кабинет: нет связи · teplo не может подключиться к MQTT-брокеру' in header,
+        button in room,
+        m_occupancy_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, True, True, watching, True, True, 1, 1)

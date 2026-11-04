@@ -602,6 +602,80 @@ def m_intents_timeline_use_case() -> Iterator[MagicMock]:
         yield use_case
 
 
+@pytest.fixture
+def m_presence_timeline_use_case() -> Iterator[MagicMock]:
+    entries = (
+        (
+            'device_availability_changed',
+            'pc-office',
+            'Компьютер: кабинет',
+            DeviceKind.PRESENCE_SENSOR,
+            {
+                'slug': 'pc-office',
+                'available': False,
+                'reason': 'presence: the node reported nan',
+                'error_code': 'sensor_reading_failed',
+            },
+        ),
+        (
+            'device_availability_changed',
+            'pc-office',
+            'Компьютер: кабинет',
+            DeviceKind.PRESENCE_SENSOR,
+            {'slug': 'pc-office', 'available': True, 'reason': 'reading received', 'error_code': None},
+        ),
+        (
+            'room_occupancy_changed',
+            'office',
+            'office',
+            None,
+            {'room': 'office', 'name': 'Кабинет', 'occupancy': 'vacant', 'previous': 'occupied', 'live': False},
+        ),
+        (
+            'occupancy_dry_run',
+            'convector-office',
+            'Конвектор: кабинет',
+            None,
+            {
+                'source': 'convector-office',
+                'name': 'Конвектор: кабинет',
+                'room': 'office',
+                'room_name': 'Кабинет',
+                'occupancy': 'vacant',
+                'power': True,
+                'setpoint': '19',
+            },
+        ),
+        (
+            'room_override_cleared',
+            'office',
+            'office',
+            None,
+            {'room': 'office', 'name': 'Кабинет', 'source': 'panel', 'occupancy': 'vacant'},
+        ),
+    )
+    with mock.patch('apps.panel.views.journal.GetJournalTimelineUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = GetJournalTimelineOutputDTO(
+            days=(
+                TimelineDay(
+                    day=date(2026, 10, 29),
+                    entries=tuple(
+                        TimelineEntry(
+                            kind=kind,
+                            subject=subject,
+                            subject_name=name,
+                            device_kind=device_kind,
+                            payload=payload,
+                            created_at=MORNING - timedelta(minutes=minutes),
+                        )
+                        for minutes, (kind, subject, name, device_kind, payload) in enumerate(entries)
+                    ),
+                ),
+            ),
+        )
+        yield use_case
+
+
 def test_journal_describes_entries_in_words(f_client: Client, m_timeline_use_case: MagicMock) -> None:
     response = f_client.get('/journal/')
 
@@ -833,3 +907,30 @@ def test_journal_words_guests_manual_targets_and_owner_commands_by_what_was_jour
         'неизвестное событие' in content.lower(),
         m_intents_timeline_use_case.init.call_count,
     ) == ([True] * 5, 1, False, False, 1)
+
+
+@freeze_time('2026-10-29T15:00:00Z')
+def test_journal_words_presence_sources_occupancy_and_what_occupancy_would_do(
+    f_russian_client: Client,
+    m_presence_timeline_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/journal/')
+
+    content = response.content.decode()
+    assert (
+        [
+            text in content
+            for text in (
+                'Компьютер: кабинет: нет связи',
+                'Радар не присылает кадры',
+                'Компьютер: кабинет: на связи',
+                'Кабинет: никого',
+                'Наблюдение: отопление идёт по расписанию',
+                'Конвектор: кабинет: по присутствию держал бы 19°',
+                'Кабинет: снова по присутствию',
+            )
+        ],
+        'неизвестное событие' in content.lower(),
+        'с датчиком' in content,
+        m_presence_timeline_use_case.init.call_count,
+    ) == ([True] * 7, False, False, 1)

@@ -19,7 +19,9 @@ from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
+from apps.climate.stubs import OccupancyStoreStub
 from apps.house.factories import FloorFactory, RoomFactory
+from apps.presence.domain.occupancy import Occupancy
 
 pytestmark = pytest.mark.django_db
 
@@ -36,7 +38,7 @@ def book() -> ControlBook:
 
 
 @pytest.fixture
-def f_reader(book: ControlBook) -> RoomIntentReader:
+def f_reader(book: ControlBook, request: pytest.FixtureRequest) -> RoomIntentReader:
     ground = FloorFactory.create(level=1)
     upstairs = FloorFactory.create(level=2)
     open_space = RoomClimateFactory.create(
@@ -55,6 +57,7 @@ def f_reader(book: ControlBook) -> RoomIntentReader:
         setback_target=Decimal('19.0'),
         backup_zone=ZoneFactory.create(slug='bathroom-1f'),
         backup_below=Decimal('18.0'),
+        follows_occupancy=True,
     )
     ClimateSettingsFactory.create(guests_until=GUESTS_LEAVE)
     HeatSourceFactory.create(
@@ -69,6 +72,7 @@ def f_reader(book: ControlBook) -> RoomIntentReader:
         fireplaces=HeatSourceRepository(),
         gates=ClimateSettingsRepository(),
         book=book,
+        occupancy=OccupancyStoreStub(occupancy=getattr(request, 'param', {})),
     )
 
 
@@ -107,6 +111,17 @@ def test_read_resolves_every_room_with_the_stored_guests(f_reader: RoomIntentRea
                 forced=(),
             ),
         },
+    )
+
+
+@pytest.mark.parametrize('f_reader', [{'office': Occupancy.VACANT, 'bedroom': Occupancy.OCCUPIED}], indirect=True)
+def test_read_resolves_the_rooms_by_the_occupancy_the_tracker_keeps(f_reader: RoomIntentReader) -> None:
+    intents = f_reader.read(NIGHT, clock_trusted=True)
+
+    assert (dict(intents.occupancy), intents.of('office'), intents.would_be_of('bedroom')) == (
+        {'office': Occupancy.VACANT, 'bedroom': Occupancy.OCCUPIED},
+        RoomIntent(room='office', reason=IntentReason.VACANT, target=Decimal('19.0'), until=None, forced=()),
+        RoomIntent(room='bedroom', reason=IntentReason.OCCUPIED, target=Decimal('20.5'), until=None, forced=()),
     )
 
 

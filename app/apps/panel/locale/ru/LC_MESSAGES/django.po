@@ -1427,3 +1427,67 @@ msgstr "%(name)s: не удалось снова включить обогрев
 #, python-format
 msgid "%(amps)s A by its rated power"
 msgstr "%(amps)s А по мощности"
+
+msgid "Occupied"
+msgstr "Занято"
+
+msgid "Nobody there"
+msgstr "Никого"
+
+msgid "No data"
+msgstr "Нет данных"
+
+#, python-format
+msgid "%(name)s: someone %(minutes)s min ago"
+msgstr "%(name)s: кто-то был %(minutes)s мин назад"
+
+#, python-format
+msgid "%(name)s: nobody seen"
+msgstr "%(name)s: никого не видно"
+
+msgid "Follows occupancy"
+msgstr "По присутствию"
+
+#, python-format
+msgid "Nobody there after %(minutes)s min without anyone"
+msgstr "Никого — после %(minutes)s мин без присутствия"
+
+#, python-format
+msgid "%(name)s: occupied"
+msgstr "%(name)s: занято"
+
+#, python-format
+msgid "%(name)s: nobody there"
+msgstr "%(name)s: никого"
+
+#, python-format
+msgid "%(name)s: no presence data"
+msgstr "%(name)s: нет данных о присутствии"
+
+msgid "Watching: heating keeps the schedule"
+msgstr "Наблюдение: отопление идёт по расписанию"
+
+#, python-format
+msgid "%(name)s: by occupancy would hold %(setpoint)s°"
+msgstr "%(name)s: по присутствию держал бы %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: by occupancy would switch off"
+msgstr "%(name)s: по присутствию выключил бы"
+
+msgid "The radar sends no frames"
+msgstr "Радар не присылает кадры"
+
+msgid "The presence source sent a value other than 0 or 1"
+msgstr "Источник присутствия прислал не 0 и не 1"
+
+msgid "Back to occupancy"
+msgstr "Снова по присутствию"
+
+#, python-format
+msgid "%(name)s: back to occupancy"
+msgstr "%(name)s: снова по присутствию"
+
+#, python-format
+msgid "%(name)s follows occupancy: comfort while someone is here, the night target once nobody has been here for %(minutes)s min; the windows apply while there is no presence data."
+msgstr "%(name)s следует присутствию: комфорт, пока здесь кто-то есть, и ночная цель, когда никого нет %(minutes)s мин; окна действуют, пока нет данных о присутствии."

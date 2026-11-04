@@ -59,6 +59,11 @@ from apps.panel.templatetags.panel_format import (
     manual_change_text,
     morning_rejected_text,
     next_write_text,
+    occupancy_dry_run_note,
+    occupancy_dry_run_text,
+    occupancy_note,
+    occupancy_sources,
+    occupancy_text,
     optimal_start_text,
     outage_overload_note,
     outage_question,
@@ -82,11 +87,19 @@ from apps.panel.templatetags.panel_format import (
     weekday_short,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.panel.usecases.get_panel_overview import LoadOverview, SourceOverview, ZoneOverview, ZoneRegime
+from apps.panel.usecases.get_panel_overview import (
+    LoadOverview,
+    OccupancyOverview,
+    PresenceOverview,
+    SourceOverview,
+    ZoneOverview,
+    ZoneRegime,
+)
 from apps.panel.usecases.get_phase_currents import EstimatePartOverview, PhaseCurrent
 from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
+from apps.presence.domain.occupancy import Occupancy
 from apps.system.domain.clock import ClockStatusCode
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -1334,9 +1347,26 @@ def test_guests_text_says_until_when_guests_stay(kind: str, payload: dict[str, o
             'Гостиная, кухня и прихожая: вручную 23,0° до 00:10 завтра',
         ),
         ('room_override_cleared', {**OPEN_SPACE, 'source': 'panel'}, 'Гостиная, кухня и прихожая: снова по расписанию'),
+        (
+            'room_override_cleared',
+            {**OPEN_SPACE, 'source': 'panel', 'occupancy': None},
+            'Гостиная, кухня и прихожая: снова по расписанию',
+        ),
+        (
+            'room_override_cleared',
+            {'room': 'office', 'name': 'Кабинет', 'source': 'telegram', 'occupancy': 'vacant'},
+            'Кабинет: снова по присутствию',
+        ),
         ('room_overridden', {'room': 'open-space', 'target': '22.5'}, 'Гостиная: неизвестное событие'),
     ],
-    ids=['manual_target', 'manual_target_past_midnight', 'back_to_the_schedule', 'without_a_name'],
+    ids=[
+        'manual_target',
+        'manual_target_past_midnight',
+        'back_to_the_schedule',
+        'back_to_the_schedule_of_a_room_not_following_occupancy',
+        'back_to_occupancy',
+        'without_a_name',
+    ],
 )
 def test_room_override_text_names_the_room_by_its_journaled_name(
     kind: str,
@@ -1800,3 +1830,140 @@ def test_source_texts_say_what_the_unit_does_and_when_teplo_s_target_reaches_it(
     pending: str,
 ) -> None:
     assert (source_state_text(source), source_pending_text(source)) == (state, pending)
+
+
+OFFICE_PRESENCE = PresenceOverview(
+    slug='pc-office',
+    name='Компьютер: кабинет',
+    room='office',
+    node='teplo-pc-office',
+    available=True,
+    present=True,
+    age_seconds=12,
+    seen_age_seconds=12,
+    error_code=None,
+    error=None,
+)
+RADAR_PRESENCE = replace(
+    OFFICE_PRESENCE,
+    slug='presence-office',
+    name='Радар: кабинет',
+    node='teplo-air-office',
+    available=False,
+    present=None,
+    age_seconds=None,
+    seen_age_seconds=None,
+    error_code='broker_unavailable',
+    error='mqtt broker unreachable',
+)
+OFFICE_OCCUPANCY_PAYLOAD: dict[str, object] = {'room': 'office', 'name': 'Кабинет', 'previous': 'unknown'}
+CONVECTOR_BY_OCCUPANCY: dict[str, object] = {
+    'source': 'convector-office',
+    'name': 'Конвектор: кабинет',
+    'room': 'office',
+    'room_name': 'Кабинет',
+    'occupancy': 'vacant',
+    'power': True,
+    'setpoint': '19',
+}
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('sources', 'expected'),
+    [
+        ((OFFICE_PRESENCE, RADAR_PRESENCE), 'Компьютер: кабинет: кто-то был 0 мин назад · Радар: кабинет: нет связи'),
+        ((replace(OFFICE_PRESENCE, seen_age_seconds=1260),), 'Компьютер: кабинет: кто-то был 21 мин назад'),
+        ((replace(OFFICE_PRESENCE, seen_age_seconds=1801),), 'Компьютер: кабинет: никого не видно'),
+        ((replace(OFFICE_PRESENCE, present=False, seen_age_seconds=None),), 'Компьютер: кабинет: никого не видно'),
+    ],
+    ids=['seen_and_lost', 'seen_inside_the_window', 'seen_before_the_window', 'never_seen'],
+)
+def test_occupancy_sources_say_what_each_source_saw_within_the_room_s_window(
+    sources: tuple[PresenceOverview, ...],
+    expected: str,
+) -> None:
+    occupancy = OccupancyOverview(state=Occupancy.VACANT, follows=False, sources=sources, vacant_after_minutes=30)
+
+    assert occupancy_sources(occupancy) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'text', 'note'),
+    [
+        (
+            {**OFFICE_OCCUPANCY_PAYLOAD, 'occupancy': 'occupied', 'live': False},
+            'Кабинет: занято',
+            'Наблюдение: отопление идёт по расписанию',
+        ),
+        ({**OFFICE_OCCUPANCY_PAYLOAD, 'occupancy': 'vacant', 'live': True}, 'Кабинет: никого', ''),
+        ({**OFFICE_OCCUPANCY_PAYLOAD, 'occupancy': 'unknown', 'live': False}, 'Кабинет: нет данных о присутствии', ''),
+        ({**OFFICE_OCCUPANCY_PAYLOAD, 'occupancy': 'elsewhere', 'live': False}, 'Кухня: неизвестное событие', ''),
+        (
+            {'room': 'office', 'occupancy': 'vacant', 'live': False},
+            'Кухня: неизвестное событие',
+            'Наблюдение: отопление идёт по расписанию',
+        ),
+    ],
+    ids=['occupied_watched', 'vacant_live', 'unknown', 'unknown_occupancy', 'without_a_name'],
+)
+def test_occupancy_text_names_the_room_and_its_occupancy_and_notes_a_watched_one(
+    payload: dict[str, object],
+    text: str,
+    note: str,
+) -> None:
+    entry = _entry('room_occupancy_changed', payload)
+
+    assert (occupancy_text(entry), occupancy_note(entry)) == (text, note)
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'text', 'note'),
+    [
+        (CONVECTOR_BY_OCCUPANCY, 'Конвектор: кабинет: по присутствию держал бы 19°', 'Никого'),
+        (
+            {**CONVECTOR_BY_OCCUPANCY, 'occupancy': 'occupied', 'setpoint': '22'},
+            'Конвектор: кабинет: по присутствию держал бы 22°',
+            'Занято',
+        ),
+        (
+            {**CONVECTOR_BY_OCCUPANCY, 'power': False, 'setpoint': None},
+            'Конвектор: кабинет: по присутствию выключил бы',
+            'Никого',
+        ),
+        ({**CONVECTOR_BY_OCCUPANCY, 'setpoint': None}, 'Кухня: неизвестное событие', 'Никого'),
+    ],
+    ids=['would_hold_the_night_target', 'would_hold_comfort', 'would_switch_off', 'without_a_setpoint'],
+)
+def test_occupancy_dry_run_text_says_what_occupancy_would_give_the_source(
+    payload: dict[str, object],
+    text: str,
+    note: str,
+) -> None:
+    entry = _entry('occupancy_dry_run', payload)
+
+    assert (occupancy_dry_run_text(entry), occupancy_dry_run_note(entry)) == (text, note)
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (DeviceUnavailableError('the node went offline'), ''),
+        (SensorReadingError('presence: the node reported nan'), 'Радар не присылает кадры'),
+        (DeviceProtocolError("presence: not 0 or 1: b'2'"), 'Источник присутствия прислал не 0 и не 1'),
+        (BrokerUnavailableError('mqtt broker unreachable'), 'teplo не может подключиться к MQTT-брокеру'),
+    ],
+    ids=['offline', 'nan', 'protocol', 'broker'],
+)
+def test_failure_note_explains_a_presence_source_beyond_its_lost_connection(error: DomainError, expected: str) -> None:
+    note = failure_note(
+        error.error_code,
+        error.detail,
+        omit='device_unavailable',
+        device=DeviceKind.PRESENCE_SENSOR.value,
+    )
+
+    assert note == expected

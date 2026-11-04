@@ -83,6 +83,8 @@ class RoomStatusReader:
                     if zone.room_slug == room.slug
                 ),
                 sources=sources.get(room.slug, ()),
+                occupancy=intents.occupancy_of(room.slug),
+                follows_occupancy=room.follows_occupancy and not room.has_floor,
             )
             for room in intents.rooms
         ]

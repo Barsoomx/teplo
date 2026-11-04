@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
@@ -66,6 +66,14 @@ class ClimateUnitState:
     @property
     def on(self) -> bool:
         return self.mode is not ClimateMode.OFF
+
+
+@dataclass(frozen=True, kw_only=True)
+class PresenceReading:
+    present: bool
+    seen_ago: timedelta | None
+    watched_for: timedelta
+    read_at: datetime
 
 
 @dataclass(frozen=True, kw_only=True)

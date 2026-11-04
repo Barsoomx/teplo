@@ -343,3 +343,45 @@ def test_database_lets_a_room_without_a_backup_zone_keep_any_backup_threshold(f_
     RoomClimate.objects.filter(pk=f_open_space.pk).update(backup_below=Decimal('25.0'))
 
     assert RoomClimate.objects.get(pk=f_open_space.pk).backup_below == Decimal('25.0')
+
+
+@pytest.fixture
+def followed_rooms(f_open_space: RoomClimate, f_bedroom: RoomClimate) -> None:
+    RoomClimate.objects.filter(pk=f_open_space.pk).update(follows_occupancy=True)
+    ZoneFactory.create(slug='living-room', room=f_open_space.room)
+    office = RoomClimateFactory.create(
+        room=RoomFactory.create(slug='office', name='Кабинет', position=2, floor=f_bedroom.room.floor),
+        follows_occupancy=True,
+        vacant_after_minutes=30,
+    )
+    for slug, room in (('presence-living-room', f_open_space.room), ('pc-office', office.room)):
+        DeviceFactory.create(
+            slug=slug,
+            kind=DeviceKind.PRESENCE_SENSOR,
+            driver=DeviceDriver.ESPHOME_PRESENCE,
+            room=room,
+        )
+
+
+@pytest.mark.usefixtures('followed_rooms')
+def test_all_settings_carry_the_occupancy_gate_and_whether_the_room_holds_a_floor() -> None:
+    assert [
+        (room.slug, room.follows_occupancy, room.has_floor, room.vacant_after_minutes)
+        for room in RoomClimateRepository.all_settings()
+    ] == [('open-space', True, True, 20), ('bedroom', False, False, 20), ('office', True, False, 30)]
+
+
+@pytest.mark.usefixtures('followed_rooms')
+def test_comfort_for_update_says_whether_the_room_holds_a_floor() -> None:
+    assert (
+        RoomClimateRepository.comfort_for_update('open-space').has_floor,
+        RoomClimateRepository.comfort_for_update('office').has_floor,
+    ) == (True, False)
+
+
+@pytest.mark.usefixtures('followed_rooms')
+def test_config_records_offer_the_occupancy_gate_only_to_a_room_with_a_presence_source_and_no_floor() -> None:
+    assert [
+        (record.slug, record.follows_occupancy, record.vacant_after_minutes, record.occupancy_gate)
+        for record in RoomClimateRepository.config_records()
+    ] == [('open-space', True, 20, False), ('bedroom', False, 20, False), ('office', True, 30, True)]

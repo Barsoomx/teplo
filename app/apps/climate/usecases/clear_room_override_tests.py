@@ -10,10 +10,11 @@ from apps.climate.domain.backup_heat import BackupHeat
 from apps.climate.domain.events import RoomOverrideCleared
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_climate import RoomClimateSettings, RoomOverride
+from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.zone import AirTargets
 from apps.climate.factories import RoomClimateFactory
 from apps.climate.models import RoomClimate
-from apps.climate.stubs import RoomOverrideStoreStub
+from apps.climate.stubs import GuestsStoreStub, OccupancyStoreStub, RoomOverrideStoreStub
 from apps.climate.usecases.clear_room_override import (
     ClearRoomOverrideInputDTO,
     ClearRoomOverrideOutputDTO,
@@ -23,6 +24,7 @@ from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import TransactionStub
 from apps.house.domain.errors import RoomNotFoundError
 from apps.house.factories import RoomFactory
+from apps.presence.domain.occupancy import Occupancy
 from apps.telemetry.models import JournalEntry
 
 NOW = datetime(2026, 11, 4, 13, 45, tzinfo=UTC)
@@ -38,12 +40,37 @@ OPEN_SPACE = RoomClimateSettings(
     override=None,
     adjustable=True,
 )
+OFFICE = replace(
+    OPEN_SPACE,
+    slug='office',
+    name='Кабинет',
+    targets=AirTargets(comfort=Decimal('21.5'), night=Decimal('19.0')),
+    guest_room=False,
+    override=OVERRIDE,
+    follows_occupancy=True,
+)
 CLEAR = ClearRoomOverrideInputDTO(room='open-space', now=NOW, source=CommandSource.TELEGRAM)
+GUESTS_LEAVE = NOW + timedelta(hours=20)
 
 
 @pytest.fixture
-def f_rooms(request: pytest.FixtureRequest) -> RoomOverrideStoreStub:
-    return RoomOverrideStoreStub(rooms=[replace(OPEN_SPACE, override=getattr(request, 'param', None))])
+def office(request: pytest.FixtureRequest) -> RoomClimateSettings:
+    return getattr(request, 'param', OFFICE)
+
+
+@pytest.fixture
+def f_rooms(request: pytest.FixtureRequest, office: RoomClimateSettings) -> RoomOverrideStoreStub:
+    return RoomOverrideStoreStub(rooms=[replace(OPEN_SPACE, override=getattr(request, 'param', None)), office])
+
+
+@pytest.fixture
+def guests(request: pytest.FixtureRequest) -> GuestsStoreStub:
+    return GuestsStoreStub(record=GuestsRecord(until=getattr(request, 'param', None), end_hour=14))
+
+
+@pytest.fixture
+def occupancy(request: pytest.FixtureRequest) -> OccupancyStoreStub:
+    return OccupancyStoreStub(occupancy=getattr(request, 'param', {}))
 
 
 @pytest.fixture
@@ -59,12 +86,20 @@ def f_transaction() -> TransactionStub:
 @pytest.fixture
 def f_use_case(
     f_rooms: RoomOverrideStoreStub,
+    guests: GuestsStoreStub,
+    occupancy: OccupancyStoreStub,
     f_transaction: TransactionStub,
     f_events: list[DomainEvent],
 ) -> ClearRoomOverrideUseCase:
     dispatcher = EventDispatcher()
     dispatcher.register(RoomOverrideCleared, f_events.append)
-    return ClearRoomOverrideUseCase(rooms=f_rooms, transaction=f_transaction, dispatcher=dispatcher)
+    return ClearRoomOverrideUseCase(
+        rooms=f_rooms,
+        guests=guests,
+        occupancy=occupancy,
+        transaction=f_transaction,
+        dispatcher=dispatcher,
+    )
 
 
 @pytest.fixture
@@ -99,6 +134,38 @@ def test_back_to_the_schedule_clears_the_stored_override_and_journals_it(
         ],
         ['committed'],
     )
+
+
+@pytest.mark.parametrize(
+    ('office', 'occupancy', 'guests', 'expected'),
+    [
+        (OFFICE, {'office': Occupancy.VACANT}, None, Occupancy.VACANT),
+        (OFFICE, {'office': Occupancy.OCCUPIED}, None, Occupancy.OCCUPIED),
+        (replace(OFFICE, follows_occupancy=False), {'office': Occupancy.VACANT}, None, None),
+        (replace(OFFICE, has_floor=True), {'office': Occupancy.VACANT}, None, None),
+        (OFFICE, {'office': Occupancy.UNKNOWN}, None, None),
+        (OFFICE, {}, None, None),
+        (replace(OFFICE, guest_room=True), {'office': Occupancy.VACANT}, GUESTS_LEAVE, None),
+    ],
+    ids=['vacant', 'occupied', 'gate_off', 'room_with_a_floor', 'unknown', 'not_tracked', 'guests_stay'],
+    indirect=['office', 'occupancy', 'guests'],
+)
+def test_back_to_the_schedule_names_the_occupancy_the_room_returns_to(
+    f_use_case: ClearRoomOverrideUseCase,
+    f_events: list[DomainEvent],
+    expected: Occupancy | None,
+) -> None:
+    f_use_case.execute(replace(CLEAR, room='office'))
+
+    assert f_events == [
+        RoomOverrideCleared(
+            room='office',
+            name='Кабинет',
+            source=CommandSource.TELEGRAM,
+            occupancy=expected,
+            occurred_at=NOW,
+        ),
+    ]
 
 
 def test_back_to_the_schedule_without_an_override_writes_and_journals_nothing(

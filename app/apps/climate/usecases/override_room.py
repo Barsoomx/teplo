@@ -7,7 +7,7 @@ from django.utils import timezone
 from apps.climate.domain.errors import RoomNotAdjustableError
 from apps.climate.domain.events import RoomOverridden
 from apps.climate.domain.modes import CommandSource
-from apps.climate.domain.ports import GuestsStore, RoomOverrideStore
+from apps.climate.domain.ports import GuestsStore, OccupancyStore, RoomOverrideStore
 from apps.climate.domain.room_climate import RoomOverride
 from apps.climate.domain.room_intent import (
     OVERRIDE_DURATION,
@@ -23,6 +23,8 @@ from apps.core.domain.events import EventDispatcher, event_dispatcher
 from apps.core.domain.ports import Transaction
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.core.services.database_transaction import DatabaseTransaction
+from apps.presence.domain.occupancy import Occupancy
+from apps.presence.services.occupancy_book import occupancy_book
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,17 +50,24 @@ class OverrideRoomUseCase(BaseUseCase[OverrideRoomInputDTO, OverrideRoomOutputDT
         self,
         rooms: RoomOverrideStore,
         guests: GuestsStore,
+        occupancy: OccupancyStore,
         transaction: Transaction,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
         super().__init__(dispatcher=dispatcher)
         self._rooms = rooms
         self._guests = guests
+        self._occupancy = occupancy
         self._transaction = transaction
 
     @classmethod
     def init(cls) -> 'OverrideRoomUseCase':
-        return cls(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), transaction=DatabaseTransaction())
+        return cls(
+            rooms=RoomClimateRepository(),
+            guests=ClimateSettingsRepository(),
+            occupancy=occupancy_book,
+            transaction=DatabaseTransaction(),
+        )
 
     def _execute(self, input_dto: OverrideRoomInputDTO) -> OverrideRoomOutputDTO:
         with self._transaction():
@@ -85,6 +94,7 @@ class OverrideRoomUseCase(BaseUseCase[OverrideRoomInputDTO, OverrideRoomOutputDT
             now=timezone.localtime(input_dto.now),
             clock_trusted=input_dto.clock_trusted,
             guests_until=self._guests.guests().until,
+            occupancy=self._occupancy.snapshot().get(room.slug, Occupancy.UNKNOWN),
         )
         target = override_target(intent, room.targets, input_dto.change, input_dto.value)
         problems = override_problems(target)

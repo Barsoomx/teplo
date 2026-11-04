@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -11,7 +11,7 @@ from django.utils import timezone
 
 from apps.climate.domain.drive import StartPermits
 from apps.climate.domain.errors import HeatSourceNotFoundError
-from apps.climate.domain.events import SourceCommandFailed, SourceCommandIssued
+from apps.climate.domain.events import OccupancyDryRun, SourceCommandFailed, SourceCommandIssued
 from apps.climate.domain.fast_source import (
     SourceChange,
     SourceDrive,
@@ -24,6 +24,7 @@ from apps.climate.domain.fast_source import (
 from apps.climate.domain.heat_sources import SourceSettings
 from apps.climate.domain.modes import COMMAND_SENT, ZoneCycleOutcome
 from apps.climate.domain.ports import ClimateSensorsStore, HeatSourceStore, SourceLoadGate, SourceWrites
+from apps.climate.domain.room_climate import RoomClimateSettings
 from apps.climate.domain.room_intent import RoomIntents
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.heat_source import HeatSourceRepository
@@ -165,12 +166,24 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             return []
 
         states = {source.slug: self._state(source.device_slug) for source in sources}
+        air = self._temperature(climate.air_sensor_slug)
         targets = room_targets(
             sources,
             states,
             shed=held,
-            air=self._temperature(climate.air_sensor_slug),
+            air=air,
             target=intent.target,
+            outdoor=outdoor,
+            now=now,
+        )
+        self._watch_occupancy(
+            climate,
+            sources,
+            states,
+            targets,
+            intents,
+            held=held,
+            air=air,
             outdoor=outdoor,
             now=now,
         )
@@ -188,6 +201,48 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             )
             for source in sources
         ]
+
+    def _watch_occupancy(
+        self,
+        climate: RoomClimateSettings,
+        sources: Sequence[SourceSettings],
+        states: Mapping[str, ClimateUnitState | None],
+        targets: Mapping[str, SourceTarget | None],
+        intents: RoomIntents,
+        *,
+        held: frozenset[str],
+        air: Decimal | None,
+        outdoor: Decimal | None,
+        now: datetime,
+    ) -> None:
+        would_be = intents.would_be_of(climate.slug)
+        occupancy = intents.occupancy_of(climate.slug)
+        if would_be is None or occupancy is None:
+            return
+
+        would = room_targets(sources, states, shed=held, air=air, target=would_be.target, outdoor=outdoor, now=now)
+        for source in sources:
+            target = would[source.slug]
+            if target is None or target == targets[source.slug]:
+                self._book.forget_occupancy_journaled(source.slug)
+                continue
+
+            if self._book.occupancy_journaled(source.slug) == target:
+                continue
+
+            self._book.remember_occupancy_journaled(source.slug, target)
+            self._event_store.add_event(
+                OccupancyDryRun(
+                    source=source.slug,
+                    name=source.name,
+                    room=climate.slug,
+                    room_name=climate.name,
+                    occupancy=occupancy,
+                    power=target.power,
+                    setpoint=target.setpoint,
+                    occurred_at=now,
+                ),
+            )
 
     def _plan(
         self,

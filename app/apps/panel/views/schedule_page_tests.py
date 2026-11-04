@@ -77,6 +77,17 @@ def m_office_schedule_use_case(office_schedule_page: GetSchedulePageOutputDTO) -
 
 
 @pytest.fixture
+def m_occupancy_schedule_use_case(
+    request: pytest.FixtureRequest,
+    office_schedule_page: GetSchedulePageOutputDTO,
+) -> Iterator[MagicMock]:
+    office = replace(office_schedule_page.rooms[0], follows_occupancy=request.param, vacant_after_minutes=25)
+    with mock.patch('apps.panel.views.schedule_page.GetSchedulePageUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(office_schedule_page, rooms=(office,))
+        yield use_case
+
+
+@pytest.fixture
 def m_empty_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.schedule_page.GetSchedulePageUseCase') as use_case:
         use_case.init.return_value.execute.return_value = replace(schedule_page, rooms=())
@@ -190,6 +201,27 @@ def test_schedule_page_says_that_a_source_teplo_commands_holds_the_windows_of_it
         'teplo пока нечем греть эту комнату по расписанию.' in content,
         m_office_schedule_use_case.init.call_count,
     ) == (True, False, 1)
+
+
+@pytest.mark.parametrize(
+    ('m_occupancy_schedule_use_case', 'said'),
+    [(True, True), (False, False)],
+    ids=['following', 'watching'],
+    indirect=['m_occupancy_schedule_use_case'],
+)
+def test_schedule_page_says_that_the_source_of_a_room_following_occupancy_follows_it(
+    f_russian_client: Client,
+    m_occupancy_schedule_use_case: MagicMock,
+    said: bool,
+) -> None:
+    response = f_russian_client.get('/schedule/')
+
+    content = response.content.decode()
+    assert (
+        'Конвектор: кабинет следует присутствию: комфорт, пока здесь кто-то есть, и ночная цель, когда никого нет '
+        '25 мин; окна действуют, пока нет данных о присутствии.' in content,
+        m_occupancy_schedule_use_case.init.call_count,
+    ) == (said, 1)
 
 
 def test_schedule_page_without_rooms_says_where_they_come_from(

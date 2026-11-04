@@ -14,6 +14,7 @@ from apps.climate.domain.events import (
     FireplaceMarked,
     GuestsCleared,
     GuestsSet,
+    OccupancyDryRun,
     OptimalStartDryRun,
     RoomOverridden,
     RoomOverrideCleared,
@@ -53,6 +54,8 @@ from apps.power.domain.events import (
 )
 from apps.power.domain.loads import LoadKind, LoadPhase, ShedReason
 from apps.power.domain.start_gate import StartRefusal
+from apps.presence.domain.events import RoomOccupancyChanged
+from apps.presence.domain.occupancy import Occupancy
 from apps.telemetry.event_handlers import (
     journal_air_control_dry_run,
     journal_alert_cleared,
@@ -74,9 +77,11 @@ from apps.telemetry.event_handlers import (
     journal_load_shed,
     journal_load_shed_dry_run,
     journal_load_shed_overridden,
+    journal_occupancy_dry_run,
     journal_optimal_start_dry_run,
     journal_phase_calm,
     journal_phase_overload,
+    journal_room_occupancy_changed,
     journal_room_overridden,
     journal_room_override_cleared,
     journal_source_command,
@@ -725,12 +730,28 @@ def test_guard_decision_is_journaled_at_once_with_its_raw_values(
             (
                 'room_override_cleared',
                 'open-space',
-                {'room': 'open-space', 'name': 'Гостиная, кухня и прихожая', 'source': 'panel'},
+                {'room': 'open-space', 'name': 'Гостиная, кухня и прихожая', 'source': 'panel', 'occupancy': None},
+                NOW,
+            ),
+        ),
+        (
+            journal_room_override_cleared,
+            RoomOverrideCleared(
+                room='office',
+                name='Кабинет',
+                source=CommandSource.TELEGRAM,
+                occupancy=Occupancy.VACANT,
+                occurred_at=NOW,
+            ),
+            (
+                'room_override_cleared',
+                'office',
+                {'room': 'office', 'name': 'Кабинет', 'source': 'telegram', 'occupancy': 'vacant'},
                 NOW,
             ),
         ),
     ],
-    ids=['guests_set', 'guests_cleared', 'room_overridden', 'room_override_cleared'],
+    ids=['guests_set', 'guests_cleared', 'room_overridden', 'room_override_cleared', 'back_to_occupancy'],
 )
 def test_owner_intents_are_journaled_with_their_room_as_the_subject(
     handler: Callable[..., None],
@@ -891,6 +912,66 @@ def test_owner_intents_are_journaled_with_their_room_as_the_subject(
     ],
 )
 def test_fireplace_and_learning_entries_are_journaled_with_their_subjects(
+    handler: Callable[..., None],
+    event: DomainEvent,
+    expected: tuple[str, str, object, datetime],
+) -> None:
+    handler(event)
+
+    assert _entry() == expected
+
+
+@pytest.mark.parametrize(
+    ('handler', 'event', 'expected'),
+    [
+        (
+            journal_room_occupancy_changed,
+            RoomOccupancyChanged(
+                room='office',
+                name='Кабинет',
+                occupancy=Occupancy.VACANT,
+                previous=Occupancy.OCCUPIED,
+                live=False,
+                occurred_at=NOW,
+            ),
+            (
+                'room_occupancy_changed',
+                'office',
+                {'room': 'office', 'name': 'Кабинет', 'occupancy': 'vacant', 'previous': 'occupied', 'live': False},
+                NOW,
+            ),
+        ),
+        (
+            journal_occupancy_dry_run,
+            OccupancyDryRun(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                room='office',
+                room_name='Кабинет',
+                occupancy=Occupancy.VACANT,
+                power=True,
+                setpoint=Decimal(19),
+                occurred_at=NOW,
+            ),
+            (
+                'occupancy_dry_run',
+                'convector-office',
+                {
+                    'source': 'convector-office',
+                    'name': 'Конвектор: кабинет',
+                    'room': 'office',
+                    'room_name': 'Кабинет',
+                    'occupancy': 'vacant',
+                    'power': True,
+                    'setpoint': '19',
+                },
+                NOW,
+            ),
+        ),
+    ],
+    ids=['room_occupancy_changed', 'occupancy_dry_run'],
+)
+def test_occupancy_entries_are_journaled_with_their_room_or_source_as_the_subject(
     handler: Callable[..., None],
     event: DomainEvent,
     expected: tuple[str, str, object, datetime],

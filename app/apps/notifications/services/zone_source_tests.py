@@ -10,6 +10,7 @@ from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
+from apps.climate.stubs import OccupancyStoreStub
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
 from apps.devices.services.state_store import ThermostatStateStore
 from apps.house.factories import RoomFactory
@@ -50,6 +51,7 @@ def _source() -> ZoneHeatingSource:
             fireplaces=HeatSourceRepository(),
             gates=ClimateSettingsRepository(),
             book=ControlBook(),
+            occupancy=OccupancyStoreStub(occupancy={}),
         ),
         store=store,
     )

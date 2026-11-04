@@ -16,7 +16,7 @@ from apps.climate.domain.room_intent import GuestsRecord, OverrideChange
 from apps.climate.domain.zone import AirTargets, ComfortWindow
 from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.models import RoomClimate
-from apps.climate.stubs import GuestsStoreStub, RoomOverrideStoreStub
+from apps.climate.stubs import GuestsStoreStub, OccupancyStoreStub, RoomOverrideStoreStub
 from apps.climate.usecases.override_room import OverrideRoomInputDTO, OverrideRoomOutputDTO, OverrideRoomUseCase
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.events import DomainEvent, EventDispatcher
@@ -26,6 +26,7 @@ from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.house.domain.errors import RoomNotFoundError
 from apps.house.factories import RoomFactory
+from apps.presence.domain.occupancy import Occupancy
 from apps.telemetry.models import JournalEntry
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -43,6 +44,16 @@ OPEN_SPACE = RoomClimateSettings(
     adjustable=True,
 )
 BEDROOM = replace(OPEN_SPACE, slug='bedroom', name='Спальня', windows=(), guest_room=False, adjustable=False)
+OFFICE = replace(
+    OPEN_SPACE,
+    slug='office',
+    name='Кабинет',
+    targets=AirTargets(comfort=Decimal('21.5'), night=Decimal('19.0')),
+    windows=tuple(ComfortWindow(weekday=weekday, start=time(13, 0), end=time(23, 45)) for weekday in range(7)),
+    guest_room=False,
+    follows_occupancy=True,
+)
+AFTERNOON = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 EDIT = OverrideRoomInputDTO(
     room='open-space',
     change=OverrideChange.UP,
@@ -60,12 +71,17 @@ def _overridden(target: str, until: datetime) -> RoomOverride:
 @pytest.fixture
 def f_rooms(request: pytest.FixtureRequest) -> RoomOverrideStoreStub:
     override = getattr(request, 'param', None)
-    return RoomOverrideStoreStub(rooms=[replace(OPEN_SPACE, override=override), BEDROOM])
+    return RoomOverrideStoreStub(rooms=[replace(OPEN_SPACE, override=override), BEDROOM, OFFICE])
 
 
 @pytest.fixture
 def f_guests(request: pytest.FixtureRequest) -> GuestsStoreStub:
     return GuestsStoreStub(record=GuestsRecord(until=getattr(request, 'param', None), end_hour=14))
+
+
+@pytest.fixture
+def occupancy(request: pytest.FixtureRequest) -> OccupancyStoreStub:
+    return OccupancyStoreStub(occupancy=getattr(request, 'param', {}))
 
 
 @pytest.fixture
@@ -82,12 +98,19 @@ def f_transaction() -> TransactionStub:
 def f_use_case(
     f_rooms: RoomOverrideStoreStub,
     f_guests: GuestsStoreStub,
+    occupancy: OccupancyStoreStub,
     f_transaction: TransactionStub,
     f_events: list[DomainEvent],
 ) -> OverrideRoomUseCase:
     dispatcher = EventDispatcher()
     dispatcher.register(RoomOverridden, f_events.append)
-    return OverrideRoomUseCase(rooms=f_rooms, guests=f_guests, transaction=f_transaction, dispatcher=dispatcher)
+    return OverrideRoomUseCase(
+        rooms=f_rooms,
+        guests=f_guests,
+        occupancy=occupancy,
+        transaction=f_transaction,
+        dispatcher=dispatcher,
+    )
 
 
 @pytest.fixture
@@ -173,6 +196,26 @@ def test_step_starts_from_what_the_room_holds_now(
         Decimal(target),
         [RoomOverride(target=Decimal(target), until=NIGHT + timedelta(hours=2), source=edit.source)],
     )
+
+
+@pytest.mark.parametrize(
+    ('occupancy', 'change', 'target'),
+    [
+        ({'office': Occupancy.VACANT}, OverrideChange.UP, '19.5'),
+        ({'office': Occupancy.VACANT}, OverrideChange.WARMER, '21.5'),
+        ({}, OverrideChange.UP, '22.0'),
+    ],
+    ids=['up_from_the_night_target_of_a_vacant_room', 'warmer_reaches_comfort', 'up_from_the_window_without_presence'],
+    indirect=['occupancy'],
+)
+def test_step_in_a_room_following_occupancy_starts_from_the_target_occupancy_gives(
+    f_use_case: OverrideRoomUseCase,
+    change: OverrideChange,
+    target: str,
+) -> None:
+    output = f_use_case.execute(replace(EDIT, room='office', change=change, now=AFTERNOON))
+
+    assert (output.room, output.target) == ('office', Decimal(target))
 
 
 @pytest.mark.parametrize(

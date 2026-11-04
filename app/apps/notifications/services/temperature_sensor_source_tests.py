@@ -10,6 +10,10 @@ from apps.devices.factories import DeviceFactory
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.state_store import TemperatureStateStore
 from apps.notifications.domain.alerts import MonitoredDevice
+from apps.notifications.domain.ports import DeviceSource
+from apps.notifications.services.climate_unit_source import ClimateUnitSource
+from apps.notifications.services.phase_meter_source import PhaseMeterSource
+from apps.notifications.services.plug_source import PlugSource
 from apps.notifications.services.temperature_sensor_source import TemperatureSensorSource
 
 pytestmark = pytest.mark.django_db
@@ -46,6 +50,17 @@ def f_source() -> TemperatureSensorSource:
     return TemperatureSensorSource(devices=DeviceRepository(), store=store)
 
 
+@pytest.fixture
+def presence_sources() -> None:
+    for slug, node in (('pc-office', ''), ('presence-office', 'air-office')):
+        DeviceFactory.create(
+            slug=slug,
+            kind=DeviceKind.PRESENCE_SENSOR,
+            driver=DeviceDriver.ESPHOME_PRESENCE,
+            node=node,
+        )
+
+
 def test_temperature_sensors_are_watched_under_their_device_names_by_the_age_of_their_last_reading(
     f_source: TemperatureSensorSource,
 ) -> None:
@@ -72,3 +87,13 @@ def test_temperature_sensors_are_watched_under_their_device_names_by_the_age_of_
             last_seen_age=timedelta(minutes=11),
         ),
     ]
+
+
+@pytest.mark.usefixtures('presence_sources')
+@pytest.mark.parametrize(
+    'source',
+    [TemperatureSensorSource.init(), PlugSource.init(), ClimateUnitSource.init(), PhaseMeterSource.init()],
+    ids=['temperature_sensors', 'plugs', 'climate_units', 'phase_meter'],
+)
+def test_no_device_lost_source_watches_a_presence_source(source: DeviceSource) -> None:
+    assert source.devices() == []

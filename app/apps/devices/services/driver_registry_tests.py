@@ -10,6 +10,7 @@ from apps.devices.domain.capabilities import (
     FloorThermostat,
     MeteredPlug,
     PhaseMeter,
+    PresenceSensor,
     SwitchablePlug,
     TemperatureSensor,
 )
@@ -20,12 +21,14 @@ from apps.devices.domain.errors import (
 )
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.drivers.esphome_phase_meter import EsphomePhaseMeterDriver
+from apps.devices.drivers.esphome_presence import EsphomePresenceDriver
 from apps.devices.drivers.esphome_temperature import EsphomeTemperatureDriver
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.driver_registry import DriverRegistry
 from apps.devices.services.phase_meter_store import PhaseMeterStore
+from apps.devices.services.presence_store import PresenceStore
 from apps.devices.services.state_store import TemperatureStateStore
 from apps.devices.stubs import (
     ClimateUnitStub,
@@ -69,6 +72,10 @@ def _phase_meter_factory(slug: str) -> PhaseMeter:
     return EsphomePhaseMeterDriver(slug=slug, store=store)
 
 
+def _presence_sensor_factory(slug: str) -> PresenceSensor:
+    return EsphomePresenceDriver(slug=slug, store=PresenceStore(unavailable_after=timedelta(minutes=10)))
+
+
 @pytest.fixture
 def f_registry() -> DriverRegistry:
     DeviceFactory(slug='thermostat-kitchen')
@@ -82,6 +89,7 @@ def f_registry() -> DriverRegistry:
     DeviceFactory(slug='air-kitchen', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.ESPHOME_TEMPERATURE)
     DeviceFactory(slug='air-attic', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.UNSUPPORTED)
     DeviceFactory(slug='phase-meter', kind=DeviceKind.PHASE_METER, driver=DeviceDriver.ESPHOME_PHASE_METER)
+    DeviceFactory(slug='pc-office', kind=DeviceKind.PRESENCE_SENSOR, driver=DeviceDriver.ESPHOME_PRESENCE)
     secrets = SecretsFile(
         devices={
             'thermostat-kitchen': SECRET,
@@ -102,6 +110,7 @@ def f_registry() -> DriverRegistry:
         switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: _stub_switchable_plug_factory},
         temperature_sensor_factories={DeviceDriver.ESPHOME_TEMPERATURE: _temperature_sensor_factory},
         phase_meter_factories={DeviceDriver.ESPHOME_PHASE_METER: _phase_meter_factory},
+        presence_sensor_factories={DeviceDriver.ESPHOME_PRESENCE: _presence_sensor_factory},
         climate_unit_factories={DeviceDriver.ESPHOME_TEMPERATURE: _stub_climate_unit_factory},
         controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: _stub_controllable_climate_unit_factory},
     )
@@ -230,6 +239,19 @@ def test_temperature_sensor_without_an_esphome_driver_raises(f_registry: DriverR
 def test_phase_meter_with_a_sensor_driver_raises(f_registry: DriverRegistry) -> None:
     with pytest.raises(DriverNotImplementedError):
         f_registry.phase_meter('air-kitchen')
+
+
+def test_presence_sensor_is_built_once_per_slug_without_a_secret(f_registry: DriverRegistry) -> None:
+    first = f_registry.presence_sensor('pc-office')
+    second = f_registry.presence_sensor('pc-office')
+
+    assert (type(first), first is second) == (EsphomePresenceDriver, True)
+
+
+@pytest.mark.parametrize('slug', ['air-kitchen', 'phase-meter', 'thermostat-kitchen'])
+def test_presence_sensor_without_the_presence_driver_raises(f_registry: DriverRegistry, slug: str) -> None:
+    with pytest.raises(DriverNotImplementedError):
+        f_registry.presence_sensor(slug)
 
 
 @pytest.mark.parametrize('slug', ['heater-office', 'heater-hall'], ids=['controllable', 'read_only'])

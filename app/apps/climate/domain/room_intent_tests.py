@@ -16,6 +16,7 @@ from apps.climate.domain.room_intent import (
     RoomIntent,
     RoomIntents,
     guests_end,
+    occupancy_holds,
     override_problems,
     override_target,
     resolve_room_intent,
@@ -24,6 +25,7 @@ from apps.climate.domain.room_intent import (
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
 from apps.climate.domain.zone_intent import ForcedTarget, ZoneIntent
 from apps.core.domain.settings import SettingProblem
+from apps.presence.domain.occupancy import Occupancy
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 NIGHT = datetime(2026, 11, 4, 1, 0, tzinfo=MOSCOW)
@@ -487,3 +489,250 @@ def test_guests_end_a_day_later_for_each_further_night(now: datetime, end_hour: 
     ends = [guests_end(now, nights, end_hour) for nights in range(1, MAX_GUEST_NIGHTS + 1)]
 
     assert [end - ends[0] for end in ends] == [timedelta(days=nights) for nights in range(MAX_GUEST_NIGHTS)]
+
+
+AFTERNOON = datetime(2026, 11, 4, 15, 0, tzinfo=MOSCOW)
+OFFICE_OPENS = datetime(2026, 11, 4, 13, 0, tzinfo=MOSCOW)
+OFFICE_CLOSES = datetime(2026, 11, 4, 23, 45, tzinfo=MOSCOW)
+OFFICE_COMFORT = Decimal('21.5')
+OFFICE_NIGHT = Decimal('19.0')
+OFFICE = replace(
+    OPEN_SPACE,
+    slug='office',
+    name='Кабинет',
+    targets=AirTargets(comfort=OFFICE_COMFORT, night=OFFICE_NIGHT),
+    windows=tuple(ComfortWindow(weekday=weekday, start=time(13, 0), end=time(23, 45)) for weekday in range(7)),
+    guest_room=False,
+    follows_occupancy=True,
+)
+WATCHED_OFFICE = replace(OFFICE, follows_occupancy=False)
+GUEST_OFFICE = replace(OFFICE, guest_room=True)
+OVERRIDDEN_OFFICE = replace(OFFICE, override=OVERRIDE)
+
+
+def _office(
+    reason: IntentReason,
+    target: Decimal,
+    until: datetime | None,
+    *,
+    forced: tuple[ForcedTarget, ...] = (),
+) -> RoomIntent:
+    return RoomIntent(room='office', reason=reason, target=target, until=until, forced=forced)
+
+
+@pytest.mark.parametrize(
+    ('room', 'now', 'clock_trusted', 'guests_until', 'occupancy', 'expected'),
+    [
+        (
+            WATCHED_OFFICE,
+            AFTERNOON,
+            True,
+            None,
+            Occupancy.VACANT,
+            _office(IntentReason.COMFORT, OFFICE_COMFORT, OFFICE_CLOSES),
+        ),
+        (OFFICE, AFTERNOON, True, None, Occupancy.OCCUPIED, _office(IntentReason.OCCUPIED, OFFICE_COMFORT, None)),
+        (OFFICE, NIGHT, True, None, Occupancy.OCCUPIED, _office(IntentReason.OCCUPIED, OFFICE_COMFORT, None)),
+        (OFFICE, AFTERNOON, True, None, Occupancy.VACANT, _office(IntentReason.VACANT, OFFICE_NIGHT, None)),
+        (OFFICE, NIGHT, True, None, Occupancy.VACANT, _office(IntentReason.VACANT, OFFICE_NIGHT, None)),
+        (
+            OFFICE,
+            AFTERNOON,
+            True,
+            None,
+            Occupancy.UNKNOWN,
+            _office(IntentReason.COMFORT, OFFICE_COMFORT, OFFICE_CLOSES),
+        ),
+        (OFFICE, NIGHT, True, None, Occupancy.UNKNOWN, _office(IntentReason.SETBACK, OFFICE_NIGHT, OFFICE_OPENS)),
+        (OFFICE, NIGHT, False, None, Occupancy.VACANT, _office(IntentReason.VACANT, OFFICE_NIGHT, None)),
+        (
+            GUEST_OFFICE,
+            NIGHT,
+            True,
+            GUESTS_LEAVE,
+            Occupancy.VACANT,
+            _office(
+                IntentReason.GUESTS,
+                OFFICE_COMFORT,
+                GUESTS_LEAVE,
+                forced=(ForcedTarget(target=OFFICE_COMFORT, beneath=OFFICE_NIGHT),),
+            ),
+        ),
+        (GUEST_OFFICE, NIGHT, False, GUESTS_LEAVE, Occupancy.VACANT, _office(IntentReason.CLOCK, OFFICE_COMFORT, None)),
+        (GUEST_OFFICE, NIGHT, True, None, Occupancy.VACANT, _office(IntentReason.VACANT, OFFICE_NIGHT, None)),
+        (
+            replace(OFFICE, has_floor=True),
+            AFTERNOON,
+            True,
+            None,
+            Occupancy.VACANT,
+            _office(IntentReason.COMFORT, OFFICE_COMFORT, OFFICE_CLOSES),
+        ),
+        (
+            OVERRIDDEN_OFFICE,
+            NIGHT,
+            True,
+            None,
+            Occupancy.OCCUPIED,
+            _office(
+                IntentReason.OVERRIDE,
+                Decimal('23.0'),
+                NIGHT + timedelta(hours=1),
+                forced=(ForcedTarget(target=Decimal('23.0'), beneath=OFFICE_NIGHT),),
+            ),
+        ),
+    ],
+    ids=[
+        'gate_off_ignores_occupancy',
+        'occupied_holds_comfort_inside_the_windows',
+        'occupied_holds_comfort_outside_the_windows',
+        'vacant_holds_the_night_target_inside_the_windows',
+        'vacant_holds_the_night_target_outside_the_windows',
+        'unknown_follows_the_windows',
+        'unknown_follows_the_setback',
+        'untrusted_clock_keeps_following_occupancy',
+        'staying_guests_beat_vacant_on_a_trusted_clock',
+        'staying_guests_beat_vacant_on_an_untrusted_clock',
+        'guest_room_without_guests_follows_occupancy',
+        'room_with_a_floor_ignores_occupancy',
+        'override_beats_occupancy_and_steps_over_the_floors_target',
+    ],
+)
+def test_room_following_occupancy_holds_comfort_while_occupied_and_its_night_target_while_vacant(
+    room: RoomClimateSettings,
+    now: datetime,
+    clock_trusted: bool,
+    guests_until: datetime | None,
+    occupancy: Occupancy,
+    expected: RoomIntent,
+) -> None:
+    intent = resolve_room_intent(
+        room,
+        now=now,
+        clock_trusted=clock_trusted,
+        guests_until=guests_until,
+        occupancy=occupancy,
+    )
+
+    assert intent == expected
+
+
+@pytest.mark.parametrize(
+    ('room', 'now', 'clock_trusted', 'guests_until'),
+    [
+        (OFFICE, AFTERNOON, True, None),
+        (OFFICE, NIGHT, False, None),
+        (GUEST_OFFICE, NIGHT, True, GUESTS_LEAVE),
+        (OVERRIDDEN_OFFICE, NIGHT, True, None),
+        (replace(OVERRIDDEN_OFFICE, guest_room=True), NIGHT, True, GUESTS_LEAVE),
+    ],
+    ids=['schedule', 'untrusted_clock', 'guests', 'override', 'override_over_guests'],
+)
+@pytest.mark.parametrize('occupancy', [Occupancy.OCCUPIED, Occupancy.VACANT])
+def test_forced_targets_the_floors_read_never_carry_occupancy(
+    room: RoomClimateSettings,
+    now: datetime,
+    clock_trusted: bool,
+    guests_until: datetime | None,
+    occupancy: Occupancy,
+) -> None:
+    known = resolve_room_intent(
+        room, now=now, clock_trusted=clock_trusted, guests_until=guests_until, occupancy=occupancy
+    )
+    unknown = resolve_room_intent(room, now=now, clock_trusted=clock_trusted, guests_until=guests_until)
+
+    assert known.forced == unknown.forced
+
+
+@pytest.mark.parametrize(
+    ('room', 'occupancy', 'guests_until', 'holds'),
+    [
+        (OFFICE, Occupancy.OCCUPIED, None, True),
+        (OFFICE, Occupancy.VACANT, None, True),
+        (OFFICE, Occupancy.UNKNOWN, None, False),
+        (WATCHED_OFFICE, Occupancy.VACANT, None, False),
+        (replace(OFFICE, has_floor=True), Occupancy.VACANT, None, False),
+        (GUEST_OFFICE, Occupancy.VACANT, GUESTS_LEAVE, False),
+        (GUEST_OFFICE, Occupancy.VACANT, None, True),
+        (OFFICE, Occupancy.VACANT, GUESTS_LEAVE, True),
+    ],
+    ids=[
+        'occupied',
+        'vacant',
+        'unknown',
+        'gate_off',
+        'room_with_a_floor',
+        'guests_stay_in_a_guest_room',
+        'guest_room_without_guests',
+        'guests_stay_in_another_room',
+    ],
+)
+def test_occupancy_holds_only_a_room_following_it_without_a_floor_and_without_staying_guests(
+    room: RoomClimateSettings,
+    occupancy: Occupancy,
+    guests_until: datetime | None,
+    holds: bool,
+) -> None:
+    assert occupancy_holds(room, occupancy, guests_until=guests_until, now=NIGHT) is holds
+
+
+@pytest.mark.parametrize(
+    ('room', 'occupancy', 'guests_until', 'would_be'),
+    [
+        (WATCHED_OFFICE, Occupancy.VACANT, None, _office(IntentReason.VACANT, OFFICE_NIGHT, None)),
+        (WATCHED_OFFICE, Occupancy.OCCUPIED, None, _office(IntentReason.OCCUPIED, OFFICE_COMFORT, None)),
+        (OFFICE, Occupancy.VACANT, None, None),
+        (WATCHED_OFFICE, Occupancy.UNKNOWN, None, None),
+        (replace(WATCHED_OFFICE, override=OVERRIDE), Occupancy.VACANT, None, None),
+        (replace(WATCHED_OFFICE, guest_room=True), Occupancy.VACANT, GUESTS_LEAVE, None),
+        (replace(WATCHED_OFFICE, has_floor=True), Occupancy.VACANT, None, None),
+    ],
+    ids=[
+        'watched_and_vacant',
+        'watched_and_occupied',
+        'gate_on',
+        'unknown',
+        'override_counts',
+        'guests_stay',
+        'room_with_a_floor',
+    ],
+)
+def test_room_watching_occupancy_has_the_intent_occupancy_would_give_it(
+    room: RoomClimateSettings,
+    occupancy: Occupancy,
+    guests_until: datetime | None,
+    would_be: RoomIntent | None,
+) -> None:
+    intents = resolve_room_intents(
+        (room,),
+        now=NIGHT,
+        clock_trusted=True,
+        guests_until=guests_until,
+        occupancy={'office': occupancy},
+    )
+
+    assert intents.would_be_of('office') == would_be
+
+
+def test_room_intents_expose_the_occupancy_they_were_resolved_with() -> None:
+    intents = resolve_room_intents(
+        (WATCHED_OFFICE, BEDROOM),
+        now=NIGHT,
+        clock_trusted=True,
+        guests_until=None,
+        occupancy={'office': Occupancy.VACANT},
+    )
+
+    assert (
+        dict(intents.occupancy),
+        intents.occupancy_of('office'),
+        intents.occupancy_of('bedroom'),
+        intents.would_be_of('bedroom'),
+        intents.of('office'),
+    ) == (
+        {'office': Occupancy.VACANT},
+        Occupancy.VACANT,
+        None,
+        None,
+        _office(IntentReason.SETBACK, OFFICE_NIGHT, OFFICE_OPENS),
+    )

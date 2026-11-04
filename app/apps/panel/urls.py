@@ -7,6 +7,7 @@ from apps.panel.views.api.v1.loads import LoadsApiView
 from apps.panel.views.api.v1.outages import OutagesApiView
 from apps.panel.views.api.v1.phases import PhasesApiView
 from apps.panel.views.api.v1.plugs import PlugsApiView
+from apps.panel.views.api.v1.presence import PresenceApiView
 from apps.panel.views.api.v1.rooms import RoomsApiView
 from apps.panel.views.api.v1.sensors import SensorsApiView
 from apps.panel.views.api.v1.sources import SourcesApiView
@@ -74,6 +75,7 @@ urlpatterns = [
     path('api/v1/plugs/', PlugsApiView.as_view(), name='api-v1-plugs'),
     path('api/v1/loads/', LoadsApiView.as_view(), name='api-v1-loads'),
     path('api/v1/sensors/', SensorsApiView.as_view(), name='api-v1-sensors'),
+    path('api/v1/presence/', PresenceApiView.as_view(), name='api-v1-presence'),
     path('api/v1/phases/', PhasesApiView.as_view(), name='api-v1-phases'),
     path('api/v1/outages/', OutagesApiView.as_view(), name='api-v1-outages'),
 ]

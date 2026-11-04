@@ -6,6 +6,7 @@ from apps.devices.domain.readings import (
     EvChargerState,
     PhaseCurrents,
     PlugState,
+    PresenceReading,
     TemperatureReading,
     ThermostatMode,
     ThermostatState,
@@ -36,6 +37,10 @@ class TemperatureSensor(Protocol):
 
 class PhaseMeter(Protocol):
     def read_currents(self) -> PhaseCurrents: ...
+
+
+class PresenceSensor(Protocol):
+    def read_presence(self) -> PresenceReading: ...
 
 
 class ClimateUnit(Protocol):
@@ -72,3 +77,7 @@ class ClimateUnitProvider(Protocol):
 
 class ControllableClimateUnitProvider(Protocol):
     def controllable_climate_unit(self, slug: str) -> ControllableClimateUnit: ...
+
+
+class PresenceSensorProvider(Protocol):
+    def presence_sensor(self, slug: str) -> PresenceSensor: ...

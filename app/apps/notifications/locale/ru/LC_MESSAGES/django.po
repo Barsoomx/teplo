@@ -357,3 +357,20 @@ msgstr "%(source)s: включён на %(setpoint)s°, у прибора %(temp
 #, python-format
 msgid "%(source)s: off, %(temperature)s° at the unit"
 msgstr "%(source)s: выключен, у прибора %(temperature)s°"
+
+msgid "occupied"
+msgstr "занято"
+
+msgid "nobody there"
+msgstr "никого"
+
+msgid "no presence data"
+msgstr "нет данных о присутствии"
+
+#, python-format
+msgid "%(occupancy)s (watching)"
+msgstr "%(occupancy)s (наблюдение)"
+
+#, python-format
+msgid "%(room)s: back to occupancy, %(target)s°."
+msgstr "%(room)s: снова по присутствию, %(target)s°."

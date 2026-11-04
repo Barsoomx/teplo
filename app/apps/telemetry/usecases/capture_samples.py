@@ -1,11 +1,12 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.kinds import DeviceKind
 from apps.devices.domain.readings import ClimateUnitState, Phase, PlugState, TemperatureReading, ThermostatState
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import CurrentStatistics, PhaseMeterStore, phase_meter_store
+from apps.devices.services.presence_store import PresenceStore, presence_store
 from apps.devices.services.state_store import (
     ClimateUnitStateStore,
     PlugStateStore,
@@ -20,6 +21,7 @@ from apps.telemetry.domain.samples import SampleValue
 from apps.telemetry.services.sample_buffer import SampleBuffer, sample_buffer
 
 PHASE_SUBJECTS = {Phase.A: 'l1', Phase.B: 'l2', Phase.C: 'l3'}
+PRESENCE_SAMPLED_WITHIN = timedelta(seconds=60)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -41,6 +43,7 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
         temperature_store: TemperatureStateStore,
         phase_meter_store: PhaseMeterStore,
         climate_unit_store: ClimateUnitStateStore,
+        presence_store: PresenceStore,
         buffer: SampleBuffer,
     ) -> None:
         super().__init__()
@@ -50,6 +53,7 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
         self._temperature_store = temperature_store
         self._phase_meter_store = phase_meter_store
         self._climate_unit_store = climate_unit_store
+        self._presence_store = presence_store
         self._buffer = buffer
 
     @classmethod
@@ -61,6 +65,7 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
             temperature_store=temperature_state_store,
             phase_meter_store=phase_meter_store,
             climate_unit_store=climate_unit_state_store,
+            presence_store=presence_store,
             buffer=sample_buffer,
         )
 
@@ -71,6 +76,7 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
             *self._temperature_samples(input_dto.now),
             *self._phase_meter_samples(input_dto.now),
             *self._climate_unit_samples(input_dto.now),
+            *self._presence_samples(input_dto.now),
         ]
         for sample in samples:
             self._buffer.add(sample)
@@ -106,6 +112,17 @@ class CaptureSamplesUseCase(BaseUseCase[CaptureSamplesInputDTO, CaptureSamplesOu
             snapshot = self._climate_unit_store.snapshot(slug)
             if snapshot.available and snapshot.state is not None:
                 samples.extend(_climate_unit_values(slug, snapshot.state, now))
+        return samples
+
+    def _presence_samples(self, now: datetime) -> list[SampleValue]:
+        samples: list[SampleValue] = []
+        for slug in self._devices.slugs_of_kind(DeviceKind.PRESENCE_SENSOR):
+            snapshot = self._presence_store.snapshot(slug)
+            if snapshot.available:
+                seen = snapshot.seen_age is not None and snapshot.seen_age <= PRESENCE_SAMPLED_WITHIN
+                samples.append(
+                    SampleValue(metric='presence', subject=slug, value=1.0 if seen else 0.0, recorded_at=now)
+                )
         return samples
 
     def _phase_meter_samples(self, now: datetime) -> list[SampleValue]:

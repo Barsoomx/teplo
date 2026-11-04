@@ -22,6 +22,7 @@ BURNING = FireWatch(
 )
 CALM = FireWatch(points={'air-bedroom': (AirPoint(moment=60.0, air=Decimal('19.0')),)})
 JOURNALED = SourceTarget(power=True, setpoint=Decimal(22))
+BY_OCCUPANCY = SourceTarget(power=True, setpoint=Decimal(19))
 
 
 @pytest.fixture
@@ -32,6 +33,8 @@ def f_book() -> ControlBook:
     book.remember_fire('open-space', BURNING)
     book.remember_fire('bedroom', CALM)
     book.remember_source_journaled('convector-office', JOURNALED)
+    book.remember_occupancy_journaled('convector-office', BY_OCCUPANCY)
+    book.remember_occupancy_journaled('ac-bedroom', BY_OCCUPANCY)
     return book
 
 
@@ -71,3 +74,14 @@ def test_book_notices_a_room_without_its_climate_once(f_book: ControlBook) -> No
     first = f_book.first_notice_without_climate('office')
 
     assert (first, f_book.first_notice_without_climate('office')) == (True, False)
+
+
+def test_book_remembers_what_occupancy_would_give_each_source_until_it_is_forgotten(f_book: ControlBook) -> None:
+    f_book.forget_occupancy_journaled('ac-bedroom')
+    f_book.forget_occupancy_journaled('heater-attic')
+
+    assert (
+        f_book.occupancy_journaled('convector-office'),
+        f_book.occupancy_journaled('ac-bedroom'),
+        f_book.source_journaled('convector-office'),
+    ) == (BY_OCCUPANCY, None, JOURNALED)

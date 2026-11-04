@@ -48,6 +48,7 @@ DRY_RUN_GATE = 'TEPLO_DRY_RUN'
 NO_COMMANDS = '—'
 AIR_SENSOR_OF_A_ZONE = gettext_lazy('This sensor is the air sensor of a zone')
 AIR_SENSOR_IN_ANOTHER_ROOM = gettext_lazy('This sensor is placed in another room')
+FLOORS_NEVER_FOLLOW_OCCUPANCY = gettext_lazy('This room has a heated floor: floors never follow occupancy')
 NAMES_SEPARATOR = ', '
 
 
@@ -122,6 +123,8 @@ class ZoneAdmin(admin.ModelAdmin):
 class RoomClimateAdminForm(forms.ModelForm):
     def clean(self) -> dict[str, Any]:
         super().clean()
+        if self.cleaned_data.get('follows_occupancy') and Zone.objects.filter(room=self.instance.room_id).exists():
+            self.add_error('follows_occupancy', FLOORS_NEVER_FOLLOW_OCCUPANCY)
         sensor = self.cleaned_data.get('air_sensor')
         if sensor is None:
             return self.cleaned_data
@@ -145,10 +148,15 @@ class RoomClimateAdmin(admin.ModelAdmin):
         'backup_below',
         'backup_live',
         'guest_room',
+        'follows_occupancy',
+        'vacant_after_minutes',
     )
-    list_editable = ('backup_live',)
+    list_editable = ('backup_live', 'follows_occupancy')
     readonly_fields = ('room', *OVERRIDE_FIELDS)
     inlines = (RoomComfortPeriodInline,)
+
+    def get_changelist_form(self, request: HttpRequest, **kwargs: object) -> type[forms.ModelForm]:
+        return super().get_changelist_form(request, form=RoomClimateAdminForm, **kwargs)
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
         return False

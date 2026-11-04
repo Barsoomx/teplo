@@ -8,9 +8,10 @@ from django.utils.formats import date_format
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.drive import PendingKind
-from apps.climate.domain.room_intent import IntentReason, RoomIntent
+from apps.climate.domain.room_intent import OCCUPANCY_REASONS, IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, SourceStatus, ZoneStatus
 from apps.notifications.domain.alerts import PhaseReading
+from apps.presence.domain.occupancy import Occupancy
 
 HELP = gettext_lazy(
     'Commands:\n'
@@ -31,6 +32,7 @@ GUESTS_CLOCK = gettext_lazy('The clock is not synced: guests can be switched on 
 OVERRIDE = gettext_lazy('%(room)s: %(target)s° until %(until)s.')
 AUTO = gettext_lazy('%(room)s: back to the schedule, %(target)s° until %(until)s.')
 AUTO_OPEN = gettext_lazy('%(room)s: back to the schedule, %(target)s°.')
+AUTO_OCCUPANCY = gettext_lazy('%(room)s: back to occupancy, %(target)s°.')
 AUTO_NONE = gettext_lazy('%(room)s: no manual target to cancel.')
 AUTO_DONE = gettext_lazy('%(room)s: back to the schedule.')
 BOOST = gettext_lazy('%(room)s: boost until %(until)s.')
@@ -79,7 +81,15 @@ OPEN_REASONS = {
     IntentReason.OVERRIDE: gettext_lazy('manual'),
     IntentReason.GUESTS: gettext_lazy('guests'),
     IntentReason.CLOCK: gettext_lazy('the clock is not synced'),
+    IntentReason.OCCUPIED: gettext_lazy('occupied'),
+    IntentReason.VACANT: gettext_lazy('nobody there'),
 }
+OCCUPANCY_WORDS = {
+    Occupancy.OCCUPIED: gettext_lazy('occupied'),
+    Occupancy.VACANT: gettext_lazy('nobody there'),
+    Occupancy.UNKNOWN: gettext_lazy('no presence data'),
+}
+OCCUPANCY_WATCHED = gettext_lazy('%(occupancy)s (watching)')
 ZONE_AIR_FLOOR = gettext_lazy('%(zone)s: air %(air)s°, floor %(floor)s° (set to %(setpoint)s°)')
 ZONE_FLOOR = gettext_lazy('%(zone)s: floor %(floor)s° (set to %(setpoint)s°)')
 ZONE_OFF = gettext_lazy('%(zone)s: floor %(floor)s°, the thermostat is off')
@@ -135,9 +145,9 @@ def reason_text(intent: RoomIntent, now: datetime) -> str:
 def room_line(room: RoomStatus, now: datetime) -> str:
     values = {'room': room.name, 'target': degrees(room.intent.target), 'reason': reason_text(room.intent, now)}
     if room.air is None:
-        return str(ROOM_TARGET) % values
+        return str(ROOM_TARGET) % values + _occupancy_text(room)
 
-    return str(ROOM_AIR) % {**values, 'air': degrees(room.air)}
+    return str(ROOM_AIR) % {**values, 'air': degrees(room.air)} + _occupancy_text(room)
 
 
 def zone_state_line(zone: ZoneStatus) -> str:
@@ -236,6 +246,16 @@ def _phase_text(reading: PhaseReading) -> str:
 
     template = ESTIMATED_PHASE_AMPS if reading.estimated else PHASE_AMPS
     return str(template) % {'phase': phase, 'amps': floatformat(reading.amps, 1)}
+
+
+def _occupancy_text(room: RoomStatus) -> str:
+    if room.occupancy is None or room.intent.reason in OCCUPANCY_REASONS:
+        return ''
+
+    word = str(OCCUPANCY_WORDS[room.occupancy])
+    if not room.follows_occupancy:
+        word = str(OCCUPANCY_WATCHED) % {'occupancy': word}
+    return f'{NAMES_SEPARATOR}{word}'
 
 
 def _source_target(source: SourceStatus) -> str:

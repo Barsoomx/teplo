@@ -11,6 +11,7 @@ class ControlBook:
         self._backups: dict[str, bool] = {}
         self._fires: dict[str, FireWatch] = {}
         self._journaled_sources: dict[str, SourceTarget] = {}
+        self._occupancy_journaled: dict[str, SourceTarget] = {}
         self._rooms_without_climate: set[str] = set()
         self._lock = threading.Lock()
 
@@ -49,6 +50,18 @@ class ControlBook:
     def remember_source_journaled(self, source: str, target: SourceTarget) -> None:
         with self._lock:
             self._journaled_sources[source] = target
+
+    def occupancy_journaled(self, source: str) -> SourceTarget | None:
+        with self._lock:
+            return self._occupancy_journaled.get(source)
+
+    def remember_occupancy_journaled(self, source: str, target: SourceTarget) -> None:
+        with self._lock:
+            self._occupancy_journaled[source] = target
+
+    def forget_occupancy_journaled(self, source: str) -> None:
+        with self._lock:
+            self._occupancy_journaled.pop(source, None)
 
     def first_notice_without_climate(self, room: str) -> bool:
         with self._lock:

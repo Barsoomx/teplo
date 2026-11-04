@@ -31,10 +31,17 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.panel.usecases.get_panel_overview import LoadOverview, SourceOverview, ZoneOverview
+from apps.panel.usecases.get_panel_overview import (
+    LoadOverview,
+    OccupancyOverview,
+    PresenceOverview,
+    SourceOverview,
+    ZoneOverview,
+)
 from apps.panel.usecases.get_phase_currents import ESTIMATE_BASE, EstimatePartOverview, PhaseCurrent
 from apps.power.domain.loads import MEASURED_PHASES, AmpsOrigin, LoadKind, PhaseOrigin
 from apps.power.domain.outage import OutageRecord
+from apps.presence.domain.occupancy import KNOWN_OCCUPANCY, Occupancy
 from apps.system.domain.clock import ClockStatusCode
 
 register = template.Library()
@@ -76,11 +83,17 @@ CLIMATE_UNIT_FAILURE_NOTES = {
     'device_config_invalid': gettext_lazy('The secrets file gives this unit a wrong address or protocol'),
     'climate_unit_not_controllable': gettext_lazy('The driver of this unit cannot command it'),
 }
+PRESENCE_FAILURE_NOTES = {
+    **SENSOR_FAILURE_NOTES,
+    'sensor_reading_failed': gettext_lazy('The radar sends no frames'),
+    'device_protocol_error': gettext_lazy('The presence source sent a value other than 0 or 1'),
+}
 DEVICE_FAILURE_NOTES = {
     DeviceKind.PLUG.value: PLUG_FAILURE_NOTES,
     DeviceKind.TEMPERATURE_SENSOR.value: SENSOR_FAILURE_NOTES,
     DeviceKind.PHASE_METER.value: PHASE_METER_FAILURE_NOTES,
     DeviceKind.CLIMATE_UNIT.value: CLIMATE_UNIT_FAILURE_NOTES,
+    DeviceKind.PRESENCE_SENSOR.value: PRESENCE_FAILURE_NOTES,
 }
 UNKNOWN_FAILURE = gettext_lazy('Unknown error')
 CLOCK_NOTES = {
@@ -167,6 +180,20 @@ GUESTS_OFF = gettext_lazy('Guests mode is off')
 GUEST_NIGHTS = {1: gettext_lazy('1 night'), 2: gettext_lazy('2 nights'), 3: gettext_lazy('3 nights')}
 ROOM_OVERRIDDEN = gettext_lazy('%(name)s: manual %(target)s° until %(time)s')
 ROOM_OVERRIDE_CLEARED = gettext_lazy('%(name)s: back to the schedule')
+ROOM_OVERRIDE_CLEARED_OCCUPANCY = gettext_lazy('%(name)s: back to occupancy')
+OCCUPANCY_TEXTS = {
+    Occupancy.OCCUPIED: gettext_lazy('%(name)s: occupied'),
+    Occupancy.VACANT: gettext_lazy('%(name)s: nobody there'),
+    Occupancy.UNKNOWN: gettext_lazy('%(name)s: no presence data'),
+}
+OCCUPANCY_WATCHED = gettext_lazy('Watching: heating keeps the schedule')
+OCCUPANCY_NOTES = {Occupancy.OCCUPIED: gettext_lazy('Occupied'), Occupancy.VACANT: gettext_lazy('Nobody there')}
+OCCUPANCY_WOULD_HOLD = gettext_lazy('%(name)s: by occupancy would hold %(setpoint)s°')
+OCCUPANCY_WOULD_SWITCH_OFF = gettext_lazy('%(name)s: by occupancy would switch off')
+SOMEONE_MINUTES_AGO = gettext_lazy('%(name)s: someone %(minutes)s min ago')
+NOBODY_SEEN = gettext_lazy('%(name)s: nobody seen')
+PRESENCE_NO_CONNECTION = gettext_lazy('%(name)s: no connection')
+OCCUPANCY_SOURCES_SEPARATOR = ' · '
 FROM_TELEGRAM = gettext_lazy('From Telegram')
 FIREPLACE_MARKED = gettext_lazy('%(name)s: lit until %(time)s')
 FIREPLACE_MARK_CLEARED = gettext_lazy('%(name)s: out')
@@ -504,7 +531,8 @@ def room_override_text(entry: TimelineEntry) -> str:
         return _unknown_event(entry)
 
     if entry.kind == 'room_override_cleared':
-        return str(ROOM_OVERRIDE_CLEARED) % {'name': name}
+        template = ROOM_OVERRIDE_CLEARED_OCCUPANCY if _occupancy(entry) in KNOWN_OCCUPANCY else ROOM_OVERRIDE_CLEARED
+        return str(template) % {'name': name}
 
     target = floatformat(entry.payload.get('target'), 1)
     moment = _journaled_moment(entry.payload.get('until'))
@@ -512,6 +540,53 @@ def room_override_text(entry: TimelineEntry) -> str:
         return _unknown_event(entry)
 
     return str(ROOM_OVERRIDDEN) % {'name': name, 'target': target, 'time': moment}
+
+
+@register.filter
+def occupancy_sources(occupancy: OccupancyOverview) -> str:
+    window = timedelta(minutes=occupancy.vacant_after_minutes).total_seconds()
+    return OCCUPANCY_SOURCES_SEPARATOR.join(_presence_source_text(source, window) for source in occupancy.sources)
+
+
+@register.filter
+def occupancy_text(entry: TimelineEntry) -> str:
+    name = entry.payload.get('name')
+    occupancy = _occupancy(entry)
+    if not isinstance(name, str) or not name or occupancy is None:
+        return _unknown_event(entry)
+
+    return str(OCCUPANCY_TEXTS[occupancy]) % {'name': name}
+
+
+@register.filter
+def occupancy_note(entry: TimelineEntry) -> str:
+    if entry.payload.get('live') is not False or _occupancy(entry) not in KNOWN_OCCUPANCY:
+        return ''
+
+    return str(OCCUPANCY_WATCHED)
+
+
+@register.filter
+def occupancy_dry_run_text(entry: TimelineEntry) -> str:
+    name = entry.payload.get('name')
+    power = entry.payload.get('power')
+    setpoint = floatformat(entry.payload.get('setpoint'), -1)
+    if not isinstance(name, str) or not name or not isinstance(power, bool) or (power and not setpoint):
+        return _unknown_event(entry)
+
+    if not power:
+        return str(OCCUPANCY_WOULD_SWITCH_OFF) % {'name': name}
+
+    return str(OCCUPANCY_WOULD_HOLD) % {'name': name, 'setpoint': setpoint}
+
+
+@register.filter
+def occupancy_dry_run_note(entry: TimelineEntry) -> str:
+    occupancy = _occupancy(entry)
+    if occupancy is None or occupancy not in OCCUPANCY_NOTES:
+        return ''
+
+    return str(OCCUPANCY_NOTES[occupancy])
 
 
 @register.filter
@@ -1106,6 +1181,21 @@ def _highest_rate(rates: object) -> Decimal | None:
         return max(Decimal(str(rate)) for rate in rates.values())
     except InvalidOperation:
         return None
+
+
+def _occupancy(entry: TimelineEntry) -> Occupancy | None:
+    value = entry.payload.get('occupancy')
+    return Occupancy(value) if isinstance(value, str) and value in Occupancy else None
+
+
+def _presence_source_text(source: PresenceOverview, window: float) -> str:
+    if not source.available:
+        return str(PRESENCE_NO_CONNECTION) % {'name': source.name}
+
+    if source.seen_age_seconds is None or source.seen_age_seconds > window:
+        return str(NOBODY_SEEN) % {'name': source.name}
+
+    return str(SOMEONE_MINUTES_AGO) % {'name': source.name, 'minutes': source.seen_age_seconds // 60}
 
 
 def _unknown_event(entry: TimelineEntry) -> str:

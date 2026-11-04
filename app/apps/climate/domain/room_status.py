@@ -5,6 +5,7 @@ from decimal import Decimal
 from apps.climate.domain.drive import PendingWrite
 from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.room_intent import RoomIntent
+from apps.presence.domain.occupancy import Occupancy
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -55,3 +56,5 @@ class RoomStatus:
     guest_room: bool
     zones: tuple[ZoneStatus, ...]
     sources: tuple[SourceStatus, ...] = ()
+    occupancy: Occupancy | None = None
+    follows_occupancy: bool = False

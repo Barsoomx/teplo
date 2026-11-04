@@ -61,4 +61,6 @@ def _to_week(climate: RoomClimate) -> RoomWeek:
             StoredWindow(id=period.pk, weekday=period.weekday, start=period.start, end=period.end)
             for period in climate.comfort_periods.all()
         ),
+        follows_occupancy=climate.follows_occupancy,
+        vacant_after_minutes=climate.vacant_after_minutes,
     )

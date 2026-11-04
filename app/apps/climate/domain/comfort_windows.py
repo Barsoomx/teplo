@@ -2,6 +2,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import time
 
+from apps.climate.domain.room_climate import VACANT_AFTER_MINUTES_DEFAULT
 from apps.climate.domain.zone import ComfortWindow
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingChange, SettingProblem
@@ -29,6 +30,8 @@ class RoomWeek:
     slug: str
     name: str
     windows: tuple[StoredWindow, ...]
+    follows_occupancy: bool = False
+    vacant_after_minutes: int = VACANT_AFTER_MINUTES_DEFAULT
 
     def day(self, weekday: int) -> tuple[ComfortWindow, ...]:
         return ordered(stored.window for stored in self.windows if stored.weekday == weekday)

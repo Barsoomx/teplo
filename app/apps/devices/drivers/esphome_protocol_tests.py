@@ -13,16 +13,20 @@ LONG_PAYLOAD = b'x' * 40
     [
         (
             'teplo/teplo-air-kitchen/sensor/temperature/state',
-            SensorStateTopic(slug='air-kitchen', object_id='temperature'),
+            SensorStateTopic(node='air-kitchen', object_id='temperature'),
         ),
         (
             'teplo/teplo-phase-meter/sensor/l3_current/state',
-            SensorStateTopic(slug='phase-meter', object_id='l3_current'),
+            SensorStateTopic(node='phase-meter', object_id='l3_current'),
         ),
-        ('teplo/teplo-outdoor/status', NodeStatusTopic(slug='outdoor')),
+        (
+            'teplo/teplo-pc-office/sensor/presence/state',
+            SensorStateTopic(node='pc-office', object_id='presence'),
+        ),
+        ('teplo/teplo-outdoor/status', NodeStatusTopic(node='outdoor')),
     ],
 )
-def test_topic_names_the_device_by_its_node(topic: str, expected: SensorStateTopic | NodeStatusTopic) -> None:
+def test_topic_names_its_node(topic: str, expected: SensorStateTopic | NodeStatusTopic) -> None:
     assert parse_topic(topic) == expected
 
 
@@ -80,3 +84,30 @@ def test_unreadable_payload_is_a_protocol_error(payload: bytes, detail: str) -> 
         parse_value('humidity', payload)
 
     assert (raised.value.error_code, raised.value.detail) == ('device_protocol_error', detail)
+
+
+@pytest.mark.parametrize(('payload', 'expected'), [(b'0', '0'), (b'1', '1')])
+def test_presence_is_read_as_0_or_1(payload: bytes, expected: str) -> None:
+    assert str(parse_value('presence', payload)) == expected
+
+
+@pytest.mark.parametrize(
+    ('payload', 'detail'),
+    [(b'2', "presence: not 0 or 1: b'2'"), (b'0.5', "presence: not 0 or 1: b'0.5'")],
+    ids=['two', 'half'],
+)
+def test_presence_other_than_0_or_1_is_a_protocol_error(payload: bytes, detail: str) -> None:
+    with pytest.raises(DeviceProtocolError) as raised:
+        parse_value('presence', payload)
+
+    assert (raised.value.error_code, raised.value.detail) == ('device_protocol_error', detail)
+
+
+def test_presence_nan_is_a_failed_reading() -> None:
+    with pytest.raises(SensorReadingError) as raised:
+        parse_value('presence', b'nan')
+
+    assert (raised.value.error_code, raised.value.detail) == (
+        'sensor_reading_failed',
+        'presence: the node reported nan',
+    )

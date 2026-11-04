@@ -1,5 +1,5 @@
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, time, timedelta
 from decimal import Decimal
 from enum import StrEnum
@@ -13,6 +13,7 @@ from apps.climate.domain.zone import AirTargets, ZoneSettings
 from apps.climate.domain.zone_config import tenths
 from apps.climate.domain.zone_intent import ForcedTarget, ZoneIntent
 from apps.core.domain.settings import SettingProblem
+from apps.presence.domain.occupancy import KNOWN_OCCUPANCY, Occupancy
 
 OVERRIDE_DURATION = timedelta(hours=2)
 OVERRIDE_STEP = Decimal('0.5')
@@ -31,6 +32,11 @@ class IntentReason(StrEnum):
     GUESTS = 'guests'
     COMFORT = 'comfort'
     SETBACK = 'setback'
+    OCCUPIED = 'occupied'
+    VACANT = 'vacant'
+
+
+OCCUPANCY_REASONS = frozenset({IntentReason.OCCUPIED, IntentReason.VACANT})
 
 
 class OverrideChange(StrEnum):
@@ -63,9 +69,17 @@ class RoomIntents:
     now: datetime
     fireplaces: tuple[FireplaceRecord, ...] = ()
     manual_hold_live: bool = False
+    occupancy: Mapping[str, Occupancy] = field(default_factory=dict)
+    would_be: Mapping[str, RoomIntent] = field(default_factory=dict)
 
     def of(self, room: str) -> RoomIntent | None:
         return self.by_room.get(room)
+
+    def occupancy_of(self, room: str) -> Occupancy | None:
+        return self.occupancy.get(room)
+
+    def would_be_of(self, room: str) -> RoomIntent | None:
+        return self.would_be.get(room)
 
     def fireplace(self, room: str) -> FireplaceRecord | None:
         return next((fireplace for fireplace in self.fireplaces if fireplace.room_slug == room), None)
@@ -91,14 +105,33 @@ class RoomIntents:
         )
 
 
+def occupancy_holds(
+    room: RoomClimateSettings,
+    occupancy: Occupancy,
+    *,
+    guests_until: datetime | None,
+    now: datetime,
+) -> bool:
+    if not room.follows_occupancy or room.has_floor or occupancy not in KNOWN_OCCUPANCY:
+        return False
+
+    return not (room.guest_room and guests_active(guests_until, now))
+
+
 def resolve_room_intent(
     room: RoomClimateSettings,
     *,
     now: datetime,
     clock_trusted: bool,
     guests_until: datetime | None,
+    occupancy: Occupancy = Occupancy.UNKNOWN,
 ) -> RoomIntent:
-    beneath = _beneath_override(room, now=now, clock_trusted=clock_trusted, guests_until=guests_until)
+    floors = _beneath_override(room, now=now, clock_trusted=clock_trusted, guests_until=guests_until)
+    beneath = (
+        _by_occupancy(room, occupancy, floors)
+        if occupancy_holds(room, occupancy, guests_until=guests_until, now=now)
+        else floors
+    )
     override = room.override
     if override is None or not now < override.until <= now + OVERRIDE_DURATION:
         return beneath
@@ -108,7 +141,7 @@ def resolve_room_intent(
         reason=IntentReason.OVERRIDE,
         target=override.target,
         until=override.until,
-        forced=(*beneath.forced, ForcedTarget(target=override.target, beneath=beneath.target)),
+        forced=(*floors.forced, ForcedTarget(target=override.target, beneath=floors.target)),
     )
 
 
@@ -120,17 +153,41 @@ def resolve_room_intents(
     guests_until: datetime | None,
     fireplaces: Iterable[FireplaceRecord] = (),
     manual_hold_live: bool = False,
+    occupancy: Mapping[str, Occupancy] | None = None,
 ) -> RoomIntents:
     settled = tuple(rooms)
+    known: Mapping[str, Occupancy] = {} if occupancy is None else occupancy
+    by_room: dict[str, RoomIntent] = {}
+    would_be: dict[str, RoomIntent] = {}
+    for room in settled:
+        state = known.get(room.slug, Occupancy.UNKNOWN)
+        by_room[room.slug] = resolve_room_intent(
+            room,
+            now=now,
+            clock_trusted=clock_trusted,
+            guests_until=guests_until,
+            occupancy=state,
+        )
+        if room.follows_occupancy or state not in KNOWN_OCCUPANCY:
+            continue
+
+        intent = resolve_room_intent(
+            replace(room, follows_occupancy=True),
+            now=now,
+            clock_trusted=clock_trusted,
+            guests_until=guests_until,
+            occupancy=state,
+        )
+        if intent.reason in OCCUPANCY_REASONS:
+            would_be[room.slug] = intent
     return RoomIntents(
         rooms=settled,
-        by_room={
-            room.slug: resolve_room_intent(room, now=now, clock_trusted=clock_trusted, guests_until=guests_until)
-            for room in settled
-        },
+        by_room=by_room,
         now=now,
         fireplaces=tuple(fireplaces),
         manual_hold_live=manual_hold_live,
+        occupancy=known,
+        would_be=would_be,
     )
 
 
@@ -195,6 +252,17 @@ def _beneath_override(
         target=room.targets.comfort,
         until=guests_until,
         forced=(ForcedTarget(target=room.targets.comfort, beneath=scheduled.target),),
+    )
+
+
+def _by_occupancy(room: RoomClimateSettings, occupancy: Occupancy, floors: RoomIntent) -> RoomIntent:
+    occupied = occupancy is Occupancy.OCCUPIED
+    return RoomIntent(
+        room=room.slug,
+        reason=IntentReason.OCCUPIED if occupied else IntentReason.VACANT,
+        target=room.targets.comfort if occupied else room.targets.night,
+        until=None,
+        forced=floors.forced,
     )
 
 

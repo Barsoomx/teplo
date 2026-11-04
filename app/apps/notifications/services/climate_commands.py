@@ -15,6 +15,7 @@ from apps.climate.domain.errors import (
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import (
     MAX_GUEST_NIGHTS,
+    OCCUPANCY_REASONS,
     OVERRIDE_TARGET_MAX,
     OVERRIDE_TARGET_MIN,
     IntentReason,
@@ -45,6 +46,7 @@ from apps.notifications.services.command_replies import (
     AUTO,
     AUTO_DONE,
     AUTO_NONE,
+    AUTO_OCCUPANCY,
     AUTO_OPEN,
     BOOST,
     BOOST_FOR_COLD,
@@ -282,7 +284,12 @@ class ClimateCommandRunner:
 
         values = {'room': status.name, 'target': degrees(status.intent.target)}
         until = status.intent.until
-        reply = str(AUTO_OPEN) % values if until is None else str(AUTO) % {**values, 'until': moment_text(until, now)}
+        if status.intent.reason in OCCUPANCY_REASONS:
+            reply = str(AUTO_OCCUPANCY) % values
+        elif until is None:
+            reply = str(AUTO_OPEN) % values
+        else:
+            reply = str(AUTO) % {**values, 'until': moment_text(until, now)}
         return '\n'.join([reply, *_write_lines([status], now)])
 
     def _with_floors(self, reply: str, slug: str, now: datetime, *, clock_trusted: bool) -> str:

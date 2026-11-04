@@ -9,13 +9,19 @@
     {% else %}
     <p class="room-note">{% blocktranslate with below=comfort.backup_below|floatformat:1 zone=comfort.backup_zone_name %}Backup heat below {{ below }}°: {{ zone }}{% endblocktranslate %}</p>
     {% endif %}{% endif %}{% endwith %}
+    {% with occupancy=room.occupancy %}{% if occupancy %}
+    <p class="room-chips"><span class="chip occupancy occupancy-{{ occupancy.state }}" title="{{ occupancy|occupancy_sources }}">{% if occupancy.state == 'occupied' %}{% icon 'user' %}{% translate 'Occupied' %}{% elif occupancy.state == 'vacant' %}{% icon 'user-x' %}{% translate 'Nobody there' %}{% else %}{% icon 'user' %}{% translate 'No data' %}{% endif %}</span>{% if not occupancy.follows %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}</p>
+    {% for source in occupancy.sources %}{% if not source.available %}{% failure_note source.error_code source.error omit='device_unavailable' device='presence_sensor' as note %}
+    <p class="room-note"{% if source.error %} title="{{ source.error }}"{% endif %}>{% blocktranslate with name=source.name %}{{ name }}: no connection{% endblocktranslate %}{% if note %} · {{ note }}{% endif %}</p>
+    {% endif %}{% endfor %}
+    {% endif %}{% endwith %}
   </header>
   {% if room.adjustable and room.intent %}{% with intent=room.intent %}
   <div class="room-target">
     <button class="room-step" type="button" aria-label="{% translate 'Colder by 0.5°' %}" hx-post="{% url 'panel:override-room' room.slug %}" hx-vals='{"step": "down"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this"{% if not intent|steps_down %} disabled{% endif %}>−</button>
     <p class="room-target-value">{% blocktranslate with target=intent.target|floatformat:1 %}Target {{ target }}°{% endblocktranslate %}</p>
     <button class="room-step" type="button" aria-label="{% translate 'Warmer by 0.5°' %}" hx-post="{% url 'panel:override-room' room.slug %}" hx-vals='{"step": "up"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this"{% if not intent|steps_up %} disabled{% endif %}>+</button>
-    {% if intent.reason == 'override' %}<button class="button button-quiet" type="button" hx-post="{% url 'panel:clear-room-override' room.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% translate 'Back to the schedule' %}</button>{% endif %}
+    {% if intent.reason == 'override' %}<button class="button button-quiet" type="button" hx-post="{% url 'panel:clear-room-override' room.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% if room.back_to_occupancy %}{% translate 'Back to occupancy' %}{% else %}{% translate 'Back to the schedule' %}{% endif %}</button>{% endif %}
   </div>
   {% endwith %}{% endif %}
   {% for source in room.sources %}{% if source.kind == 'fireplace' %}

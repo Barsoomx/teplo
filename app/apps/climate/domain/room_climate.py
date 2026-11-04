@@ -12,6 +12,9 @@ from apps.core.domain.settings import SettingProblem
 
 ROOM = 'room'
 BACKUP_MARGIN = Decimal('0.5')
+VACANT_AFTER_MINUTES_DEFAULT = 20
+VACANT_AFTER_MINUTES_MIN = 5
+VACANT_AFTER_MINUTES_MAX = 240
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -32,6 +35,9 @@ class RoomClimateSettings:
     guest_room: bool
     override: RoomOverride | None
     adjustable: bool
+    follows_occupancy: bool = False
+    has_floor: bool = False
+    vacant_after_minutes: int = VACANT_AFTER_MINUTES_DEFAULT
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,6 +70,9 @@ class RoomClimateConfigRecord:
     backup_zone_name: str | None
     backup_live: bool
     sources: tuple[SourceGate, ...] = ()
+    follows_occupancy: bool = False
+    vacant_after_minutes: int = VACANT_AFTER_MINUTES_DEFAULT
+    occupancy_gate: bool = False
 
 
 def room_climate_problems(config: RoomClimateConfig, *, has_backup: bool) -> tuple[SettingProblem, ...]:

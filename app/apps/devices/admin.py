@@ -6,7 +6,7 @@ from apps.devices.models import Device
 
 @admin.register(Device)
 class DeviceAdmin(admin.ModelAdmin):
-    list_display = ('slug', 'name', 'kind', 'driver', 'monitor_only', 'room')
+    list_display = ('slug', 'name', 'kind', 'driver', 'node', 'monitor_only', 'room')
     list_filter = ('kind', 'driver', 'room')
     search_fields = ('slug', 'name')
 

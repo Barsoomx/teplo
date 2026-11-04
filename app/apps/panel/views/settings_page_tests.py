@@ -71,6 +71,26 @@ def m_convector_settings_use_case(settings_page: GetSettingsPageOutputDTO) -> It
         yield use_case
 
 
+@pytest.fixture
+def m_occupancy_settings_use_case(
+    request: pytest.FixtureRequest,
+    settings_page: GetSettingsPageOutputDTO,
+) -> Iterator[MagicMock]:
+    bathroom, bedroom = settings_page.rooms
+    office = replace(
+        bathroom,
+        id=8,
+        slug='office',
+        name='Кабинет',
+        follows_occupancy=request.param,
+        vacant_after_minutes=25,
+        occupancy_gate=True,
+    )
+    with mock.patch('apps.panel.views.settings_page.GetSettingsPageUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(settings_page, rooms=(office, bedroom))
+        yield use_case
+
+
 def test_settings_page_shows_the_settings_of_every_zone(
     f_russian_client: Client,
     m_settings_use_case: MagicMock,
@@ -273,3 +293,31 @@ def test_settings_page_shows_the_gate_of_a_heat_source_under_its_name(
         'Детектор камина' in card,
         m_convector_settings_use_case.init.call_count,
     ) == (True, True, False, 1)
+
+
+@pytest.mark.parametrize(
+    ('m_occupancy_settings_use_case', 'state'),
+    [(False, 'Наблюдение'), (True, 'Работает')],
+    ids=['watching', 'live'],
+    indirect=['m_occupancy_settings_use_case'],
+)
+def test_settings_page_shows_the_occupancy_gate_of_a_room_with_a_presence_source_and_no_floor(
+    f_russian_client: Client,
+    m_occupancy_settings_use_case: MagicMock,
+    state: str,
+) -> None:
+    response = f_russian_client.get('/settings/')
+
+    content = response.content.decode()
+    office_at = content.index('id="room-settings-office"')
+    office = content[office_at : content.index('</article>', office_at)]
+    bedroom_at = content.index('id="room-settings-bedroom"')
+    bedroom = content[bedroom_at : content.index('</article>', bedroom_at)]
+    gate_at = office.index('По присутствию')
+    assert (
+        state in office[gate_at : office.index('</p>', gate_at)],
+        'href="/admin/climate/roomclimate/8/change/"' in office,
+        'Никого — после 25 мин без присутствия' in office,
+        'По присутствию' in bedroom,
+        m_occupancy_settings_use_case.init.call_count,
+    ) == (True, True, True, False, 1)

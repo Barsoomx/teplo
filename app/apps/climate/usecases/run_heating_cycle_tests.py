@@ -48,7 +48,13 @@ from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.write_gate import KeyedWriteGate
-from apps.climate.stubs import ContendedLockStub, LoadGateStub, ZoneLearningStoreStub, ZoneStoreStub
+from apps.climate.stubs import (
+    ContendedLockStub,
+    LoadGateStub,
+    OccupancyStoreStub,
+    ZoneLearningStoreStub,
+    ZoneStoreStub,
+)
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneUseCase
 from apps.climate.usecases.run_heating_cycle import (
     RunHeatingCycleInputDTO,
@@ -421,6 +427,7 @@ def _use_case(
             fireplaces=HeatSourceRepository(),
             gates=ClimateSettingsRepository(),
             book=book,
+            occupancy=OccupancyStoreStub(occupancy={}),
         ),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository() if learning is None else learning,

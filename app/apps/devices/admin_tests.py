@@ -51,6 +51,16 @@ def f_oven() -> Device:
 
 
 @pytest.fixture
+def f_presence() -> Device:
+    return DeviceFactory.create(
+        slug='presence-office',
+        kind=DeviceKind.PRESENCE_SENSOR,
+        driver=DeviceDriver.ESPHOME_PRESENCE,
+        node='air-office',
+    )
+
+
+@pytest.fixture
 def f_convector() -> HeatSource:
     return HeatSourceFactory.create(
         slug='convector-office',
@@ -98,3 +108,17 @@ def test_room_is_read_only_for_the_device_of_a_heat_source(
         'room' in f_device_admin.get_readonly_fields(f_request, device),
         'room' in f_device_admin.get_form(f_request, device, change=True).base_fields,
     ) == (True, False)
+
+
+def test_device_list_shows_the_node_and_the_page_edits_it(
+    f_device_admin: DeviceAdmin,
+    f_request: HttpRequest,
+    f_presence: Device,
+) -> None:
+    form = f_device_admin.get_form(f_request, f_presence, change=True)
+
+    assert (
+        f_device_admin.get_list_display(f_request),
+        'node' in form.base_fields,
+        form.base_fields['node'].required,
+    ) == (('slug', 'name', 'kind', 'driver', 'node', 'monitor_only', 'room'), True, False)

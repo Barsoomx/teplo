@@ -25,6 +25,7 @@ from apps.notifications.domain.alerts import PhaseReading
 from apps.notifications.domain.commands import CommandKind, CommandRoom, OwnerCommand
 from apps.notifications.services.climate_commands import ClimateCommandRunner
 from apps.notifications.stubs import ExecutableStub, PhaseReadoutStub, RoomStatusSourceStub
+from apps.presence.domain.occupancy import Occupancy
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
@@ -238,6 +239,22 @@ def f_heated_office_status_runner(
     f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
 ) -> ClimateCommandRunner:
     return _runner(f_guests, f_override, f_clear, f_boost, RoomStatusSourceStub(readings=([HEATED_OFFICE],)))
+
+
+@pytest.fixture
+def f_vacant_office_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+) -> ClimateCommandRunner:
+    vacant = replace(
+        HEATED_OFFICE,
+        intent=RoomIntent(room='office', reason=IntentReason.VACANT, target=Decimal('19.0'), until=None, forced=()),
+        occupancy=Occupancy.VACANT,
+        follows_occupancy=True,
+    )
+    return _runner(f_guests, f_override, f_clear, f_boost, RoomStatusSourceStub(readings=([vacant],)))
 
 
 @pytest.fixture
@@ -599,6 +616,12 @@ def test_auto_clears_the_override_and_names_the_target_of_the_schedule(
         'Кухня: пол уже на 28°\n'
         'Прихожая: пол отключён управлением нагрузкой',
     )
+
+
+def test_auto_returns_a_room_following_occupancy_to_it(f_vacant_office_runner: ClimateCommandRunner) -> None:
+    reply = f_vacant_office_runner.run(OwnerCommand(kind=CommandKind.AUTO, room=OFFICE_ROOM), NOW, clock_trusted=True)
+
+    assert reply == 'Кабинет: снова по присутствию, 19,0°.\nКонвектор: кабинет: уже 19°'
 
 
 def test_auto_without_an_override_says_so(f_uncleared_runner: ClimateCommandRunner) -> None:

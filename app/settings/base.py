@@ -28,6 +28,7 @@ INSTALLED_APPS = [
     'apps.devices',
     'apps.system',
     'apps.climate',
+    'apps.presence',
     'apps.power',
     'apps.telemetry',
     'apps.notifications',

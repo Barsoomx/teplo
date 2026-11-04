@@ -4,6 +4,7 @@ from datetime import timedelta
 from apps.climate.domain.comfort_windows import WEEKDAYS, RoomWeek, StoredWindow
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.ports import ClimateConfigStore, ComfortWindowStore, HeatSourceStore, ZoneStore
+from apps.climate.domain.room_climate import VACANT_AFTER_MINUTES_DEFAULT
 from apps.climate.domain.week_plan import DayPeriod, day_periods
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
@@ -44,6 +45,8 @@ class RoomSchedule:
     zones: tuple[ZoneWarmUp, ...]
     sources: tuple[str, ...]
     days: tuple[ScheduleDay, ...]
+    follows_occupancy: bool = False
+    vacant_after_minutes: int = VACANT_AFTER_MINUTES_DEFAULT
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -152,4 +155,6 @@ def _schedule(
             )
             for weekday in WEEKDAYS
         ),
+        follows_occupancy=week.follows_occupancy,
+        vacant_after_minutes=week.vacant_after_minutes,
     )

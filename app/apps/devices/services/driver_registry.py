@@ -11,6 +11,7 @@ from apps.devices.domain.capabilities import (
     FloorThermostat,
     MeteredPlug,
     PhaseMeter,
+    PresenceSensor,
     SwitchablePlug,
     TemperatureSensor,
 )
@@ -21,6 +22,7 @@ from apps.devices.domain.errors import (
 )
 from apps.devices.domain.kinds import DeviceDriver
 from apps.devices.drivers.esphome_phase_meter import EsphomePhaseMeterDriver
+from apps.devices.drivers.esphome_presence import EsphomePresenceDriver
 from apps.devices.drivers.esphome_temperature import EsphomeTemperatureDriver
 from apps.devices.drivers.tuya_heater import TuyaHeaterDriver
 from apps.devices.drivers.tuya_plug import TuyaPlugDriver, TuyaSwitchablePlugDriver
@@ -33,6 +35,7 @@ PlugFactory = Callable[[DeviceSecret], MeteredPlug]
 SwitchablePlugFactory = Callable[[DeviceSecret], SwitchablePlug]
 TemperatureSensorFactory = Callable[[str], TemperatureSensor]
 PhaseMeterFactory = Callable[[str], PhaseMeter]
+PresenceSensorFactory = Callable[[str], PresenceSensor]
 ClimateUnitFactory = Callable[[DeviceSecret], ClimateUnit]
 ControllableClimateUnitFactory = Callable[[DeviceSecret], ControllableClimateUnit]
 
@@ -47,6 +50,7 @@ class DriverRegistry:
         switchable_plug_factories: dict[DeviceDriver, SwitchablePlugFactory],
         temperature_sensor_factories: dict[DeviceDriver, TemperatureSensorFactory],
         phase_meter_factories: dict[DeviceDriver, PhaseMeterFactory],
+        presence_sensor_factories: dict[DeviceDriver, PresenceSensorFactory],
         climate_unit_factories: dict[DeviceDriver, ClimateUnitFactory],
         controllable_climate_unit_factories: dict[DeviceDriver, ControllableClimateUnitFactory],
     ) -> None:
@@ -57,6 +61,7 @@ class DriverRegistry:
         self._switchable_plug_factories = switchable_plug_factories
         self._temperature_sensor_factories = temperature_sensor_factories
         self._phase_meter_factories = phase_meter_factories
+        self._presence_sensor_factories = presence_sensor_factories
         self._climate_unit_factories = climate_unit_factories
         self._controllable_climate_unit_factories = controllable_climate_unit_factories
         self._thermostats: dict[str, FloorThermostat] = {}
@@ -64,6 +69,7 @@ class DriverRegistry:
         self._switchable_plugs: dict[str, SwitchablePlug] = {}
         self._temperature_sensors: dict[str, TemperatureSensor] = {}
         self._phase_meters: dict[str, PhaseMeter] = {}
+        self._presence_sensors: dict[str, PresenceSensor] = {}
         self._climate_units: dict[str, ClimateUnit] = {}
         self._controllable_climate_units: dict[str, ControllableClimateUnit] = {}
         self._plug_lock = threading.Lock()
@@ -79,6 +85,7 @@ class DriverRegistry:
             switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: TuyaSwitchablePlugDriver.init},
             temperature_sensor_factories={DeviceDriver.ESPHOME_TEMPERATURE: EsphomeTemperatureDriver.init},
             phase_meter_factories={DeviceDriver.ESPHOME_PHASE_METER: EsphomePhaseMeterDriver.init},
+            presence_sensor_factories={DeviceDriver.ESPHOME_PRESENCE: EsphomePresenceDriver.init},
             climate_unit_factories={},
             controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: TuyaHeaterDriver.init},
         )
@@ -121,6 +128,12 @@ class DriverRegistry:
             self._phase_meters[slug] = self._factory(slug, self._phase_meter_factories)(slug)
 
         return self._phase_meters[slug]
+
+    def presence_sensor(self, slug: str) -> PresenceSensor:
+        if slug not in self._presence_sensors:
+            self._presence_sensors[slug] = self._factory(slug, self._presence_sensor_factories)(slug)
+
+        return self._presence_sensors[slug]
 
     def climate_unit(self, slug: str) -> ClimateUnit:
         with self._climate_unit_lock:

@@ -3,6 +3,7 @@
     <h2 class="schedule-name">{{ room.name }}{% if room.floor_name %} <small class="schedule-floor">{{ room.floor_name }}</small>{% endif %}</h2>
     {% if room.sources %}{% for source in room.sources %}
     <p class="schedule-lead">{% blocktranslate with name=source %}{{ name }} holds comfort from the start of each window, with no warm-up.{% endblocktranslate %}</p>
+    {% if room.follows_occupancy %}<p class="schedule-lead">{% blocktranslate with name=source minutes=room.vacant_after_minutes %}{{ name }} follows occupancy: comfort while someone is here, the night target once nobody has been here for {{ minutes }} min; the windows apply while there is no presence data.{% endblocktranslate %}</p>{% endif %}
     {% endfor %}{% elif not room.zones %}
     <p class="schedule-lead">{% translate 'teplo has nothing to heat this room by its schedule yet.' %}</p>
     {% elif room.zones|length == 1 %}{% with warm_up=room.zones.0 %}

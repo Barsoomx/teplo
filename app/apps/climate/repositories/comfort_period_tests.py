@@ -48,6 +48,15 @@ def bedroom() -> RoomClimate:
 
 
 @pytest.fixture
+def followed_office() -> None:
+    RoomClimateFactory.create(
+        room=RoomFactory.create(slug='office', name='Кабинет', floor=FloorFactory.create(level=2)),
+        follows_occupancy=True,
+        vacant_after_minutes=30,
+    )
+
+
+@pytest.fixture
 def f_living_room_tagged_periods(f_open_space_periods: list[ComfortPeriod]) -> list[ComfortPeriod]:
     living_room = ZoneFactory.create(slug='living-room')
     ComfortPeriod.objects.filter(pk__in=[period.pk for period in f_open_space_periods]).update(zone=living_room)
@@ -79,6 +88,13 @@ def test_weeks_list_every_room_climate_in_floor_order_also_without_windows() -> 
         ('open-space', 3),
         ('bedroom', 0),
     ]
+
+
+@pytest.mark.usefixtures('f_open_space_periods', 'followed_office')
+def test_weeks_say_whether_the_room_follows_occupancy_and_after_how_long_it_is_empty() -> None:
+    assert [
+        (week.slug, week.follows_occupancy, week.vacant_after_minutes) for week in ComfortPeriodRepository.weeks()
+    ] == [('open-space', False, 20), ('office', True, 30)]
 
 
 @pytest.mark.usefixtures('f_living_room_tagged_periods')

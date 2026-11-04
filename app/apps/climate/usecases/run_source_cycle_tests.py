@@ -11,11 +11,11 @@ from structlog.testing import capture_logs
 from apps.climate.domain.backup_heat import BackupHeat
 from apps.climate.domain.control import ClimateGates
 from apps.climate.domain.drive import StartAnswer
-from apps.climate.domain.events import SourceCommandFailed, SourceCommandIssued
+from apps.climate.domain.events import OccupancyDryRun, SourceCommandFailed, SourceCommandIssued
 from apps.climate.domain.fast_source import SourceStart
 from apps.climate.domain.heat_sources import HeatSourceKind, SourceSettings
-from apps.climate.domain.modes import ZoneCycleOutcome
-from apps.climate.domain.room_climate import RoomClimateSettings
+from apps.climate.domain.modes import CommandSource, ZoneCycleOutcome
+from apps.climate.domain.room_climate import RoomClimateSettings, RoomOverride
 from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import AirTargets, ComfortWindow
@@ -43,6 +43,8 @@ from apps.devices.domain.readings import ClimateMode, ClimateUnitState
 from apps.devices.services.state_store import ClimateUnitStateStore, TemperatureStateStore
 from apps.devices.stubs import ControllableClimateUnitProviderStub, ControllableClimateUnitStub
 from apps.power.domain.events import StartWouldWaitDryRun
+from apps.presence.domain.occupancy import Occupancy
+from apps.presence.services.occupancy_book import OccupancyBook
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 COMFORT_AT = datetime(2026, 11, 4, 13, 30, tzinfo=MOSCOW)
@@ -114,6 +116,13 @@ GRANTED = {
     'convector-office': StartAnswer(granted=True, note=None),
     'heater-bedroom': StartAnswer(granted=True, note=None),
 }
+OFFICE_FOLLOWING = replace(OFFICE, follows_occupancy=True)
+WINDOW_ENDS = datetime(2026, 11, 4, 23, 45, tzinfo=MOSCOW)
+OVERRIDE_ENDS = datetime(2026, 11, 4, 17, 30, tzinfo=MOSCOW)
+OVERRIDDEN_OFFICE = replace(
+    OFFICE,
+    override=RoomOverride(target=Decimal('23.0'), until=OVERRIDE_ENDS, source=CommandSource.PANEL),
+)
 
 
 def _issued(setpoint: Decimal, at: datetime, *, dry_run: bool) -> SourceCommandIssued:
@@ -131,6 +140,19 @@ def _cycle(at: datetime) -> RunSourceCycleInputDTO:
     return RunSourceCycleInputDTO(now=at, monotonic=MONOTONIC, clock_trusted=True)
 
 
+def _by_occupancy(occupancy: Occupancy, setpoint: Decimal, at: datetime) -> OccupancyDryRun:
+    return OccupancyDryRun(
+        source='convector-office',
+        name='Конвектор: кабинет',
+        room='office',
+        room_name='Кабинет',
+        occupancy=occupancy,
+        power=True,
+        setpoint=setpoint,
+        occurred_at=at,
+    )
+
+
 @pytest.fixture
 def f_events() -> list[DomainEvent]:
     return []
@@ -139,7 +161,7 @@ def f_events() -> list[DomainEvent]:
 @pytest.fixture
 def dispatcher(f_events: list[DomainEvent]) -> EventDispatcher:
     event_dispatcher = EventDispatcher()
-    for event_type in (SourceCommandIssued, SourceCommandFailed, StartWouldWaitDryRun):
+    for event_type in (SourceCommandIssued, SourceCommandFailed, StartWouldWaitDryRun, OccupancyDryRun):
         event_dispatcher.register(event_type, f_events.append)
     return event_dispatcher
 
@@ -186,6 +208,18 @@ def book() -> ControlBook:
 
 
 @pytest.fixture
+def rooms(request: pytest.FixtureRequest) -> RoomClimateStoreStub:
+    return RoomClimateStoreStub(rooms=getattr(request, 'param', [OFFICE, BEDROOM]))
+
+
+@pytest.fixture
+def occupancy(request: pytest.FixtureRequest) -> OccupancyBook:
+    book = OccupancyBook()
+    book.replace(getattr(request, 'param', {}))
+    return book
+
+
+@pytest.fixture
 def f_use_case(
     f_sources: HeatSourceStoreStub,
     units: ClimateUnitStateStore,
@@ -193,17 +227,20 @@ def f_use_case(
     f_bedroom_unit: ControllableClimateUnitStub,
     f_gate: SourceLoadGateStub,
     book: ControlBook,
+    rooms: RoomClimateStoreStub,
+    occupancy: OccupancyBook,
     clock: MonotonicClockStub,
     dispatcher: EventDispatcher,
 ) -> RunSourceCycleUseCase:
     return RunSourceCycleUseCase(
         sources=f_sources,
         intents=RoomIntentReader(
-            rooms=RoomClimateStoreStub(rooms=[OFFICE, BEDROOM]),
+            rooms=rooms,
             guests=GuestsStoreStub(record=GuestsRecord(until=None, end_hour=14)),
             fireplaces=FireplaceStoreStub(fireplaces=[]),
             gates=ClimateGatesStoreStub(gates=ClimateGates(manual_hold_live=False)),
             book=book,
+            occupancy=occupancy,
         ),
         climate_settings=ClimateSensorsStoreStub(sensors=ClimateSensors(outdoor_slug=None)),
         units=units,
@@ -227,6 +264,22 @@ def f_use_case_that_journaled(f_use_case: RunSourceCycleUseCase) -> RunSourceCyc
 @pytest.fixture
 def f_use_case_that_journaled_the_setback(f_use_case: RunSourceCycleUseCase) -> RunSourceCycleUseCase:
     f_use_case.execute(_cycle(SETBACK_AT))
+    return f_use_case
+
+
+@pytest.fixture
+def f_use_case_that_followed_a_vacant_office(
+    f_use_case: RunSourceCycleUseCase,
+    occupancy: OccupancyBook,
+) -> RunSourceCycleUseCase:
+    f_use_case.execute(_cycle(COMFORT_AT))
+    occupancy.replace({'office': Occupancy.UNKNOWN})
+    return f_use_case
+
+
+@pytest.fixture
+def f_use_case_that_journaled_the_occupancy(f_use_case: RunSourceCycleUseCase) -> RunSourceCycleUseCase:
+    f_use_case.execute(_cycle(COMFORT_AT))
     return f_use_case
 
 
@@ -579,3 +632,133 @@ def test_source_whose_stamp_the_database_refuses_fails_while_the_others_run(
 @pytest.mark.parametrize('f_sources', [([], {})], indirect=True)
 def test_house_without_a_commanded_source_runs_nothing(f_use_case: RunSourceCycleUseCase) -> None:
     assert f_use_case.execute(_cycle(COMFORT_AT)) == RunSourceCycleOutputDTO(outcomes={})
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'rooms', 'occupancy'),
+    [(([LIVE_CONVECTOR], {}), AT_THE_APPS_SETPOINT, [OFFICE_FOLLOWING, BEDROOM], {'office': Occupancy.VACANT})],
+    indirect=True,
+)
+def test_live_source_of_a_vacant_room_following_occupancy_holds_its_night_target_in_its_window(
+    f_use_case: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands, f_events) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.APPLIED}),
+        [('setpoint', Decimal(19))],
+        [_issued(Decimal(19), COMFORT_AT, dry_run=False)],
+    )
+
+
+@pytest.mark.parametrize(
+    ('rooms', 'occupancy'),
+    [([OFFICE_FOLLOWING, BEDROOM], {'office': Occupancy.VACANT})],
+    indirect=True,
+)
+def test_watched_source_of_a_vacant_room_following_occupancy_journals_its_night_target(
+    f_use_case: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert f_events == [_issued(Decimal(19), COMFORT_AT, dry_run=True)]
+
+
+@pytest.mark.parametrize(
+    ('rooms', 'occupancy'),
+    [([OFFICE_FOLLOWING, BEDROOM], {'office': Occupancy.VACANT})],
+    indirect=True,
+)
+def test_room_following_occupancy_returns_to_its_window_once_occupancy_is_unknown(
+    f_use_case_that_followed_a_vacant_office: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_use_case_that_followed_a_vacant_office.execute(_cycle(COMFORT_AT + timedelta(minutes=10)))
+
+    assert f_events == [
+        _issued(Decimal(19), COMFORT_AT, dry_run=True),
+        _issued(Decimal(22), COMFORT_AT + timedelta(minutes=10), dry_run=True),
+    ]
+
+
+@pytest.mark.parametrize('occupancy', [{'office': Occupancy.VACANT}], indirect=True)
+def test_watching_room_journals_once_what_occupancy_would_give_its_source(
+    f_use_case_that_journaled_the_occupancy: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_use_case_that_journaled_the_occupancy.execute(_cycle(COMFORT_AT + timedelta(minutes=1)))
+
+    assert f_events == [
+        _by_occupancy(Occupancy.VACANT, Decimal(19), COMFORT_AT),
+        _issued(Decimal(22), COMFORT_AT, dry_run=True),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('occupancy', 'at', 'expected'),
+    [
+        ({'office': Occupancy.OCCUPIED}, COMFORT_AT, [_issued(Decimal(22), COMFORT_AT, dry_run=True)]),
+        (
+            {'office': Occupancy.OCCUPIED},
+            WINDOW_ENDS,
+            [
+                _by_occupancy(Occupancy.OCCUPIED, Decimal(22), WINDOW_ENDS),
+                _issued(Decimal(19), WINDOW_ENDS, dry_run=True),
+            ],
+        ),
+        ({'office': Occupancy.UNKNOWN}, COMFORT_AT, [_issued(Decimal(22), COMFORT_AT, dry_run=True)]),
+    ],
+    ids=['occupied_in_the_window', 'occupied_when_the_window_ends', 'unknown'],
+    indirect=['occupancy'],
+)
+def test_watching_room_journals_occupancy_only_when_it_would_give_the_source_another_target(
+    f_use_case: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+    at: datetime,
+    expected: list[DomainEvent],
+) -> None:
+    f_use_case.execute(_cycle(at))
+
+    assert f_events == expected
+
+
+@pytest.mark.parametrize(
+    ('rooms', 'occupancy'),
+    [([OVERRIDDEN_OFFICE, BEDROOM], {'office': Occupancy.VACANT})],
+    indirect=True,
+)
+def test_override_holds_back_the_occupancy_entry_and_it_does_not_repeat_after_the_override(
+    f_use_case_that_journaled_the_occupancy: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_use_case_that_journaled_the_occupancy.execute(_cycle(OVERRIDE_ENDS - timedelta(hours=1)))
+    f_use_case_that_journaled_the_occupancy.execute(_cycle(OVERRIDE_ENDS))
+
+    assert [event for event in f_events if isinstance(event, OccupancyDryRun)] == [
+        _by_occupancy(Occupancy.VACANT, Decimal(19), COMFORT_AT),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'occupancy'),
+    [
+        (
+            ([replace(WATCHED_CONVECTOR, manual_until=COMFORT_AT + timedelta(hours=1))], {}),
+            {'office': Occupancy.VACANT},
+        ),
+    ],
+    indirect=True,
+)
+def test_room_held_by_hand_journals_nothing_for_occupancy(
+    f_use_case: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_events) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.HANDS_OFF}),
+        [],
+    )

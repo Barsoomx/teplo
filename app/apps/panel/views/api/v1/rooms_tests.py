@@ -28,6 +28,8 @@ WITHOUT_ROOM_CLIMATE = {
     'until': None,
     'guest_room': False,
     'adjustable': False,
+    'occupancy': None,
+    'follows_occupancy': False,
 }
 
 
@@ -92,6 +94,22 @@ def comfort_overview(house_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
 def m_overview_use_case(house_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.api.v1.rooms.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = house_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_occupancy_overview_use_case(
+    request: pytest.FixtureRequest,
+    occupancy_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    follows = request.param
+    ground, upstairs = occupancy_overview.floors
+    bedroom, office = upstairs.rooms
+    intent = RoomIntent(room='office', reason=IntentReason.VACANT, target=Decimal('19.0'), until=None, forced=())
+    followed = replace(office, intent=intent, follows_occupancy=True) if follows else office
+    overview = replace(occupancy_overview, floors=(ground, replace(upstairs, rooms=(bedroom, followed))))
+    with mock.patch('apps.panel.views.api.v1.rooms.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = overview
         yield use_case
 
 
@@ -162,6 +180,8 @@ def test_rooms_api_gives_each_room_its_targets_its_backup_heat_and_what_it_holds
                 'until': '2026-11-04T18:40:00+03:00',
                 'guest_room': True,
                 'adjustable': True,
+                'occupancy': None,
+                'follows_occupancy': False,
             },
             {
                 'slug': 'bedroom',
@@ -180,6 +200,8 @@ def test_rooms_api_gives_each_room_its_targets_its_backup_heat_and_what_it_holds
                 'until': None,
                 'guest_room': False,
                 'adjustable': False,
+                'occupancy': None,
+                'follows_occupancy': False,
             },
             {
                 'slug': 'office',
@@ -188,6 +210,70 @@ def test_rooms_api_gives_each_room_its_targets_its_backup_heat_and_what_it_holds
                 'zones': [],
                 'devices': [],
                 **WITHOUT_ROOM_CLIMATE,
+            },
+        ],
+        1,
+    )
+
+
+@pytest.mark.parametrize(
+    ('m_occupancy_overview_use_case', 'office'),
+    [
+        (
+            False,
+            {
+                'reason': 'override',
+                'target': '22.5',
+                'until': '2026-11-04T18:40:00+03:00',
+                'follows_occupancy': False,
+            },
+        ),
+        (True, {'reason': 'vacant', 'target': '19.0', 'until': None, 'follows_occupancy': True}),
+    ],
+    ids=['watching', 'following'],
+    indirect=['m_occupancy_overview_use_case'],
+)
+def test_rooms_api_gives_a_room_with_presence_sources_its_occupancy(
+    f_client: Client,
+    m_occupancy_overview_use_case: MagicMock,
+    office: dict[str, object],
+) -> None:
+    response = f_client.get('/api/v1/rooms/')
+
+    assert (response.json(), m_occupancy_overview_use_case.init.call_count) == (
+        [
+            {
+                'slug': 'open-space',
+                'name': 'Гостиная, кухня и прихожая',
+                'floor': 'floor-1',
+                'zones': ['kitchen'],
+                'devices': ['air-kitchen', 'plug-boiler-1f', 'thermostat-kitchen'],
+                **WITHOUT_ROOM_CLIMATE,
+            },
+            {
+                'slug': 'bedroom',
+                'name': 'Спальня',
+                'floor': 'floor-2',
+                'zones': [],
+                'devices': ['air-second-floor'],
+                **WITHOUT_ROOM_CLIMATE,
+            },
+            {
+                'slug': 'office',
+                'name': 'Кабинет',
+                'floor': 'floor-2',
+                'zones': [],
+                'devices': ['pc-office', 'presence-office'],
+                'comfort_target': '21.5',
+                'setback_target': '19.0',
+                'air_sensor': None,
+                'backup_zone': None,
+                'backup_live': False,
+                'backup_active': False,
+                'guest_room': False,
+                'adjustable': True,
+                'occupancy': 'vacant',
+                **office,
             },
         ],
         1,

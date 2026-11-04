@@ -83,3 +83,12 @@ msgstr "нет нагрузки"
 
 msgid "the load’s live"
 msgstr "live нагрузки"
+
+msgid "While on and the room’s occupancy is known, the heat sources teplo commands hold the comfort target while someone is here and the night target once nobody has been here for the minutes below, inside and outside the comfort windows; an override and staying guests still win, and a room with a heated floor never follows occupancy. While off, occupancy is only shown and journaled"
+msgstr "Включено: пока присутствие известно, источники тепла, которыми управляет teplo, держат комфорт, пока здесь кто-то есть, и ночную цель, когда никого нет дольше минут ниже, в окнах комфорта и вне их; ручная цель и гости по-прежнему главнее, а комната с тёплым полом присутствию не следует. Выключено: присутствие только показывается и пишется в журнал"
+
+msgid "Minutes without anyone before the room counts as empty"
+msgstr "Минут без присутствия, после которых комната считается пустой"
+
+msgid "This room has a heated floor: floors never follow occupancy"
+msgstr "В этой комнате тёплый пол: полы не следуют присутствию"

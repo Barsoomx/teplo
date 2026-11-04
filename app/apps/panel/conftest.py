@@ -13,15 +13,20 @@ from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecor
 from apps.climate.domain.comfort_windows import StoredWindow
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.room_climate import RoomClimateConfig, RoomClimateConfigRecord
+from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.climate.domain.week_plan import DayPeriod
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
     FloorOverview,
     GetPanelOverviewOutputDTO,
     LoadOverview,
+    OccupancyOverview,
     PlugOverview,
+    PresenceOverview,
+    RoomComfortOverview,
     RoomOverview,
     SensorOverview,
     ZoneOverview,
@@ -33,6 +38,7 @@ from apps.panel.usecases.get_settings_page import GetSettingsPageOutputDTO
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord, LoadSettingsConfig, LoadSettingsRecord
 from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
+from apps.presence.domain.occupancy import Occupancy
 from apps.system.domain.clock import ClockStatus, ClockStatusCode
 
 
@@ -239,6 +245,64 @@ def house_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOvervie
         ),
         unplaced_zones=(),
         unplaced_plugs=(),
+    )
+
+
+@pytest.fixture
+def occupancy_overview(house_overview: GetPanelOverviewOutputDTO) -> GetPanelOverviewOutputDTO:
+    computer = PresenceOverview(
+        slug='pc-office',
+        name='Компьютер: кабинет',
+        room='office',
+        node='teplo-pc-office',
+        available=True,
+        present=False,
+        age_seconds=12,
+        seen_age_seconds=300,
+        error_code=None,
+        error=None,
+    )
+    radar = PresenceOverview(
+        slug='presence-office',
+        name='Радар: кабинет',
+        room='office',
+        node='teplo-air-office',
+        available=False,
+        present=None,
+        age_seconds=None,
+        seen_age_seconds=None,
+        error_code='broker_unavailable',
+        error='mqtt broker unreachable',
+    )
+    ground, upstairs = house_overview.floors
+    bedroom, office = upstairs.rooms
+    watched_office = replace(
+        office,
+        devices=('pc-office', 'presence-office'),
+        comfort=RoomComfortOverview(
+            comfort_target=Decimal('21.5'),
+            setback_target=Decimal('19.0'),
+            air_sensor=None,
+            backup_zone=None,
+            backup_zone_name=None,
+            backup_below=Decimal('19.0'),
+            backup_live=False,
+            backup_active=False,
+        ),
+        intent=RoomIntent(
+            room='office',
+            reason=IntentReason.OVERRIDE,
+            target=Decimal('22.5'),
+            until=datetime(2026, 11, 4, 18, 40, tzinfo=ZoneInfo('Europe/Moscow')),
+            forced=(ForcedTarget(target=Decimal('22.5'), beneath=Decimal('19.0')),),
+        ),
+        adjustable=True,
+        occupancy=OccupancyOverview(state=Occupancy.VACANT, follows=False, sources=(computer, radar)),
+    )
+    return replace(
+        house_overview,
+        floors=(ground, replace(upstairs, rooms=(bedroom, watched_office))),
+        presence=(computer, radar),
     )
 
 

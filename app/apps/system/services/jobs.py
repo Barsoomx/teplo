@@ -38,6 +38,7 @@ from apps.notifications.usecases.report_outages import ReportOutagesInputDTO, Re
 from apps.power.usecases.recover_write_holds import RecoverWriteHoldsInputDTO, RecoverWriteHoldsUseCase
 from apps.power.usecases.shed_phase_loads import ShedPhaseLoadsInputDTO, ShedPhaseLoadsUseCase
 from apps.power.usecases.watch_phases import WatchPhasesInputDTO, WatchPhasesUseCase
+from apps.presence.usecases.track_occupancy import TrackOccupancyInputDTO, TrackOccupancyUseCase
 from apps.system.services.boot_id import BootIdReader
 from apps.system.services.clock_trust import clock_trust_source, read_clock
 from apps.system.services.uptime import UptimeReader
@@ -77,6 +78,7 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
             action=check_sensors,
             delay=timedelta(minutes=1),
         ),
+        PeriodicJob(name='track_occupancy', interval=timedelta(seconds=30), action=track_occupancy),
         PeriodicJob(name='capture_samples', interval=timedelta(minutes=1), action=capture_samples),
         PeriodicJob(name='run_heating_cycle', interval=timedelta(minutes=1), action=run_heating_cycle),
         PeriodicJob(
@@ -150,6 +152,10 @@ def guard_phases() -> object:
 
 def check_sensors() -> object:
     return CheckSensorsUseCase.init().execute(CheckSensorsInputDTO(now=timezone.now()))
+
+
+def track_occupancy() -> object:
+    return TrackOccupancyUseCase.init().execute(TrackOccupancyInputDTO(now=timezone.now()))
 
 
 def capture_samples() -> object:

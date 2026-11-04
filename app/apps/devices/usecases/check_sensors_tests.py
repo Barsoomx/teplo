@@ -11,6 +11,7 @@ from apps.devices.domain.readings import Phase, TemperatureReading
 from apps.devices.factories import DeviceFactory
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
+from apps.devices.services.presence_store import PresenceStore
 from apps.devices.services.state_store import TemperatureStateStore
 from apps.devices.usecases.check_sensors import CheckSensorsInputDTO, CheckSensorsOutputDTO, CheckSensorsUseCase
 
@@ -39,6 +40,15 @@ def phase_meter_store(clock: MonotonicClockStub) -> PhaseMeterStore:
     store = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=timedelta(minutes=10), clock=clock)
     for phase, amps in ((Phase.A, '12.34'), (Phase.B, '4.10'), (Phase.C, '0.52')):
         store.record_current('phase-meter', phase, Decimal(amps), NOW)
+    return store
+
+
+@pytest.fixture
+def presence_store(clock: MonotonicClockStub) -> PresenceStore:
+    store = PresenceStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    store.record('pc-office', present=True, read_at=NOW)
+    store.record('presence-office', present=False, read_at=NOW)
+    store.record_failure('presence-office', error_code='sensor_reading_failed', error='presence: the node reported nan')
     return store
 
 
@@ -194,3 +204,48 @@ def test_sensor_heard_again_is_reported_available(
             occurred_at=NOW + timedelta(seconds=30),
         ),
     ]
+
+
+@pytest.fixture
+def f_presence_use_case(presence_store: PresenceStore, dispatcher: EventDispatcher) -> CheckSensorsUseCase:
+    for slug in ('pc-office', 'presence-office', 'presence-bedroom'):
+        DeviceFactory(slug=slug, kind=DeviceKind.PRESENCE_SENSOR, driver=DeviceDriver.ESPHOME_PRESENCE)
+    return CheckSensorsUseCase(
+        devices=DeviceRepository(),
+        stores={DeviceKind.PRESENCE_SENSOR: presence_store},
+        dispatcher=dispatcher,
+    )
+
+
+def test_presence_source_availability_is_journaled_from_the_presence_store(
+    f_presence_use_case: CheckSensorsUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_presence_use_case.execute(CheckSensorsInputDTO(now=NOW))
+
+    assert (output, f_events) == (
+        CheckSensorsOutputDTO(available=('pc-office',), unavailable=('presence-bedroom', 'presence-office')),
+        [
+            DeviceAvailabilityChanged(
+                slug='pc-office',
+                available=True,
+                reason='reading received',
+                error_code=None,
+                occurred_at=NOW,
+            ),
+            DeviceAvailabilityChanged(
+                slug='presence-bedroom',
+                available=False,
+                reason='no reading',
+                error_code='device_unavailable',
+                occurred_at=NOW,
+            ),
+            DeviceAvailabilityChanged(
+                slug='presence-office',
+                available=False,
+                reason='presence: the node reported nan',
+                error_code='sensor_reading_failed',
+                occurred_at=NOW,
+            ),
+        ],
+    )
