@@ -151,7 +151,7 @@ app/
     barsoom/        the house teplo heats today
 deploy/             router installer, init script and release script
 docs/               design, deployment, screenshots
-scripts/            demo house, screenshot generator, CI watcher
+scripts/            demo house, screenshot generator, CI watcher, the office computer's presence script
 ```
 
 ## Run it
@@ -169,7 +169,7 @@ Checks, as CI runs them on every push:
 
 ```sh
 docker compose run --rm -w /code app ruff check .
-docker compose run --rm -w /code app mypy app
+docker compose run --rm -w /code app mypy app scripts/pc_presence.py scripts/pc_presence_tests.py
 docker compose run --rm -w /code app pytest
 ```
 
@@ -190,7 +190,7 @@ Heat your own house:
 | Air and outdoor sensors | ESP32-C3 with SHT3x/SHT4x, DS18B20 | ESPHome over MQTT | regulation in 3, in dry-run until switched on per zone |
 | Smart plugs | Tuya Wi-Fi plugs with power metering | Tuya local protocol 3.5 | switching in 4, in dry-run until switched on per load |
 | Convector | Tuya Wi-Fi heater (tested: Thermex Frame 2000E) | Tuya local protocol 3.5 | house model block B, in dry-run until its gates are switched on |
-| Presence | the office computer now, HLK-LD2410C mmWave radars on the air nodes later | MQTT like an ESPHome node | house model block C, only watched until a room's `follows occupancy` is ticked |
+| Presence | the office computer now, through `scripts/pc_presence.py` on Windows with Python 3.12, from its keyboard and mouse input; HLK-LD2410C mmWave radars on the air nodes later | MQTT like an ESPHome node | house model block C, only watched until a room's `follows occupancy` is ticked |
 | Heat pump, air conditioner, EV charger | any | driver stub | later |
 
 The router is a Keenetic/Netcraze with Entware on USB storage (aarch64, 1 GB RAM); teplo takes about 70 MB of it.

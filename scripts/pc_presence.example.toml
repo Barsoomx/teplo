@@ -1,0 +1,6 @@
+# Copy to pc_presence.toml next to pc_presence.py and set the password of the broker's pc-office user.
+host = '192.168.1.1'
+port = 1883
+username = 'pc-office'
+password = 'choose-a-pc-password'
+# node = 'teplo-pc-office'

@@ -21,6 +21,9 @@ esphome/.esphome/
 esphome/.gitignore
 esphome/secrets.yaml
 
+scripts/pc_presence.toml
+scripts/pc_presence.log*
+
 .idea/
 .vscode/
 .claude/worktrees/

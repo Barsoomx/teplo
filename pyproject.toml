@@ -28,15 +28,16 @@ djangorestframework-stubs = { version = '>=3.15', extras = ['compatible-mypy'] }
 
 [tool.pytest.ini_options]
 DJANGO_SETTINGS_MODULE = 'settings.test_settings'
-pythonpath = ['app']
-testpaths = ['app']
+pythonpath = ['app', 'scripts']
+testpaths = ['app', 'scripts']
 python_files = ['*_tests.py']
 addopts = '--strict-markers'
 
 [tool.ruff]
 line-length = 120
 target-version = 'py313'
-src = ['app']
+src = ['app', 'scripts']
+per-file-target-version = { 'scripts/pc_presence*.py' = 'py312' }
 extend-exclude = ['app/apps/*/migrations', 'app/sites/*/migrations', '*.md']
 
 [tool.ruff.format]
@@ -61,7 +62,7 @@ known-first-party = ['apps', 'settings', 'sites']
 
 [tool.mypy]
 python_version = '3.13'
-mypy_path = 'app'
+mypy_path = 'app,scripts'
 explicit_package_bases = true
 disallow_untyped_defs = true
 warn_unused_ignores = true

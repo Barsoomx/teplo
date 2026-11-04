@@ -59,7 +59,7 @@ Layout on the router:
   teplo.env             settings, read at start
   secrets.toml          device addresses and keys, panel password, Telegram bot, MQTT user (chmod 600)
 /opt/etc/init.d/S90teplo
-/opt/etc/mosquitto/     broker settings and password file (chmod 600)
+/opt/etc/mosquitto/     broker settings, password file and ACL (chmod 600)
 /opt/var/lib/teplo/     SQLite database and static files
 /opt/var/log/teplo/     teplo.log, restarts.log
 ```
@@ -125,7 +125,7 @@ Restart teplo after adding the line. `teplo.log` then says `owner_commands_start
 
 ## MQTT broker
 
-The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquitto on the router, and teplo subscribes there. Entware's `mosquitto-nossl` has no TLS and no `mosquitto_passwd`: it reads its password file as plain text, so the file holds the passwords as written and only the broker may read it. Persistence stays off, as no message is retained and the flash is spared. Run the steps on the router (`ssh -p 222 root@192.168.1.1`).
+The ESPHome sensors (see ESPHome devices in `docs/design.md`) and the office computer publish to Mosquitto on the router, and teplo subscribes there. Entware's `mosquitto-nossl` has no TLS and no `mosquitto_passwd`: it reads its password file as plain text, so the file holds the passwords as written and only the broker may read it. Persistence stays off, as no message is retained and the flash is spared. Run the steps on the router (`ssh -p 222 root@192.168.1.1`).
 
 1. Install the broker and the command-line clients, then add the `mosquitto` account the broker switches to once it has started. The package does not create it; 200 is a user and group id no other account on the router has:
 
@@ -147,18 +147,19 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
    EOF
    ```
 
-3. Create the password file with one user for the nodes and one for teplo, one `user:password` line each. The broker drops to the `mosquitto` user before it reads the file:
+3. Create the password file with three users, one `user:password` line each: `esphome` for the nodes, `teplo` for teplo and `pc-office` for the office computer. The broker drops to the `mosquitto` user before it reads the file:
 
    ```sh
    cat > /opt/etc/mosquitto/passwd <<'EOF'
    esphome:choose-a-node-password
    teplo:choose-a-teplo-password
+   pc-office:choose-a-pc-password
    EOF
    chown mosquitto:mosquitto /opt/etc/mosquitto/passwd
    chmod 600 /opt/etc/mosquitto/passwd
    ```
 
-   The nodes take the broker address, `esphome` and its password from `esphome/secrets.yaml`: `mqtt_broker`, `mqtt_username`, `mqtt_password`.
+   The nodes take the broker address, `esphome` and its password from `esphome/secrets.yaml`: `mqtt_broker`, `mqtt_username`, `mqtt_password`. The office computer takes `pc-office` and its password from `pc_presence.toml` beside its script (see [The office computer](#the-office-computer)).
 
 4. Start the broker. Its init script, `/opt/etc/init.d/S80mosquitto`, also starts it at boot, before `S90teplo`:
 
@@ -189,6 +190,63 @@ The ESPHome sensors (see ESPHome devices in `docs/design.md`) publish to Mosquit
    Every node that is up prints its readings within 30 seconds, e.g. `teplo/teplo-air-kitchen/sensor/temperature/state 21.5`: the air and outdoor sensors every 30 seconds, the phase meter every second. No message is retained, so a node that is already connected prints no status line: `teplo/<node>/status online` appears only when a node connects, and `offline` when it drops. Stop with Ctrl-C.
 
    The dashboard shows a reading within 10 seconds of its arrival: an air sensor in its zone's tile or its room's card, or in the row under the house facts when it belongs to no room, the outdoor temperature among the house facts, and the phase bars below the loads, refreshed every 3 seconds. `api/v1/sensors/` and `api/v1/phases/` give the same as JSON.
+
+7. Let each user publish only its own topics with an ACL file, which the broker reads at start, and restart the broker:
+
+   ```sh
+   cat > /opt/etc/mosquitto/acl <<'EOF'
+   user teplo
+   topic read teplo/#
+   topic write teplo/+/climate/+/+/command
+
+   user esphome
+   topic write teplo/+/status
+   topic write teplo/+/sensor/+/state
+   topic write teplo/+/climate/+/+/state
+   topic read teplo/+/+/+/command
+   topic read teplo/+/climate/+/+/command
+   topic write esphome/discover/#
+   topic read esphome/discover
+   topic read esphome/ping/#
+
+   user pc-office
+   topic write teplo/teplo-pc-office/#
+   EOF
+   chown mosquitto:mosquitto /opt/etc/mosquitto/acl
+   chmod 600 /opt/etc/mosquitto/acl
+   grep -q '^acl_file ' /opt/etc/mosquitto/mosquitto.conf || echo 'acl_file /opt/etc/mosquitto/acl' >> /opt/etc/mosquitto/mosquitto.conf
+   /opt/etc/init.d/S80mosquitto restart
+   ```
+
+   teplo and the nodes reconnect on their own within seconds; meanwhile the sensors record `broker_unavailable`, and the journal may show the office computer «нет связи» until its next report. What each line allows:
+
+   - `teplo` subscribes to `teplo/+/sensor/+/state` and `teplo/+/status`, which `teplo/#` covers, and alone publishes commands: the mode and target of an air conditioner on `teplo/<node>/climate/<id>/<attribute>/command`.
+   - Every node publishes its birth, will and shutdown messages on `teplo/<node>/status` and its readings on `teplo/<node>/sensor/<id>/state`, the state topics set in `esphome/common/air.yaml`, `diagnostics.yaml` and `radar.yaml` and the phase meter's. The air conditioner and IR nodes publish their climate states and read their climate and button command topics.
+   - ESPHome's IP discovery, on by default, makes every node read `esphome/discover` and `esphome/ping/<node>` and answer on `esphome/discover/<node>`.
+   - The office computer publishes only under its node, `teplo/teplo-pc-office/`, its will included. A computer that reports for another room needs a line of its own here, as the broker drops the reports of a node the ACL does not name.
+   - The broker drops any other publish without a word to the client, such as the state of a radar's Bluetooth switch, which teplo does not read; the broker run with `-v` in the foreground logs each as `Denied PUBLISH`. The check of step 6, `mosquitto_sub -u teplo -t 'teplo/#'`, keeps working.
+
+   Check the ACL on a node name teplo does not know, `teplo-acl-check`, so that no probe reaches a device or its readings. Watch it in one shell:
+
+   ```sh
+   mosquitto_sub -h 192.168.1.1 -i acl-watch -u teplo -P 'choose-a-teplo-password' -t 'teplo/teplo-acl-check/#' -v
+   ```
+
+   and publish from another:
+
+   ```sh
+   mosquitto_pub -h 192.168.1.1 -i acl-check -u esphome -P 'choose-a-node-password' -t teplo/teplo-acl-check/sensor/temperature/state -m 1
+   mosquitto_pub -h 192.168.1.1 -i acl-check -u pc-office -P 'choose-a-pc-password' -t teplo/teplo-acl-check/sensor/temperature/state -m 1
+   mosquitto_pub -h 192.168.1.1 -i acl-check -u esphome -P 'choose-a-node-password' -t teplo/teplo-acl-check/climate/probe/mode/command -m off
+   ```
+
+   The first prints `teplo/teplo-acl-check/sensor/temperature/state 1` in the watching shell, and teplo logs `esphome_node_unknown` for `teplo-acl-check` once: the nodes' user may publish readings. The second and the third print nothing, as the computer's user publishes only under its own node and only teplo publishes commands, although `mosquitto_pub` succeeds, since the broker drops a refused publish without telling the client. Last, step 6 on `teplo/#` still shows the real nodes' readings.
+
+   A broker set up before block C has neither the `pc-office` user nor the ACL. Add the user's line to the password file, then take this step whole:
+
+   ```sh
+   grep -q '^pc-office:' /opt/etc/mosquitto/passwd || echo 'pc-office:choose-a-pc-password' >> /opt/etc/mosquitto/passwd
+   ```
 
 `teplo.log` says `mqtt_connected` once teplo has subscribed. `mqtt_connection_refused` means a wrong `username` or `password` in `[mqtt]`; `mqtt_connect_failed` means the broker is down or listens on another address. teplo keeps retrying on its own, 1 second after a failure and then up to every 30 seconds. `esphome_node_unknown` names a node that publishes but matches no teplo device, e.g. a misspelt node name, and `mqtt_not_configured` a missing `[mqtt]` table. The broker logs to standard error, which the init script discards; to watch it, stop the service and run `/opt/sbin/mosquitto -c /opt/etc/mosquitto/mosquitto.conf -v` in the foreground.
 
@@ -262,6 +320,67 @@ A sensor that fails when its node starts also yields `nan`. An SHT30 that does n
 
 To replace a failed SuperMini node, wire the spare like it and flash the spare with that node's firmware; it takes over the node's name and topics.
 
+## The office computer
+
+The office computer is the office's presence source `pc-office`, «Компьютер: кабинет»: `scripts/pc_presence.py` runs in the owner's Windows session, reads when he last used the keyboard or the mouse and publishes it like an ESPHome node, `teplo-pc-office`, through the broker's `pc-office` user (see The office computer in `docs/design.md`, section 4). It needs Python 3.12 from python.org in `C:\Program Files\Python312`, without anything from pip, and the broker's `pc-office` user and ACL (see [MQTT broker](#mqtt-broker), steps 3 and 7).
+
+1. In PowerShell, make a folder for the script and copy into it the script and the example config from a checkout of the repository, the config as `pc_presence.toml`, then set its `password` to the `pc-office` password of the broker's password file:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\teplo"
+   Copy-Item scripts\pc_presence.py "$env:LOCALAPPDATA\teplo\"
+   Copy-Item scripts\pc_presence.example.toml "$env:LOCALAPPDATA\teplo\pc_presence.toml"
+   notepad "$env:LOCALAPPDATA\teplo\pc_presence.toml"
+   ```
+
+   The config stays beside the script, outside the repository, as it holds the password; should the script run from a checkout, Git ignores its `scripts/pc_presence.toml` and its log. `host` is the router and `port` 1883, and `node` stays `teplo-pc-office`, the only node the ACL lets `pc-office` publish under.
+
+2. Before any test in a console, stop the task if it is registered, as one copy runs per Windows session:
+
+   ```powershell
+   Stop-ScheduledTask -TaskName 'teplo presence'
+   ```
+
+   A second copy exits at once with code 3 and logs `another pc_presence is running in this session`.
+
+3. Test the script in a console:
+
+   ```powershell
+   & 'C:\Program Files\Python312\python.exe' "$env:LOCALAPPDATA\teplo\pc_presence.py"
+   ```
+
+   It logs to the console and to `pc_presence.log` beside the script: `connected to 192.168.1.1:1883 as pc-office`, then `presence 1`, and `presence 0` or `presence 1` whenever that changes. Ctrl+C publishes `offline` and ends it. `connect failed: not authorized` means a wrong user name or password, and `connect failed: timed out` or a refused connection a broker it cannot reach; it keeps trying, at least every 30 seconds. A config it cannot use ends it at once with code 2 and the reason, e.g. `password must be set`.
+
+4. On the router, watch the reports arrive:
+
+   ```sh
+   mosquitto_sub -h 192.168.1.1 -i pc-check -u teplo -P 'choose-a-teplo-password' -t 'teplo/teplo-pc-office/#' -v
+   ```
+
+   It shows `teplo/teplo-pc-office/status online` when the script connects, `teplo/teplo-pc-office/sensor/presence/state 1` or `0` every 30 seconds, a `1` within a second of input after a `0`, and `teplo/teplo-pc-office/status offline` after Ctrl+C.
+
+5. Register a task that starts the script at each logon with `pythonw.exe`, which opens no window, and start it now:
+
+   ```powershell
+   $action = New-ScheduledTaskAction -Execute 'C:\Program Files\Python312\pythonw.exe' -Argument ('"' + "$env:LOCALAPPDATA\teplo\pc_presence.py" + '"') -WorkingDirectory "$env:LOCALAPPDATA\teplo"
+   $trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -StartWhenAvailable
+   Register-ScheduledTask -TaskName 'teplo presence' -Action $action -Trigger $trigger -Settings $settings
+   Start-ScheduledTask -TaskName 'teplo presence'
+   ```
+
+   The task runs only while the owner is logged on, in his session, which `GetLastInputInfo` needs, as it reads the input of its own session only. It has no time limit, where a task's default stops it after 72 hours, and it goes on when the computer runs on battery. Task Scheduler starts it at a logon and when asked, not again after the script has ended: after a test in a console, start the task again with `Start-ScheduledTask -TaskName 'teplo presence'`.
+
+6. Check in the panel. Within a minute of moving the mouse the «Кабинет» card reads «Занято», still with «Наблюдение»; `/api/v1/presence/` lists `pc-office` with `available` true and `age_seconds` under 30; the journal says «Компьютер: кабинет: на связи» and «Кабинет: занято». After 20 minutes without input the card reads «Никого», and while the computer sleeps or is off «Нет данных» with «Компьютер: кабинет: нет связи».
+
+7. The log, `pc_presence.log` beside the script, rolls over at 1 MB into `pc_presence.log.1` and never holds the password. To remove the script, stop and unregister the task, then delete the folder:
+
+   ```powershell
+   Stop-ScheduledTask -TaskName 'teplo presence'
+   Unregister-ScheduledTask -TaskName 'teplo presence' -Confirm:$false
+   Remove-Item -Recurse "$env:LOCALAPPDATA\teplo"
+   ```
+
 ## Operate
 
 - Service: `/opt/etc/init.d/S90teplo {start|stop|restart|status}`. `stop` gives teplo 10 s to finish its cleanup and then kills it, so `restart` never runs two instances.
@@ -271,7 +390,7 @@ To replace a failed SuperMini node, wire the spare like it and flash the spare w
 - Day to day, the panel's schedule page (`/schedule/`) sets each room's comfort windows and its settings page (`/settings/`) each room's air targets and backup heat, the zones' setpoints, the climate and load thresholds and the shedding order; neither needs a restart. The heating cycle and the load guard pick a change up within a minute, and a thermostat takes a new setpoint or schedule at its zone's next allowed write, at most one change per 30 minutes. Each change is journaled, e.g. «Кухня: пол в комфорте 28° → 27,5°» or «Спальня: воздух в комфорте 20,5° → 21°». The gates `live control`, `air control live`, a room's `backup live` and `follows occupancy`, the fireplace's `live`, a heat source's `live`, `manual hold live`, `load management live` and a load's `live` are switched only in the admin, as described below: the settings page shows each read-only with a link to its admin page, and `TEPLO_DRY_RUN` stays in `teplo.env`.
 - Guests and room targets need no gate. «Гости на 1 ночь», «2 ночи» or «3 ночи» in the dashboard's house facts keeps the guest rooms at comfort until 14:00 after the last of those nights, the hour set under Climate on the settings page («Гости до, час»); pressing one while guests stay sets their end anew from now, and «Гости уехали» ends it; a room is a guest room by the checkbox on its card, and the site data makes the open space one. The −/+ of a room whose floors read the air, the open space, or that a heat source teplo commands heats, the office, move its target by 0.5 °C for 2 hours, and «Вернуть расписание» ends that early; the office's target reaches the convector at its next allowed write once its source is live (see [The office convector](#the-office-convector)). Both reach a floor through its usual gates, at the zone's next allowed write within its 30-minute budget: in floor mode a target above the room's own takes each floor that aims lower one setpoint up, night to comfort or comfort to boost, a target below it takes each floor that aims higher to the night setpoint, and a floor already pre-heating for the coming window keeps its pre-heat on a «+». The floor's tile says which setpoint it takes and from when, or that load management holds it off, and the journal lists each change, e.g. «Гостиная, кухня и прихожая: вручную 22,5° до 18:40».
 - The floors and rooms come from the site data and are edited in the admin (`/admin/house/floor/`, `/admin/house/room/`). A plug or a sensor that serves no zone takes its room on its own page in `/admin/devices/device/`; a zone's thermostat and air sensor follow the room set on the zone's page in `/admin/climate/zone/`. The site data puts the water heater 1F and washing machine plugs in «Санузел 1 этаж»; if they stand elsewhere, set their room on their pages. The dashboard shows a room once it holds a zone, an air sensor, a plug or a heat source, as the office its convector. Each room's comfort, its air sensor, its backup heat and whether it follows occupancy live in `/admin/climate/roomclimate/`, which the site data fills: a room climate takes no air sensor that serves a zone or stands in another room, and the page and the list both refuse `follows occupancy` for a room with a heated floor, «В этой комнате тёплый пол: полы не следуют присутствию».
-- Presence sources are devices of kind `presence_sensor` with the driver `esphome_presence`, placed in their room in `/admin/devices/device/`; the site data seeds the office computer, `pc-office`, «Компьютер: кабинет», heard on `teplo-pc-office`. A source that publishes on another device's node, as a radar on its room's air node, names that device's slug in `node`, e.g. `air-office` for `teplo-air-office`; an empty `node` means its own, `teplo-<slug>`. teplo reads the presence sources when it starts, so restart it after adding one. A presence source never raises the device-lost alert: one that is silent, as a computer that sleeps, only makes its room's occupancy unknown, and the room's card reads «Нет данных» with «Компьютер: кабинет: нет связи» below until the source reports; the journal still says «Компьютер: кабинет: нет связи» about a minute after a start and «… на связи» once it reports. `/api/v1/presence/` lists every presence source with its node, whether it is available and the age of its last report, which shows whether a new source reports. A room follows its occupancy only once its `follows occupancy` is ticked; until then the card shows the occupancy with «Наблюдение», and the journal says «Кабинет: занято», «Кабинет: никого» and what occupancy would give the room's heat sources, «Конвектор: кабинет: по присутствию держал бы 19°» (`docs/design.md`, section 6).
+- Presence sources are devices of kind `presence_sensor` with the driver `esphome_presence`, placed in their room in `/admin/devices/device/`; the site data seeds the office computer, `pc-office`, «Компьютер: кабинет», heard on `teplo-pc-office`, which its script publishes once it runs on the computer (see [The office computer](#the-office-computer)). A source that publishes on another device's node, as a radar on its room's air node, names that device's slug in `node`, e.g. `air-office` for `teplo-air-office`; an empty `node` means its own, `teplo-<slug>`. teplo reads the presence sources when it starts, so restart it after adding one. A presence source never raises the device-lost alert: one that is silent, as a computer that sleeps, only makes its room's occupancy unknown, and the room's card reads «Нет данных» with «Компьютер: кабинет: нет связи» below until the source reports; the journal still says «Компьютер: кабинет: нет связи» about a minute after a start and «… на связи» once it reports. `/api/v1/presence/` lists every presence source with its node, whether it is available and the age of its last report, which shows whether a new source reports. A room follows its occupancy only once its `follows occupancy` is ticked; until then the card shows the occupancy with «Наблюдение», and the journal says «Кабинет: занято», «Кабинет: никого» and what occupancy would give the room's heat sources, «Конвектор: кабинет: по присутствию держал бы 19°» (`docs/design.md`, section 6).
 
 ## Enable live control
 
@@ -331,6 +450,19 @@ The office convector, a Thermex Frame 2000E, ships watching only (`docs/design.m
 3. Tick `live` of «Конвектор: кабинет» in `/admin/climate/heatsource/`; the list's column «Команды» names any gate still missing. Once the load guard has read the gates, within a minute, teplo sets the convector's own setpoint, 19 °C outside the office's window and 22 °C in it or after «холодно в офисе», never the 35 °C of its app, so a teplo that is down leaves it at the last of those. A command that switches the convector on switches it on and gives it its setpoint at once, «Конвектор: кабинет: включил на 22°», as it ignores a setpoint while it is off; one it does not take switches it off again, journaled as «… не удалось включить на 22°», and teplo tries again at its next allowed write. Each command waits for the convector's interval, 5 minutes, journaled as «Конвектор: кабинет: поставил 22°». A change made with the convector's own buttons or in Smart Life holds it for 2 hours, «Конвектор: кабинет: изменили на приборе: 22° → 25°, teplo не трогает до 18:40», and the row reads «Вручную до 18:40». An overload of L2 switches it off, «Конвектор: кабинет: выключил обогреватель», and teplo starts it again once the phase calms, with a start permit.
 
 The bias added to the target, the interval between commands, the highest setpoint and the rated power are edited on the source's page in `/admin/climate/heatsource/`. Unticking the source's `live` stops the commands at once; teplo leaves the convector as it was, and a shed one goes back on at its next allowed write.
+
+### Presence in the office
+
+The office's occupancy is shown and journaled from the moment the office computer reports (see [The office computer](#the-office-computer)) and drives nothing until the office's `follows occupancy` is ticked (`docs/design.md`, section 6, Occupancy).
+
+1. Watch the journal for a few days: «Кабинет: никого» about 20 minutes after the last input, «Кабинет: занято» at the next one, «Компьютер: кабинет: нет связи» and «Кабинет: нет данных о присутствии» while the computer sleeps or is off, and «Конвектор: кабинет: по присутствию держал бы 19°» or «… 22°» whenever occupancy would give the convector another setpoint than the office's windows do.
+2. Before ticking, choose what a computer that sleeps or is off should mean. With the gate on, an office without presence data follows its windows: inside 13:00–23:45 it goes back to 21.5 °C, the convector to 22 °C, with nobody there, and a computer that sleeps sooner than `vacant after minutes` never reads «Никого», as it sleeps before the 20 minutes without input are up. Choose one:
+   - set the computer's sleep timer longer than `vacant after minutes`, or to never, during working hours;
+   - lower `vacant after minutes` below the sleep timer;
+   - delete the office's comfort windows on the schedule page, so that an office without presence data holds 19 °C and only presence brings comfort;
+   - accept the reheat.
+3. Tick `follows occupancy` of «Кабинет» in `/admin/climate/roomclimate/`, in the list's column or on its page, and leave `vacant after minutes` at 20 unless you chose otherwise. From the next minute the office's target reads 19,0° while nobody is there and its comfort target while someone is, the chip loses «Наблюдение», and the convector takes the target at its next allowed write, at most 5 minutes later: 19 °C some 20 to 25 minutes after the office empties and 22 °C within about 5 minutes of the return. The convector needs nothing more once its own gates are on (see [The office convector](#the-office-convector)).
+4. −/+ on the card and «холодно в офисе» still win for 2 hours; the card's button and «кабинет авто» in the chat then read «Снова по присутствию» and end that early. Unticking the gate returns the office to its windows.
 
 ## Roll back
 

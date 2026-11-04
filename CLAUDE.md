@@ -36,6 +36,7 @@ app/
   sites/<name>/          site app: data migrations describing one house
 esphome/                 ESPHome device configurations
 deploy/                  router install and deploy scripts
+scripts/                 workstation tooling; pc_presence.py runs on the office PC under Python 3.12, standard library only
 ```
 
 Contexts: `core`, `house`, `devices`, `climate`, `power`, `tariffs`, `telemetry`, `notifications`, `system`, `panel`.
@@ -96,6 +97,7 @@ logger.info(
 - All preparation lives in typed fixtures. A fixture passed into a test is named `f_<name>`, or `m_<name>` when it is a mock; objects built inside a test have plain names. Shared fixtures live in `conftest.py` at `app/` and per app.
 - Stubs over mocks: implement the port in a stub and pass it through the constructor. View tests use mocks only, patched by import path string (`mock.patch('apps.panel.views...')`; `app/` is the import root); `monkeypatch.setattr` and `patch.object` stay unused.
 - ORM tests declare `pytestmark = pytest.mark.django_db`; time is frozen with freezegun; API tests compare the whole `response.json()`.
+- `scripts/pc_presence_tests.py` imports only the standard library, pytest and the script, as CI runs it again under Python 3.12 with pytest alone.
 - Django models come from factory_boy factories that declare only the fields tests use:
 
 ```python
