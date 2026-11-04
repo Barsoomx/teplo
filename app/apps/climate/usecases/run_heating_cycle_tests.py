@@ -51,7 +51,8 @@ from apps.climate.usecases.run_heating_cycle import (
     RunHeatingCycleUseCase,
 )
 from apps.core.domain.events import DomainEvent, EventDispatcher
-from apps.core.stubs import MonotonicClockStub
+from apps.core.domain.ports import Transaction
+from apps.core.stubs import MonotonicClockStub, TransactionStub
 from apps.devices.domain.capabilities import FloorThermostat
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
@@ -377,6 +378,7 @@ def _use_case(
     learning: ZoneLearningStore | None = None,
     gate: LoadGate | None = None,
     writes: WriteGate | None = None,
+    transaction: Transaction | None = None,
 ) -> RunHeatingCycleUseCase:
     return RunHeatingCycleUseCase(
         zones=ZoneRepository() if zones is None else zones,
@@ -389,6 +391,7 @@ def _use_case(
         book=book,
         gate=LoadGateStub(held=frozenset(), gated=frozenset(), answers={}) if gate is None else gate,
         writes=_write_gate(MonotonicClockStub(now=0.0)) if writes is None else writes,
+        transaction=TransactionStub(meanwhile=None) if transaction is None else transaction,
         dry_run=dry_run,
         dispatcher=dispatcher,
     )
@@ -2127,6 +2130,35 @@ def f_guests_stepped_down_cycle(
 
 
 @pytest.fixture
+def f_card_save() -> TransactionStub:
+    climate = _overridden_open_space('22.5', MORNING + timedelta(hours=1))
+    _open_space_zone(climate, kind=ZoneKind.FLOOR)
+    return TransactionStub(
+        meanwhile=partial(RoomClimate.objects.filter(pk=climate.pk).update, comfort_target=Decimal('23.0')),
+    )
+
+
+@pytest.fixture
+def f_card_saved_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+    f_card_save: TransactionStub,
+) -> RunHeatingCycleUseCase:
+    store.record_state(LIVING_ROOM, _state('28.0'))
+    return _use_case(
+        store,
+        temperatures,
+        {LIVING_ROOM: f_living_room_thermostat},
+        book,
+        dispatcher,
+        transaction=f_card_save,
+    )
+
+
+@pytest.fixture
 def f_recently_written_overridden_cycle(
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
@@ -2222,6 +2254,19 @@ def test_override_moves_the_floor_one_setpoint_only_the_way_it_moves_the_room(
     f_overridden_cycle.execute(_at(now))
 
     assert f_living_room_thermostat.commands == commands
+
+
+def test_heating_cycle_reads_the_zones_and_the_room_intents_from_one_transaction(
+    f_card_saved_cycle: RunHeatingCycleUseCase,
+    f_card_save: TransactionStub,
+    f_living_room_thermostat: FloorThermostatStub,
+) -> None:
+    f_card_saved_cycle.execute(_at(MORNING))
+
+    assert (f_card_save.outcomes, f_living_room_thermostat.commands) == (
+        ['committed'],
+        [('setpoint', Decimal('22.0'))],
+    )
 
 
 def test_a_step_down_from_guests_takes_the_floor_to_its_night_setpoint(

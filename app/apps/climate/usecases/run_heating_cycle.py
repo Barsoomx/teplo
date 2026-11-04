@@ -46,7 +46,9 @@ from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.write_gate import zone_write_gate
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import EventDispatcher, event_dispatcher
+from apps.core.domain.ports import Transaction
 from apps.core.domain.usecases.base import BaseUseCase
+from apps.core.services.database_transaction import DatabaseTransaction
 from apps.devices.domain.capabilities import FloorThermostat, ThermostatProvider
 from apps.devices.services.driver_registry import driver_registry
 from apps.devices.services.state_store import (
@@ -94,6 +96,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         book: ControlBook,
         gate: LoadGate,
         writes: WriteGate,
+        transaction: Transaction,
         dry_run: bool,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
@@ -108,6 +111,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         self._book = book
         self._gate = gate
         self._writes = writes
+        self._transaction = transaction
         self._dry_run = dry_run
 
     @classmethod
@@ -123,15 +127,17 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             book=control_book,
             gate=GuardLoadGate.init(),
             writes=zone_write_gate,
+            transaction=DatabaseTransaction(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
     def _execute(self, input_dto: RunHeatingCycleInputDTO) -> RunHeatingCycleOutputDTO:
         now = timezone.localtime(input_dto.now)
-        control = self._climate_settings.control()
-        zones = self._zones.all_settings()
-        learning = self._learning.all_records()
-        intents = self._intents.read(now, clock_trusted=input_dto.clock_trusted)
+        with self._transaction():
+            control = self._climate_settings.control()
+            zones = self._zones.all_settings()
+            learning = self._learning.all_records()
+            intents = self._intents.read(now, clock_trusted=input_dto.clock_trusted)
         backed_up = self._run_backup(intents.rooms, zones, now)
         zone_intents = {zone.slug: intents.zone_intent(zone, backed_up=backed_up) for zone in zones}
         cycle = CycleConditions(
