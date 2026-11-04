@@ -9,7 +9,7 @@ from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.drive import PendingKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
-from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.climate.domain.room_status import RoomStatus, SourceStatus, ZoneStatus
 from apps.notifications.domain.alerts import PhaseReading
 
 HELP = gettext_lazy(
@@ -53,6 +53,17 @@ FLOOR_WATCHED = gettext_lazy('%(zone)s: watching only, no command goes out')
 FLOOR_SHED = gettext_lazy('%(zone)s: the floor is off by load management')
 FLOOR_HANDS_OFF = gettext_lazy('%(zone)s: changed on the thermostat, teplo leaves it alone until %(time)s')
 NO_CONNECTION = gettext_lazy('%(zone)s: no connection to the thermostat')
+SOURCE_SOON = gettext_lazy('%(source)s: %(target)s within the next minute')
+SOURCE_AT = gettext_lazy('%(source)s: %(target)s no sooner than %(time)s')
+SOURCE_WATCHED = gettext_lazy('%(source)s: %(target)s — watching only, no command goes out')
+SOURCE_SHED = gettext_lazy('%(source)s: off by load management')
+SOURCE_HANDS_OFF = gettext_lazy('%(source)s: changed on the unit, teplo leaves it alone until %(time)s')
+SOURCE_HOLDS = gettext_lazy('%(source)s: already %(target)s')
+SOURCE_HOLDS_OFF = gettext_lazy('%(source)s: already off')
+SOURCE_NO_CONNECTION = gettext_lazy('%(source)s: no connection')
+SOURCE_SWITCH_OFF = gettext_lazy('switch-off')
+SOURCE_ON = gettext_lazy('%(source)s: on at %(setpoint)s°, %(temperature)s° at the unit')
+SOURCE_OFF = gettext_lazy('%(source)s: off, %(temperature)s° at the unit')
 HEATING_OFF = gettext_lazy('%(zone)s: heating is off')
 ROOM_AIR = gettext_lazy('%(room)s: %(air)s°, target %(target)s°, %(reason)s')
 ROOM_TARGET = gettext_lazy('%(room)s: target %(target)s°, %(reason)s')
@@ -175,6 +186,45 @@ def zone_write_lines(rooms: Iterable[RoomStatus], now: datetime) -> list[str]:
     return [zone_write_line(zone, now) for room in rooms for zone in room.zones]
 
 
+def source_write_line(source: SourceStatus, now: datetime) -> str | None:
+    pending = source.pending
+    if pending is None:
+        return None
+
+    values = {'source': source.name, 'target': _source_target(source)}
+    if pending.kind is PendingKind.HANDS_OFF and pending.at is not None:
+        return str(SOURCE_HANDS_OFF) % {**values, 'time': moment_text(pending.at, now)}
+
+    lines = {
+        PendingKind.HELD: SOURCE_SHED,
+        PendingKind.UNREACHED: SOURCE_NO_CONNECTION,
+        PendingKind.HOLDS: SOURCE_HOLDS if source.target_on else SOURCE_HOLDS_OFF,
+        PendingKind.WATCHING: SOURCE_WATCHED,
+    }
+    if pending.kind in lines:
+        return str(lines[pending.kind]) % values
+
+    if pending.at is None or pending.at <= now:
+        return str(SOURCE_SOON) % values
+
+    return str(SOURCE_AT) % {**values, 'time': moment_text(pending.at, now)}
+
+
+def source_write_lines(rooms: Iterable[RoomStatus], now: datetime) -> list[str]:
+    return [line for room in rooms for source in room.sources if (line := source_write_line(source, now)) is not None]
+
+
+def source_state_line(source: SourceStatus) -> str:
+    if not source.available or source.on is None or source.temperature is None:
+        return str(SOURCE_NO_CONNECTION) % {'source': source.name}
+
+    values = {'source': source.name, 'temperature': setpoint_degrees(source.temperature)}
+    if not source.on or source.setpoint is None:
+        return str(SOURCE_OFF) % values
+
+    return str(SOURCE_ON) % {**values, 'setpoint': setpoint_degrees(source.setpoint)}
+
+
 def phases_line(phases: Sequence[PhaseReading]) -> str:
     return str(PHASES) % {'phases': PHASES_SEPARATOR.join(_phase_text(reading) for reading in phases)}
 
@@ -186,3 +236,10 @@ def _phase_text(reading: PhaseReading) -> str:
 
     template = ESTIMATED_PHASE_AMPS if reading.estimated else PHASE_AMPS
     return str(template) % {'phase': phase, 'amps': floatformat(reading.amps, 1)}
+
+
+def _source_target(source: SourceStatus) -> str:
+    if not source.target_on or source.target_setpoint is None:
+        return str(SOURCE_SWITCH_OFF)
+
+    return f'{setpoint_degrees(source.target_setpoint)}°'

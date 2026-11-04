@@ -421,6 +421,22 @@ body {
   margin-top: 0.75rem;
 }
 
+/* A heat source teplo commands, in ink only like a plug: what it reads, its chips and when teplo's target reaches it */
+
+.source-tiles {
+  margin-bottom: 0.75rem;
+}
+
+.source-chips {
+  margin-top: 0.5rem;
+}
+
+.source-pending {
+  margin: 0.5rem 0 0;
+  color: var(--ink-muted);
+  font-size: 0.875rem;
+}
+
 .floor .load-tiles {
   margin-top: 6px;
 }

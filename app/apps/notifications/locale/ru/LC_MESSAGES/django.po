@@ -314,3 +314,46 @@ msgstr "В доме нет камина."
 #, python-format
 msgid "%(zone)s: changed on the thermostat, teplo leaves it alone until %(time)s"
 msgstr "%(zone)s: изменён на термостате, teplo не трогает до %(time)s"
+
+#, python-format
+msgid "%(source)s: %(target)s within the next minute"
+msgstr "%(source)s: %(target)s в ближайшую минуту"
+
+#, python-format
+msgid "%(source)s: %(target)s no sooner than %(time)s"
+msgstr "%(source)s: %(target)s не раньше %(time)s"
+
+#, python-format
+msgid "%(source)s: %(target)s — watching only, no command goes out"
+msgstr "%(source)s: %(target)s — наблюдение, команда не уходит"
+
+#, python-format
+msgid "%(source)s: off by load management"
+msgstr "%(source)s: выключен управлением нагрузкой"
+
+#, python-format
+msgid "%(source)s: changed on the unit, teplo leaves it alone until %(time)s"
+msgstr "%(source)s: изменён на приборе, teplo не трогает до %(time)s"
+
+#, python-format
+msgid "%(source)s: already %(target)s"
+msgstr "%(source)s: уже %(target)s"
+
+#, python-format
+msgid "%(source)s: already off"
+msgstr "%(source)s: уже выключен"
+
+#, python-format
+msgid "%(source)s: no connection"
+msgstr "%(source)s: нет связи"
+
+msgid "switch-off"
+msgstr "выключение"
+
+#, python-format
+msgid "%(source)s: on at %(setpoint)s°, %(temperature)s° at the unit"
+msgstr "%(source)s: включён на %(setpoint)s°, у прибора %(temperature)s°"
+
+#, python-format
+msgid "%(source)s: off, %(temperature)s° at the unit"
+msgstr "%(source)s: выключен, у прибора %(temperature)s°"

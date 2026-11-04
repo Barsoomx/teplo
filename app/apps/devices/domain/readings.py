@@ -61,6 +61,15 @@ class ClimateUnitState:
     target: Decimal
     room_temperature: Decimal | None
     read_at: datetime
+    level: str | None = None
+
+    @property
+    def on(self) -> bool:
+        return self.mode is not ClimateMode.OFF
+
+    @property
+    def heating(self) -> bool:
+        return self.on and self.room_temperature is not None and self.room_temperature < self.target
 
 
 @dataclass(frozen=True, kw_only=True)

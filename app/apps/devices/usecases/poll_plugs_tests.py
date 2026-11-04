@@ -144,6 +144,8 @@ def f_misconfigured_use_case(
         switchable_plug_factories={},
         temperature_sensor_factories={},
         phase_meter_factories={},
+        climate_unit_factories={},
+        controllable_climate_unit_factories={},
     )
     return PollPlugsUseCase(devices=DeviceRepository(), provider=registry, store=f_store, dispatcher=dispatcher)
 
@@ -164,6 +166,8 @@ def f_switchable_use_case(
         switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: _switchable_plug_factory(f_state)},
         temperature_sensor_factories={},
         phase_meter_factories={},
+        climate_unit_factories={},
+        controllable_climate_unit_factories={},
     )
     return PollPlugsUseCase(devices=DeviceRepository(), provider=registry, store=f_store, dispatcher=dispatcher)
 

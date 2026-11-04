@@ -16,6 +16,7 @@ from django.utils.translation import gettext, gettext_lazy
 from apps.climate.domain.comfort_windows import WEEKDAY_FIELDS
 from apps.climate.domain.drive import PendingKind
 from apps.climate.domain.external_heat import FireEnd
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.modes import CommandSource, ScheduleMode
 from apps.climate.domain.room_climate import ROOM
 from apps.climate.domain.room_intent import (
@@ -30,7 +31,7 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.panel.usecases.get_panel_overview import LoadOverview, ZoneOverview
+from apps.panel.usecases.get_panel_overview import LoadOverview, SourceOverview, ZoneOverview
 from apps.panel.usecases.get_phase_currents import ESTIMATE_BASE, EstimatePartOverview, PhaseCurrent
 from apps.power.domain.loads import MEASURED_PHASES, AmpsOrigin, LoadKind, PhaseOrigin
 from apps.power.domain.outage import OutageRecord
@@ -67,10 +68,19 @@ PHASE_METER_FAILURE_NOTES = {
     'device_protocol_error': gettext_lazy('The phase meter sent an unexpected reply'),
     'sensor_reading_failed': gettext_lazy('The phase meter could not measure a phase'),
 }
+CLIMATE_UNIT_FAILURE_NOTES = {
+    **FAILURE_NOTES,
+    'device_unavailable': gettext_lazy('No connection to the unit'),
+    'device_protocol_error': gettext_lazy('The unit sent an unexpected reply'),
+    'secret_missing': gettext_lazy('The secrets file has no address and key for this unit'),
+    'device_config_invalid': gettext_lazy('The secrets file gives this unit a wrong address or protocol'),
+    'climate_unit_not_controllable': gettext_lazy('The driver of this unit cannot command it'),
+}
 DEVICE_FAILURE_NOTES = {
     DeviceKind.PLUG.value: PLUG_FAILURE_NOTES,
     DeviceKind.TEMPERATURE_SENSOR.value: SENSOR_FAILURE_NOTES,
     DeviceKind.PHASE_METER.value: PHASE_METER_FAILURE_NOTES,
+    DeviceKind.CLIMATE_UNIT.value: CLIMATE_UNIT_FAILURE_NOTES,
 }
 UNKNOWN_FAILURE = gettext_lazy('Unknown error')
 CLOCK_NOTES = {
@@ -117,6 +127,37 @@ MANUAL_CHANGE = gettext_lazy('%(name)s: changed on the thermostat: %(changes)s, 
 MANUAL_CHANGE_DRY_RUN = gettext_lazy(
     '%(name)s: changed on the thermostat: %(changes)s, teplo would leave it alone until %(time)s',
 )
+SOURCE_MANUAL_CHANGE = gettext_lazy(
+    '%(name)s: changed on the unit: %(changes)s, teplo leaves it alone until %(time)s',
+)
+SOURCE_MANUAL_CHANGE_DRY_RUN = gettext_lazy(
+    '%(name)s: changed on the unit: %(changes)s, teplo would leave it alone until %(time)s',
+)
+SOURCE_COMMANDS = {
+    (False, True, True): gettext_lazy('%(name)s: switched on at %(setpoint)s°'),
+    (False, True, False): gettext_lazy('%(name)s: switched on'),
+    (False, False, False): gettext_lazy('%(name)s: switched off'),
+    (False, None, True): gettext_lazy('%(name)s: set %(setpoint)s°'),
+    (True, True, True): gettext_lazy('%(name)s: would switch on at %(setpoint)s°'),
+    (True, True, False): gettext_lazy('%(name)s: would switch on'),
+    (True, False, False): gettext_lazy('%(name)s: would switch off'),
+    (True, None, True): gettext_lazy('%(name)s: would set %(setpoint)s°'),
+}
+SOURCE_COMMANDS_FAILED = {
+    (True, True): gettext_lazy('%(name)s: could not switch on at %(setpoint)s°'),
+    (True, False): gettext_lazy('%(name)s: could not switch on'),
+    (False, False): gettext_lazy('%(name)s: could not switch off'),
+    (None, True): gettext_lazy('%(name)s: could not set %(setpoint)s°'),
+}
+ANY_SOURCE_COMMAND_FAILED = gettext_lazy('%(name)s: a command failed')
+SOURCE_HEATS_UP_TO = gettext_lazy('heats up to %(setpoint)s°')
+SOURCE_IS_OFF = gettext_lazy('the unit is off')
+SOURCE_OWN_TEMPERATURE = gettext_lazy('%(temperature)s° at the unit')
+SOURCE_STATE_SEPARATOR = ' · '
+SOURCE_SETS_AT = gettext_lazy('teplo sets %(setpoint)s° no sooner than %(time)s')
+SOURCE_SETS_SOON = gettext_lazy('teplo sets %(setpoint)s° within the next minute')
+SOURCE_OFF_AT = gettext_lazy('teplo switches it off no sooner than %(time)s')
+SOURCE_OFF_SOON = gettext_lazy('teplo switches it off within the next minute')
 MANUAL_POWER = {True: gettext_lazy('switched on'), False: gettext_lazy('switched off')}
 MANUAL_MODE = gettext_lazy('mode %(old)s → %(new)s')
 MANUAL_SETPOINT = '%(old)s → %(new)s'
@@ -149,6 +190,7 @@ UNKNOWN_LOAD_PHASE = gettext_lazy('Phase unknown')
 LOAD_AMPS = {
     AmpsOrigin.NOMINAL: gettext_lazy('%(amps)s A, nominal'),
     AmpsOrigin.LEARNED: gettext_lazy('%(amps)s A, learned'),
+    AmpsOrigin.RATED: gettext_lazy('%(amps)s A by its rated power'),
     AmpsOrigin.DEFAULT: gettext_lazy('%(amps)s A by default'),
 }
 PHASE_OVERLOAD = gettext_lazy('Overload on phase %(phase)s: %(amps)s A')
@@ -174,8 +216,15 @@ LOAD_SHEDS = {
     ('load_restored_dry_run', LoadKind.ZONE): gettext_lazy(
         '%(name)s: would hand the thermostat back to its schedule',
     ),
+    ('load_shed', LoadKind.SOURCE): gettext_lazy('%(name)s: switched the heater off'),
+    ('load_shed_dry_run', LoadKind.SOURCE): gettext_lazy('%(name)s: would switch the heater off'),
+    ('load_restored', LoadKind.SOURCE): gettext_lazy('%(name)s: handed the heater back to its room'),
+    ('load_restored_dry_run', LoadKind.SOURCE): gettext_lazy('%(name)s: would hand the heater back to its room'),
 }
-ZONE_SWITCHED_BACK_ON = gettext_lazy('%(name)s: switched the thermostat back on')
+SWITCHED_BACK_ON = {
+    LoadKind.ZONE: gettext_lazy('%(name)s: switched the thermostat back on'),
+    LoadKind.SOURCE: gettext_lazy('%(name)s: switched the heater back on'),
+}
 SHED_UNMEASURED_OVERLOAD = gettext_lazy('Overload on phase %(phase)s')
 ESTIMATED_SHED_UNMEASURED_OVERLOAD = gettext_lazy('Overload on phase %(phase)s by the estimate')
 SHED_ON_METER_LOST = gettext_lazy('No readings from the phase meter: one floor per phase')
@@ -189,6 +238,8 @@ LOAD_COMMANDS_FAILED = {
     ('restore', LoadKind.PLUG): gettext_lazy('%(name)s: could not switch the plug back on'),
     ('shed', LoadKind.ZONE): gettext_lazy('%(name)s: could not switch the thermostat off'),
     ('restore', LoadKind.ZONE): gettext_lazy('%(name)s: could not switch the thermostat back on'),
+    ('shed', LoadKind.SOURCE): gettext_lazy('%(name)s: could not switch the heater off'),
+    ('restore', LoadKind.SOURCE): gettext_lazy('%(name)s: could not switch the heater back on'),
 }
 ANY_LOAD_COMMAND_FAILED = gettext_lazy('%(name)s: a load management command failed')
 START_WOULD_WAIT = gettext_lazy('%(name)s: would put off switching on')
@@ -220,7 +271,11 @@ ANY_OVERLOAD_BEFORE_CUT = gettext_lazy('A phase was overloaded right before the 
 ESTIMATE_BASE_NAME = gettext_lazy('base')
 ESTIMATE_PART = gettext_lazy('%(name)s %(amps)s A')
 ESTIMATE_PARTS_SEPARATOR = ' · '
-DEVICE_LOAD_KINDS = {DeviceKind.PLUG: LoadKind.PLUG, DeviceKind.THERMOSTAT: LoadKind.ZONE}
+DEVICE_LOAD_KINDS = {
+    DeviceKind.PLUG: LoadKind.PLUG,
+    DeviceKind.THERMOSTAT: LoadKind.ZONE,
+    DeviceKind.CLIMATE_UNIT: LoadKind.SOURCE,
+}
 DAY_PERIODS = {
     ScheduleMode.COMFORT: gettext_lazy('Comfort %(start)s–%(end)s'),
     ScheduleMode.PREHEAT: gettext_lazy('Warm-up %(start)s–%(end)s'),
@@ -549,6 +604,76 @@ def manual_change_text(entry: TimelineEntry) -> str:
 
 
 @register.filter
+def source_manual_change_text(entry: TimelineEntry) -> str:
+    changes = _manual_changes(entry.payload)
+    moment = _journaled_moment(entry.payload.get('until'))
+    if not changes or moment is None:
+        return _unknown_event(entry)
+
+    template = SOURCE_MANUAL_CHANGE_DRY_RUN if entry.payload.get('dry_run') is True else SOURCE_MANUAL_CHANGE
+    return str(template) % {
+        'name': _zone_name(entry),
+        'changes': MANUAL_CHANGES_SEPARATOR.join(changes),
+        'time': moment,
+    }
+
+
+@register.filter
+def source_command_text(entry: TimelineEntry) -> str:
+    power = entry.payload.get('power')
+    setpoint = floatformat(entry.payload.get('setpoint'), -1)
+    template = SOURCE_COMMANDS.get((entry.payload.get('dry_run') is True, _optional_bool(power), bool(setpoint)))
+    if template is None:
+        return _unknown_event(entry)
+
+    return str(template) % {'name': _zone_name(entry), 'setpoint': setpoint}
+
+
+@register.filter
+def source_command_failed_text(entry: TimelineEntry) -> str:
+    setpoint = floatformat(entry.payload.get('setpoint'), -1)
+    template = SOURCE_COMMANDS_FAILED.get((_optional_bool(entry.payload.get('power')), bool(setpoint)))
+    return str(template or ANY_SOURCE_COMMAND_FAILED) % {'name': _zone_name(entry), 'setpoint': setpoint}
+
+
+@register.filter
+def commanded_sources(sources: tuple[SourceOverview, ...]) -> tuple[SourceOverview, ...]:
+    return tuple(source for source in sources if source.kind != HeatSourceKind.FIREPLACE)
+
+
+@register.filter
+def source_state_text(source: SourceOverview) -> str:
+    if source.on is None:
+        return ''
+
+    parts = [
+        str(SOURCE_HEATS_UP_TO) % {'setpoint': floatformat(source.setpoint, -1)} if source.on else str(SOURCE_IS_OFF)
+    ]
+    if source.on and source.level:
+        parts.append(source.level)
+    if source.temperature is not None:
+        parts.append(str(SOURCE_OWN_TEMPERATURE) % {'temperature': floatformat(source.temperature, -1)})
+    return SOURCE_STATE_SEPARATOR.join(parts)
+
+
+@register.filter
+def source_pending_text(source: SourceOverview) -> str:
+    pending = source.pending
+    if pending is None or pending.kind is not PendingKind.NEXT_WRITE or pending.at is None:
+        return ''
+
+    soon = pending.at <= timezone.now()
+    if not source.target_on:
+        return str(SOURCE_OFF_SOON) if soon else str(SOURCE_OFF_AT) % {'time': _moment_text(pending.at)}
+
+    values = {'setpoint': floatformat(source.target_setpoint, -1)}
+    if soon:
+        return str(SOURCE_SETS_SOON) % values
+
+    return str(SOURCE_SETS_AT) % {**values, 'time': _moment_text(pending.at)}
+
+
+@register.filter
 def owner_command_text(entry: TimelineEntry) -> str:
     text = entry.payload.get('text')
     if not isinstance(text, str) or not text:
@@ -736,8 +861,8 @@ def load_shed_text(entry: TimelineEntry) -> str:
     if template is None:
         return _unknown_event(entry)
 
-    if kind is LoadKind.ZONE and entry.kind == 'load_restored' and entry.payload.get('switched_on') is True:
-        template = ZONE_SWITCHED_BACK_ON
+    if kind in SWITCHED_BACK_ON and entry.kind == 'load_restored' and entry.payload.get('switched_on') is True:
+        template = SWITCHED_BACK_ON[kind]
     return str(template) % {'name': load_name(entry)}
 
 
@@ -897,6 +1022,10 @@ def _manual_changes(payload: dict[str, object]) -> list[str]:
     return changes
 
 
+def _optional_bool(value: object) -> bool | None:
+    return value if isinstance(value, bool) else None
+
+
 def _change_pair(value: object) -> tuple[object, object] | None:
     if not isinstance(value, list) or len(value) != 2:
         return None
@@ -942,7 +1071,7 @@ def _estimate_part_text(part: EstimatePartOverview) -> str:
 
 def _load_kind(entry: TimelineEntry) -> LoadKind | None:
     kind = entry.payload.get('kind')
-    if kind in (LoadKind.PLUG, LoadKind.ZONE):
+    if kind in (LoadKind.PLUG, LoadKind.ZONE, LoadKind.SOURCE):
         return LoadKind(str(kind))
 
     return None if entry.device_kind is None else DEVICE_LOAD_KINDS.get(entry.device_kind)

@@ -8,8 +8,9 @@ import pytest
 from django.utils import translation
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
-from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.climate.domain.room_status import RoomStatus, SourceStatus, ZoneStatus
 from apps.notifications.domain.alerts import PhaseReading
 from apps.notifications.services.command_replies import (
     FIREPLACE_LIT,
@@ -23,6 +24,8 @@ from apps.notifications.services.command_replies import (
     phases_line,
     room_line,
     setpoint_degrees,
+    source_state_line,
+    source_write_line,
     zone_state_line,
     zone_write_line,
 )
@@ -55,6 +58,29 @@ OPEN_SPACE = RoomStatus(
     adjustable=True,
     guest_room=True,
     zones=(KITCHEN,),
+)
+
+CONVECTOR = SourceStatus(
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=HeatSourceKind.HEATER,
+    room='office',
+    device='heater-office',
+    priority=1,
+    live=True,
+    available=True,
+    error_code=None,
+    error=None,
+    on=True,
+    setpoint=Decimal(19),
+    level='High',
+    temperature=Decimal(21),
+    target_on=True,
+    target_setpoint=Decimal(22),
+    commands_live=True,
+    held_until=None,
+    shed=False,
+    pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=12)),
 )
 
 
@@ -256,3 +282,75 @@ def test_fireplace_replies_and_the_command_list_name_the_fireplace() -> None:
         'В доме нет камина.',
         'топлю камин, камин погас — отметить камин на 4 часа',
     )
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        (CONVECTOR, 'Конвектор: кабинет: 22° не раньше 16:52'),
+        (
+            replace(CONVECTOR, pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW)),
+            'Конвектор: кабинет: 22° в ближайшую минуту',
+        ),
+        (
+            replace(CONVECTOR, pending=PendingWrite(kind=PendingKind.WATCHING, at=None)),
+            'Конвектор: кабинет: 22° — наблюдение, команда не уходит',
+        ),
+        (
+            replace(CONVECTOR, pending=PendingWrite(kind=PendingKind.HELD, at=None)),
+            'Конвектор: кабинет: выключен управлением нагрузкой',
+        ),
+        (
+            replace(CONVECTOR, pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=NOW + timedelta(hours=2))),
+            'Конвектор: кабинет: изменён на приборе, teplo не трогает до 18:40',
+        ),
+        (replace(CONVECTOR, pending=PendingWrite(kind=PendingKind.HOLDS, at=None)), 'Конвектор: кабинет: уже 22°'),
+        (
+            replace(
+                CONVECTOR, target_on=False, target_setpoint=None, pending=PendingWrite(kind=PendingKind.HOLDS, at=None)
+            ),
+            'Конвектор: кабинет: уже выключен',
+        ),
+        (
+            replace(CONVECTOR, target_on=False, target_setpoint=None),
+            'Конвектор: кабинет: выключение не раньше 16:52',
+        ),
+        (
+            replace(CONVECTOR, pending=PendingWrite(kind=PendingKind.UNREACHED, at=None)),
+            'Конвектор: кабинет: нет связи',
+        ),
+        (replace(CONVECTOR, pending=None), None),
+    ],
+    ids=[
+        'next_write',
+        'within_a_minute',
+        'watching',
+        'shed',
+        'held_by_hand',
+        'holds',
+        'already_off',
+        'switch_off',
+        'unreached',
+        'not_driven',
+    ],
+)
+def test_source_write_line_names_the_setpoint_and_when_it_reaches_the_unit(
+    source: SourceStatus,
+    expected: str | None,
+) -> None:
+    assert source_write_line(source, NOW) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('source', 'expected'),
+    [
+        (CONVECTOR, 'Конвектор: кабинет: включён на 19°, у прибора 21°'),
+        (replace(CONVECTOR, on=False), 'Конвектор: кабинет: выключен, у прибора 21°'),
+        (replace(CONVECTOR, available=False), 'Конвектор: кабинет: нет связи'),
+    ],
+    ids=['on', 'off', 'unreached'],
+)
+def test_source_state_line_gives_what_the_unit_reads(source: SourceStatus, expected: str) -> None:
+    assert source_state_line(source) == expected

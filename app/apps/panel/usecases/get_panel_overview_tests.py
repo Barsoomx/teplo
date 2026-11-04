@@ -30,13 +30,27 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
+from apps.climate.services.source_status import SourceStatusReader
+from apps.climate.stubs import SourceLoadGateStub
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
-from apps.devices.domain.readings import PlugState, TemperatureReading, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateUnitState,
+    PlugState,
+    TemperatureReading,
+    ThermostatMode,
+    ThermostatState,
+)
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
-from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
+from apps.devices.services.state_store import (
+    ClimateUnitStateStore,
+    PlugStateStore,
+    TemperatureStateStore,
+    ThermostatStateStore,
+)
 from apps.house.factories import FloorFactory, RoomFactory
 from apps.house.repositories.house import HouseRepository
 from apps.panel.usecases.get_panel_overview import (
@@ -56,7 +70,13 @@ from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin, ShedReason
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
 from apps.power.domain.shedding import Shed
-from apps.power.factories import LoadSettingsFactory, OutageFactory, PlugLoadFactory, ZoneLoadFactory
+from apps.power.factories import (
+    LoadSettingsFactory,
+    OutageFactory,
+    PlugLoadFactory,
+    SourceLoadFactory,
+    ZoneLoadFactory,
+)
 from apps.power.models import Outage
 from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.load_settings import LoadSettingsRepository
@@ -133,6 +153,17 @@ def _learned_house(air: str) -> TemperatureStateStore:
     return temperatures
 
 
+def _source_statuses(units: ClimateUnitStateStore | None = None) -> SourceStatusReader:
+    return SourceStatusReader(
+        sources=HeatSourceRepository(),
+        units=ClimateUnitStateStore(unavailable_after=timedelta(minutes=10)) if units is None else units,
+        temperatures=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        climate_settings=ClimateSettingsRepository(),
+        gate=SourceLoadGateStub(held=frozenset(), gated=frozenset(), answers={}),
+        dry_run=False,
+    )
+
+
 def _intents(book: ControlBook) -> RoomIntentReader:
     return RoomIntentReader(
         rooms=RoomClimateRepository(),
@@ -160,6 +191,7 @@ def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPane
         temperature_store=temperatures,
         book=book,
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -197,6 +229,7 @@ def f_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -224,6 +257,7 @@ def f_offline_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=False),
         dry_run=False,
     )
@@ -254,6 +288,7 @@ def f_boosted_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -284,6 +319,7 @@ def f_disabled_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -309,6 +345,7 @@ def f_two_zone_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -357,6 +394,7 @@ def f_plugs_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -430,6 +468,7 @@ def f_sensors_use_case(monotonic: MonotonicClockStub) -> GetPanelOverviewUseCase
         temperature_store=store,
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -459,6 +498,7 @@ def f_unplaced_sensor_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -557,6 +597,7 @@ def f_outages_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=True,
     )
@@ -655,7 +696,7 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
     guard_book.remember(
         replace(GuardState.started(guard_loads, GUARD_AT), shedding=ShedState(sheds={'boiler-1f': BOILER_SHED})),
     )
-    guard_book.note_waiting(frozenset({'kitchen'}))
+    guard_book.note_waiting(frozenset({'kitchen'}), frozenset({'kitchen'}))
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
         intents=_intents(ControlBook()),
@@ -672,6 +713,7 @@ def f_loads_use_case() -> GetPanelOverviewUseCase:
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=guard_book,
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -765,6 +807,74 @@ def f_fireplace_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseC
 
 
 @pytest.fixture
+def f_office_use_case() -> GetPanelOverviewUseCase:
+    office = RoomClimateFactory.create(
+        room=RoomFactory.create(
+            slug='office',
+            name='Кабинет',
+            floor=FloorFactory.create(slug='floor-2', name='2 этаж', level=2),
+        ),
+        comfort_target=Decimal('21.5'),
+        setback_target=Decimal('19.0'),
+    )
+    ComfortPeriodFactory.create_batch(7, zone=None, room_climate=office, start=time(13, 0), end=time(23, 45))
+    heater = HeatSourceFactory.create(
+        slug='convector-office',
+        name='Конвектор: кабинет',
+        room=office.room,
+        kind=HeatSourceKind.HEATER,
+        device=DeviceFactory.create(
+            slug='heater-office',
+            name='Конвектор: кабинет',
+            kind=DeviceKind.CLIMATE_UNIT,
+            driver=DeviceDriver.TUYA_HEATER,
+            room=office.room,
+        ),
+        rated_watts=2000,
+        min_write_minutes=5,
+    )
+    SourceLoadFactory.create(
+        slug='convector-office',
+        name='Конвектор: кабинет',
+        heat_source=heater,
+        priority=8,
+        phase=LoadPhase.L2,
+    )
+    units = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10))
+    units.record_state(
+        'heater-office',
+        ClimateUnitState(
+            mode=ClimateMode.HEAT,
+            target=Decimal(35),
+            room_temperature=Decimal(21),
+            read_at=MORNING,
+            level='High',
+        ),
+    )
+    book = ControlBook()
+    return GetPanelOverviewUseCase(
+        zones=ZoneRepository(),
+        intents=_intents(book),
+        devices=DeviceRepository(),
+        house=HouseRepository(),
+        climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
+        outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
+        thermostat_store=ThermostatStateStore(unavailable_after=timedelta(minutes=10)),
+        plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
+        temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=book,
+        guard_book=GuardBook(),
+        sources=_source_statuses(units),
+        clock=ClockStub(trusted=True),
+        dry_run=False,
+    )
+
+
+@pytest.fixture
 def f_pending_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
     setpoint, last_command_at, shed = request.param
     kitchen = _zone('kitchen', 'Кухня', live_control=True, last_command_at=last_command_at)
@@ -810,6 +920,7 @@ def f_pending_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCas
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=guard_book,
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -847,6 +958,7 @@ def f_held_by_hand_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewU
         temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         book=ControlBook(),
         guard_book=GuardBook(),
+        sources=_source_statuses(),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -1563,7 +1675,83 @@ def test_overview_shows_the_fireplace_of_a_room_with_its_mark_and_what_the_detec
                 live=live,
                 lit_until=lit_until,
                 burning=burning,
+                room='open-space',
+                priority=1,
             ),
         ),
         True,
+    )
+
+
+CONVECTOR_OVERVIEW = SourceOverview(
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=HeatSourceKind.HEATER,
+    live=False,
+    lit_until=None,
+    burning=False,
+    room='office',
+    device='heater-office',
+    priority=1,
+    available=True,
+    error_code=None,
+    error=None,
+    on=True,
+    setpoint=Decimal(35),
+    level='High',
+    temperature=Decimal(21),
+    target_on=True,
+    target_setpoint=Decimal(19),
+    commands_live=False,
+    held_until=None,
+    shed=False,
+    pending=PendingWrite(kind=PendingKind.WATCHING, at=None),
+)
+
+
+def test_overview_shows_the_office_card_with_its_convector_and_target(
+    f_office_use_case: GetPanelOverviewUseCase,
+) -> None:
+    overview = f_office_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    [office] = overview.floors[0].rooms
+    assert (office.sources, office.adjustable, office.shown, office.intent, overview.sources) == (
+        (CONVECTOR_OVERVIEW,),
+        True,
+        True,
+        RoomIntent(
+            room='office',
+            reason=IntentReason.SETBACK,
+            target=Decimal('19.0'),
+            until=datetime(2026, 10, 29, 13, 0, tzinfo=MOSCOW),
+            forced=(),
+        ),
+        (CONVECTOR_OVERVIEW,),
+    )
+
+
+def test_overview_lists_the_convector_s_load_at_its_rated_current_and_drawing_while_it_heats(
+    f_office_use_case: GetPanelOverviewUseCase,
+) -> None:
+    loads = f_office_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).loads
+
+    assert loads == (
+        LoadOverview(
+            slug='convector-office',
+            name='Конвектор: кабинет',
+            kind=LoadKind.SOURCE,
+            zone=None,
+            device='heater-office',
+            priority=8,
+            phase=LoadPhase.L2,
+            phase_origin=PhaseOrigin.SET,
+            learned_phase=None,
+            learned_amps=None,
+            learning_samples=0,
+            nominal_amps=None,
+            amps=Decimal('8.7'),
+            amps_origin=AmpsOrigin.RATED,
+            state=LoadState.DRAWING,
+            live=False,
+        ),
     )

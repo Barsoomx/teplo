@@ -3,7 +3,8 @@ from datetime import timedelta
 import factory
 from django.utils import timezone
 
-from apps.climate.factories import ZoneFactory
+from apps.climate.domain.heat_sources import HeatSourceKind
+from apps.climate.factories import HeatSourceFactory, ZoneFactory
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.power.domain.loads import LoadKind
@@ -35,6 +36,15 @@ class PlugLoadFactory(LoadFactory):
 class ZoneLoadFactory(LoadFactory):
     kind = LoadKind.ZONE
     zone = factory.SubFactory(ZoneFactory)
+
+
+class SourceLoadFactory(LoadFactory):
+    kind = LoadKind.SOURCE
+    heat_source = factory.SubFactory(
+        HeatSourceFactory,
+        kind=HeatSourceKind.HEATER,
+        device=factory.SubFactory(DeviceFactory, kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER),
+    )
 
 
 class LoadSettingsFactory(factory.django.DjangoModelFactory):

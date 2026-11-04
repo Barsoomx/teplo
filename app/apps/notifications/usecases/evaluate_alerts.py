@@ -16,6 +16,7 @@ from apps.notifications.domain.policy import (
 )
 from apps.notifications.domain.ports import DeviceSource, PhaseSource, ZoneSource
 from apps.notifications.services.alert_book import AlertBook, alert_book
+from apps.notifications.services.climate_unit_source import ClimateUnitSource
 from apps.notifications.services.phase_meter_source import PhaseMeterSource
 from apps.notifications.services.phase_overload_source import PhaseOverloadSource
 from apps.notifications.services.plug_source import PlugSource
@@ -60,6 +61,7 @@ class EvaluateAlertsUseCase(BaseUseCase[EvaluateAlertsInputDTO, EvaluateAlertsOu
                 PlugSource.init(),
                 TemperatureSensorSource.init(),
                 PhaseMeterSource.init(),
+                ClimateUnitSource.init(),
             ),
             zones=ZoneHeatingSource.init(),
             phases=PhaseOverloadSource.init(),

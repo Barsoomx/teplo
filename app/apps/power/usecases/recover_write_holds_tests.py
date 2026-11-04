@@ -93,6 +93,29 @@ SHED_BOILER = replace(
 )
 
 
+SHED_CONVECTOR = replace(
+    SHED_BOILER,
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    device_slug='heater-office',
+    priority=8,
+    shed=LiveShed(
+        at=NOW - timedelta(minutes=3),
+        reason=ShedReason.OVERLOAD,
+        phase=LoadPhase.L2,
+        was_on=True,
+        device='heater-office',
+    ),
+    nominal_amps=None,
+    last_command_at=NOW - timedelta(minutes=3),
+    source_slug='convector-office',
+    write_interval=timedelta(minutes=5),
+)
+SOURCE_INTERVAL = timedelta(minutes=5)
+REST_OF_THE_SOURCE_HOLD = 120
+
+
 def _boost_frees(writes: KeyedWriteGate, zone: str) -> bool:
     with writes.clearing((zone,)) as freed:
         return zone in freed
@@ -109,6 +132,11 @@ def f_writes(f_clock: MonotonicClockStub) -> KeyedWriteGate:
 
 
 @pytest.fixture
+def f_source_writes(f_clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=threading.Lock)
+
+
+@pytest.fixture
 def loads() -> LoadStoreStub:
     return LoadStoreStub(
         records=[
@@ -116,19 +144,37 @@ def loads() -> LoadStoreStub:
             HANDED_BACK_KITCHEN,
             LIVING_ROOM_SHED_AN_HOUR_AGO,
             HALLWAY_WRITTEN_HALF_AN_HOUR_AFTER_ITS_SHED,
+            SHED_CONVECTOR,
         ],
         live_zones=frozenset({'kitchen', 'living-room', 'hallway'}),
     )
 
 
 @pytest.fixture
-def f_use_case(loads: LoadStoreStub, f_writes: KeyedWriteGate) -> RecoverWriteHoldsUseCase:
-    return RecoverWriteHoldsUseCase(loads=loads, writes=f_writes, dry_run=False)
+def f_use_case(
+    loads: LoadStoreStub,
+    f_writes: KeyedWriteGate,
+    f_source_writes: KeyedWriteGate,
+) -> RecoverWriteHoldsUseCase:
+    return RecoverWriteHoldsUseCase(loads=loads, writes=f_writes, source_writes=f_source_writes, dry_run=False)
 
 
 @pytest.fixture
-def f_dry_run_use_case(loads: LoadStoreStub, f_writes: KeyedWriteGate) -> RecoverWriteHoldsUseCase:
-    return RecoverWriteHoldsUseCase(loads=loads, writes=f_writes, dry_run=True)
+def f_dry_run_use_case(
+    loads: LoadStoreStub,
+    f_writes: KeyedWriteGate,
+    f_source_writes: KeyedWriteGate,
+) -> RecoverWriteHoldsUseCase:
+    return RecoverWriteHoldsUseCase(loads=loads, writes=f_writes, source_writes=f_source_writes, dry_run=True)
+
+
+@pytest.fixture
+def f_recovered_source_writes(
+    f_use_case: RecoverWriteHoldsUseCase,
+    f_source_writes: KeyedWriteGate,
+) -> KeyedWriteGate:
+    f_use_case.execute(RecoverWriteHoldsInputDTO(now=NOW))
+    return f_source_writes
 
 
 @pytest.fixture
@@ -149,7 +195,35 @@ def f_writes_recovered_on_a_clock_behind_the_shed(
 def test_recovery_holds_each_zone_shed_live_less_than_thirty_minutes_before_the_start(
     f_use_case: RecoverWriteHoldsUseCase,
 ) -> None:
-    assert f_use_case.execute(RecoverWriteHoldsInputDTO(now=NOW)) == RecoverWriteHoldsOutputDTO(zones=('kitchen',))
+    assert f_use_case.execute(RecoverWriteHoldsInputDTO(now=NOW)) == RecoverWriteHoldsOutputDTO(
+        zones=('kitchen',),
+        sources=('convector-office',),
+    )
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'written'),
+    [(REST_OF_THE_SOURCE_HOLD - 1, False), (REST_OF_THE_SOURCE_HOLD, True)],
+    ids=['within_its_interval_of_the_shed', 'its_interval_after_the_shed'],
+)
+def test_recovered_hold_of_a_heat_source_keeps_its_own_gate_closed_for_the_rest_of_its_interval(
+    f_recovered_source_writes: KeyedWriteGate,
+    f_writes: KeyedWriteGate,
+    f_clock: MonotonicClockStub,
+    seconds: int,
+    written: bool,
+) -> None:
+    f_clock.advance(seconds)
+
+    reservation = f_recovered_source_writes.reserve(
+        'convector-office',
+        NOW + timedelta(hours=3),
+        stamped_at=NOW - timedelta(minutes=3),
+        read_at=f_clock(),
+        interval=SOURCE_INTERVAL,
+    )
+
+    assert (reservation is not None, _boost_frees(f_writes, 'convector-office')) == (written, True)
 
 
 @pytest.mark.parametrize(
@@ -214,7 +288,7 @@ def test_recovery_on_a_clock_reading_earlier_than_the_sheds_holds_no_floor_writt
     output = f_use_case.execute(RecoverWriteHoldsInputDTO(now=SHED_AT - timedelta(hours=1)))
 
     assert (output, _boost_frees(f_writes, 'hallway'), _boost_frees(f_writes, 'kitchen')) == (
-        RecoverWriteHoldsOutputDTO(zones=('kitchen', 'living-room')),
+        RecoverWriteHoldsOutputDTO(zones=('kitchen', 'living-room'), sources=('convector-office',)),
         True,
         False,
     )

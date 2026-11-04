@@ -18,12 +18,13 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
 from apps.climate.services.room_status import RoomStatusReader
-from apps.climate.stubs import LoadGateStub
+from apps.climate.services.source_status import SourceStatusReader
+from apps.climate.stubs import LoadGateStub, SourceLoadGateStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.domain.readings import TemperatureReading, ThermostatMode, ThermostatState
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
-from apps.devices.services.state_store import TemperatureStateStore, ThermostatStateStore
+from apps.devices.services.state_store import ClimateUnitStateStore, TemperatureStateStore, ThermostatStateStore
 from apps.house.factories import FloorFactory, RoomFactory
 
 pytestmark = pytest.mark.django_db
@@ -60,6 +61,14 @@ def _reader(
         temperatures=temperatures,
         thermostats=thermostats,
         gate=LoadGateStub(held=frozenset({'hallway'}), gated=frozenset(), answers={}),
+        sources=SourceStatusReader(
+            sources=HeatSourceRepository(),
+            units=ClimateUnitStateStore(unavailable_after=timedelta(hours=12)),
+            temperatures=temperatures,
+            climate_settings=ClimateSettingsRepository(),
+            gate=SourceLoadGateStub(held=frozenset(), gated=frozenset(), answers={}),
+            dry_run=dry_run,
+        ),
         dry_run=dry_run,
     )
 

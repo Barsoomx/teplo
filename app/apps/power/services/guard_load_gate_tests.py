@@ -5,6 +5,7 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.domain.drive import StartAnswer, ZoneStart
+from apps.climate.domain.fast_source import SourceStart
 from apps.core.stubs import MonotonicClockStub
 from apps.power.domain.control import NO_ESTIMATE, EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.events import StartWouldWaitDryRun
@@ -73,6 +74,19 @@ BOILER = LoadRecord(
     live=True,
     shed=None,
 )
+CONVECTOR = replace(
+    BOILER,
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    device_slug='heater-office',
+    priority=8,
+    nominal_amps=None,
+    source_slug='convector-office',
+    write_interval=timedelta(minutes=5),
+    rated_amps=Decimal('8.7'),
+)
+CONVECTOR_START = SourceStart(source='convector-office', writes_live=True)
 FRESH = MeterWatch(seen=True, stale_since=None)
 LOST = MeterWatch(seen=True, stale_since=AT - 60)
 KITCHEN_START = ZoneStart(zone='kitchen', writes_live=True)
@@ -105,7 +119,7 @@ def _remember(
     estimate: EstimateSettings = NO_ESTIMATE,
 ) -> None:
     loads = GuardLoads(
-        records=(BOILER, HALLWAY, KITCHEN, LIVING_ROOM),
+        records=(BOILER, HALLWAY, KITCHEN, LIVING_ROOM, CONVECTOR),
         control=LoadControl(
             live=management_live,
             thresholds=THRESHOLDS,
@@ -115,6 +129,7 @@ def _remember(
         live_zones=frozenset({'hallway', 'kitchen', 'living-room'}),
         meter='phase-meter',
         read_at=AT,
+        live_sources=frozenset({'convector-office'}),
     )
     started = GuardState.started(loads, AT)
     measured = {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal(l2), LoadPhase.L3: Decimal('4.0')}
@@ -308,8 +323,84 @@ def f_shed_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     return f_gate
 
 
+@pytest.fixture
+def f_shed_source_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
+    shed = Shed(
+        load='convector-office',
+        phase=LoadPhase.L2,
+        amps=Decimal('8.7'),
+        live=True,
+        reason=ShedReason.OVERLOAD,
+        was_on=True,
+        device='heater-office',
+        at=AT - 30,
+        occurred_at=NOW,
+        settled_at=AT - 25,
+    )
+    _remember(f_book, management_live=True, shedding=ShedState(sheds={'convector-office': shed}))
+    return f_gate
+
+
 def test_gate_holds_the_zones_of_live_sheds(f_shed_gate: GuardLoadGate) -> None:
-    assert f_shed_gate.held_zones() == frozenset({'kitchen'})
+    assert (f_shed_gate.held_zones(), f_shed_gate.held_sources()) == (frozenset({'kitchen'}), frozenset())
+
+
+def test_gate_holds_the_heat_sources_of_live_sheds(f_shed_source_gate: GuardLoadGate) -> None:
+    assert (f_shed_source_gate.held_sources(), f_shed_source_gate.held_zones()) == (
+        frozenset({'convector-office'}),
+        frozenset(),
+    )
+
+
+@pytest.mark.parametrize('f_live_gate', ['10.0'], indirect=True)
+def test_gate_names_the_heat_sources_whose_live_starts_need_a_permit(f_live_gate: GuardLoadGate) -> None:
+    assert f_live_gate.gated_sources() == frozenset({'convector-office'})
+
+
+@pytest.mark.parametrize(
+    ('f_live_gate', 'answer', 'last_permit_at'),
+    [('11.0', GRANTED, AT), ('11.5', WAITS, None)],
+    ids=['room_for_its_rated_current', 'no_room_for_its_rated_current'],
+    indirect=['f_live_gate'],
+)
+def test_live_start_of_a_heat_source_takes_a_permit_or_waits_for_room(
+    f_live_gate: GuardLoadGate,
+    f_book: GuardBook,
+    answer: StartAnswer,
+    last_permit_at: float | None,
+) -> None:
+    answers = f_live_gate.ask_source_starts([CONVECTOR_START], NOW)
+
+    assert (answers, f_book.last_permit_at()) == ({'convector-office': answer}, last_permit_at)
+
+
+@pytest.mark.parametrize('f_lost_meter_gate', [False], indirect=True)
+def test_lost_meter_starts_no_heat_source(f_lost_meter_gate: GuardLoadGate) -> None:
+    assert f_lost_meter_gate.ask_source_starts([CONVECTOR_START], NOW) == {'convector-office': WAITS}
+
+
+def test_source_cycle_ends_no_waiting_episode_of_the_zones(f_dry_run_gate: GuardLoadGate) -> None:
+    f_dry_run_gate.ask_starts([KITCHEN_START], NOW)
+    source = f_dry_run_gate.ask_source_starts([CONVECTOR_START], NOW)
+    zones = f_dry_run_gate.ask_starts([KITCHEN_START], NOW)
+
+    assert (source, zones) == (
+        {
+            'convector-office': StartAnswer(
+                granted=True,
+                note=StartWouldWaitDryRun(
+                    load='convector-office',
+                    name='Конвектор: кабинет',
+                    phase=LoadPhase.L2,
+                    amps=Decimal('21.7'),
+                    load_amps=Decimal('8.7'),
+                    reason=StartRefusal.NO_HEADROOM,
+                    occurred_at=NOW,
+                ),
+            ),
+        },
+        {'kitchen': GRANTED},
+    )
 
 
 @pytest.mark.parametrize('f_live_gate', ['10.0'], indirect=True)

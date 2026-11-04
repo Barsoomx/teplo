@@ -66,7 +66,12 @@ from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
-from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
+from apps.devices.services.state_store import (
+    ClimateUnitStateStore,
+    PlugStateStore,
+    TemperatureStateStore,
+    ThermostatStateStore,
+)
 from apps.devices.stubs import FloorThermostatStub, SwitchablePlugProviderStub, ThermostatProviderStub
 from apps.house.factories import RoomFactory
 from apps.power.domain.control import LoadControl, PhaseThresholds
@@ -84,7 +89,7 @@ from apps.power.services.guard_book import GuardBook
 from apps.power.services.guard_load_gate import GuardLoadGate
 from apps.power.services.load_switcher import LoadSwitcher
 from apps.power.services.zone_switch import ThermostatZoneSwitch
-from apps.power.stubs import LoadStoreStub, ZoneWriteStampsStub
+from apps.power.stubs import LoadStoreStub, SourceSwitchStub, ZoneWriteStampsStub
 from apps.power.usecases.recover_write_holds import RecoverWriteHoldsInputDTO, RecoverWriteHoldsUseCase
 from apps.power.usecases.shed_phase_loads import (
     ShedPhaseLoadsInputDTO,
@@ -3197,6 +3202,7 @@ def f_two_starts_after_a_restart_that_took_back_the_hold_of_the_living_room(
     RecoverWriteHoldsUseCase(
         loads=LoadStoreStub(records=[LIVING_ROOM_HANDED_BACK_BEFORE_A_RESTART], live_zones=frozenset({'living-room'})),
         writes=writes,
+        source_writes=_write_gate(MonotonicClockStub(now=0.0)),
         dry_run=False,
     ).execute(RecoverWriteHoldsInputDTO(now=MORNING))
     thermostats: dict[str, FloorThermostat] = {KITCHEN: f_thermostat, LIVING_ROOM: f_living_room_thermostat}
@@ -3574,13 +3580,18 @@ def f_kitchen_shed_while_the_third_clamp_is_silent(
             meter=meter,
             thermostats=store,
             plugs=PlugStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock),
+            climate_units=ClimateUnitStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock),
             book=f_guard_book,
             clock=clock,
             dispatcher=EventDispatcher(),
         ),
         shed=ShedPhaseLoadsUseCase(
             loads=LoadRepository(),
-            switcher=LoadSwitcher(plugs=SwitchablePlugProviderStub(plugs={}), zones=zone_switch),
+            switcher=LoadSwitcher(
+                plugs=SwitchablePlugProviderStub(plugs={}),
+                zones=zone_switch,
+                sources=SourceSwitchStub(writes=_write_gate(clock), error=None),
+            ),
             book=f_guard_book,
             clock=clock,
             dry_run=False,
@@ -4051,6 +4062,7 @@ def living_room_shed_forty_minutes_ago(
         meter=PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=UNAVAILABLE_AFTER, clock=clock),
         thermostats=store,
         plugs=PlugStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock),
+        climate_units=ClimateUnitStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock),
         book=f_guard_book,
         clock=clock,
         dispatcher=EventDispatcher(),
@@ -4064,6 +4076,7 @@ def living_room_shed_forty_minutes_ago(
                 thermostats=ThermostatProviderStub(thermostats={LIVING_ROOM: f_living_room_thermostat}),
                 writes=write_gate,
             ),
+            sources=SourceSwitchStub(writes=_write_gate(clock), error=None),
         ),
         book=f_guard_book,
         clock=clock,
@@ -4723,9 +4736,12 @@ def f_kitchen_handed_back_five_minutes_before_a_restart(
         shed_handed_back=True,
     )
     store.record_state(KITCHEN, _state('22.0', power=False))
-    RecoverWriteHoldsUseCase(loads=LoadRepository(), writes=writes, dry_run=False).execute(
-        RecoverWriteHoldsInputDTO(now=MORNING),
-    )
+    RecoverWriteHoldsUseCase(
+        loads=LoadRepository(),
+        writes=writes,
+        source_writes=_write_gate(MonotonicClockStub(now=0.0)),
+        dry_run=False,
+    ).execute(RecoverWriteHoldsInputDTO(now=MORNING))
 
     def cycle(zones: ZoneStore | None) -> RunHeatingCycleUseCase:
         return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, zones=zones, writes=writes)

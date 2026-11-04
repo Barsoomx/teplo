@@ -25,6 +25,11 @@
     {% if source.lit_until %}<button class="button button-quiet" type="button" hx-post="{% url 'panel:mark-fireplace' room.slug %}" hx-vals='{"lit": "0"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% translate 'The fireplace is out' %}</button>{% else %}<button class="button" type="button" hx-post="{% url 'panel:mark-fireplace' room.slug %}" hx-vals='{"lit": "1"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% icon 'flame' %}{% translate 'Lighting the fireplace' %}</button>{% endif %}
   </div>
   {% endif %}{% endfor %}
+  {% with commanded=room.sources|commanded_sources %}{% if commanded %}
+  <div class="load-tiles source-tiles">
+    {% for source in commanded %}{% include 'panel/_source_row.html' with heading_level=4 %}{% endfor %}
+  </div>
+  {% endif %}{% endwith %}
   {% if room.zones %}
   <div class="tiles">
     {% for zone in room.zones %}{% include 'panel/_zone_tile.html' with heading_level=4 %}{% endfor %}

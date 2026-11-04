@@ -1,11 +1,15 @@
 from collections.abc import Iterator
+from dataclasses import replace
+from decimal import Decimal
 from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
 from django.test import Client
 
-from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO
+from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, LoadOverview
+from apps.power.domain.load_state import LoadState
+from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 
 pytestmark = pytest.mark.django_db
 
@@ -14,6 +18,31 @@ pytestmark = pytest.mark.django_db
 def m_overview_use_case(panel_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.api.v1.loads.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = panel_overview
+        yield use_case
+
+
+@pytest.fixture
+def m_convector_overview_use_case(panel_overview: GetPanelOverviewOutputDTO) -> Iterator[MagicMock]:
+    convector = LoadOverview(
+        slug='convector-office',
+        name='Конвектор: кабинет',
+        kind=LoadKind.SOURCE,
+        zone=None,
+        device='heater-office',
+        priority=8,
+        phase=LoadPhase.L2,
+        phase_origin=PhaseOrigin.SET,
+        learned_phase=None,
+        learned_amps=None,
+        learning_samples=0,
+        nominal_amps=None,
+        amps=Decimal('8.7'),
+        amps_origin=AmpsOrigin.RATED,
+        state=LoadState.DRAWING,
+        live=False,
+    )
+    with mock.patch('apps.panel.views.api.v1.loads.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(panel_overview, loads=(convector,))
         yield use_case
 
 
@@ -58,6 +87,37 @@ def test_loads_api_lists_the_loads_in_shedding_order(f_client: Client, m_overvie
                 'amps_origin': 'default',
                 'state': 'drawing',
                 'live': True,
+            },
+        ],
+        1,
+    )
+
+
+def test_loads_api_gives_a_heat_source_its_rated_current(
+    f_client: Client,
+    m_convector_overview_use_case: MagicMock,
+) -> None:
+    response = f_client.get('/api/v1/loads/')
+
+    assert (response.json(), m_convector_overview_use_case.init.call_count) == (
+        [
+            {
+                'slug': 'convector-office',
+                'name': 'Конвектор: кабинет',
+                'kind': 'source',
+                'zone': None,
+                'device': 'heater-office',
+                'priority': 8,
+                'phase': 'l2',
+                'phase_origin': 'set',
+                'learned_phase': None,
+                'learned_amps': None,
+                'learning_samples': 0,
+                'nominal_amps': None,
+                'amps': '8.7',
+                'amps_origin': 'rated',
+                'state': 'drawing',
+                'live': False,
             },
         ],
         1,

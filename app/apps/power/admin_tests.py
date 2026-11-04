@@ -174,7 +174,7 @@ def test_admin_deletes_a_load_only_while_it_is_not_shed_live(
 
 @pytest.mark.parametrize(
     ('f_load', 'locked'),
-    [(None, set()), (SHED_AT, {'slug', 'kind', 'zone', 'device'})],
+    [(None, set()), (SHED_AT, {'slug', 'kind', 'zone', 'device', 'heat_source'})],
     ids=['not_shed', 'shed_live'],
     indirect=['f_load'],
 )

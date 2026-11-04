@@ -1,10 +1,10 @@
 from collections.abc import Collection
 from dataclasses import asdict
 
-from django.db.models import Exists, OuterRef, QuerySet
+from django.db.models import BooleanField, Exists, ExpressionWrapper, OuterRef, Q, QuerySet
 
 from apps.climate.domain.backup_heat import BackupHeat
-from apps.climate.domain.heat_sources import HeatSourceKind, SourceGate
+from apps.climate.domain.heat_sources import COMMANDED_KINDS, HeatSourceKind, SourceGate
 from apps.climate.domain.modes import CommandSource, ZoneKind
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
@@ -13,7 +13,7 @@ from apps.climate.domain.room_climate import (
     RoomOverride,
 )
 from apps.climate.domain.zone import AirTargets, ComfortWindow
-from apps.climate.models import RoomClimate, Zone
+from apps.climate.models import HeatSource, RoomClimate, Zone
 from apps.core.repositories.write_lock import lock_for_update
 from apps.house.domain.errors import RoomNotFoundError
 
@@ -23,7 +23,7 @@ NO_OVERRIDE = {'override_target': None, 'override_until': None, 'override_source
 class RoomClimateRepository:
     @staticmethod
     def all_settings() -> list[RoomClimateSettings]:
-        climates = _settings_climates().annotate(adjustable=_reads_the_air())
+        climates = _settings_climates().annotate(adjustable=_adjustable())
         return [_to_settings(climate, adjustable=climate.adjustable) for climate in climates]
 
     @staticmethod
@@ -31,7 +31,7 @@ class RoomClimateRepository:
         if lock_for_update(RoomClimate.objects.filter(room__slug=slug)) == 0:
             raise RoomNotFoundError(slug)
 
-        climate = _settings_climates().annotate(adjustable=_reads_the_air()).get(room__slug=slug)
+        climate = _settings_climates().annotate(adjustable=_adjustable()).get(room__slug=slug)
         return _to_settings(climate, adjustable=climate.adjustable)
 
     @staticmethod
@@ -82,8 +82,16 @@ def _config_climates() -> QuerySet[RoomClimate]:
     return _climates().prefetch_related('room__heat_sources')
 
 
-def _reads_the_air() -> Exists:
-    return Exists(Zone.objects.filter(room=OuterRef('room'), kind=ZoneKind.AIR, air_sensor__isnull=False))
+def _adjustable() -> ExpressionWrapper:
+    reads_the_air = Exists(Zone.objects.filter(room=OuterRef('room'), kind=ZoneKind.AIR, air_sensor__isnull=False))
+    commanded_source = Exists(
+        HeatSource.objects.filter(
+            room=OuterRef('room'),
+            kind__in=[kind.value for kind in COMMANDED_KINDS],
+            device__isnull=False,
+        ),
+    )
+    return ExpressionWrapper(Q(reads_the_air) | Q(commanded_source), output_field=BooleanField())
 
 
 def _to_settings(climate: RoomClimate, *, adjustable: bool) -> RoomClimateSettings:

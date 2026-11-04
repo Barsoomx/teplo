@@ -38,7 +38,7 @@ class Shed:
 
 @dataclass(frozen=True, kw_only=True)
 class ShedWriteHold:
-    zone: str
+    key: str
     at: datetime
     elapsed: timedelta
 
@@ -128,7 +128,7 @@ def resumed_shed(record: LoadRecord, *, at: float, now: datetime, default_amps: 
         return None
 
     shed = _resumed(record, stored, at=at, now=now, default_amps=default_amps)
-    return replace(shed, unstamped_write_at=shed.at) if record.kind is LoadKind.ZONE else shed
+    return shed if record.kind is LoadKind.PLUG else replace(shed, unstamped_write_at=shed.at)
 
 
 def resumed_hand_back(record: LoadRecord, *, at: float, now: datetime, default_amps: Decimal) -> Shed | None:
@@ -141,14 +141,15 @@ def resumed_hand_back(record: LoadRecord, *, at: float, now: datetime, default_a
 
 def resumed_write_hold(record: LoadRecord, *, now: datetime, write_interval: timedelta) -> ShedWriteHold | None:
     stored = record.shed
-    if stored is None or record.zone_slug is None or _written_after_its_hold(record, stored, write_interval):
+    key = record.zone_slug if record.source_slug is None else record.source_slug
+    if stored is None or key is None or _written_after_its_hold(record, stored, write_interval):
         return None
 
     elapsed = max(now - stored.at, timedelta(0))
     if elapsed >= write_interval:
         return None
 
-    return ShedWriteHold(zone=record.zone_slug, at=stored.at, elapsed=elapsed)
+    return ShedWriteHold(key=key, at=stored.at, elapsed=elapsed)
 
 
 def in_view(shed: Shed, *, live: bool) -> bool:

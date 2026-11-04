@@ -32,8 +32,8 @@ msgstr "У камина нет устройства, а любому друго�
 msgid "Empty for a fireplace, which teplo only observes; a heater or an air conditioner needs its climate unit"
 msgstr "Пусто у камина: teplo его только наблюдает. Обогревателю и кондиционеру нужно их устройство"
 
-msgid "The source’s own gate: for a fireplace, a fire the detector sees withholds learning as a mark does"
-msgstr "Гейт источника: у камина огонь, который видит детектор, останавливает обучение, как метка «Топлю камин»"
+msgid "The source’s own gate: for a fireplace, a fire the detector sees withholds learning as a mark does; for a heater, its commands reach the device once load management and the source’s load are live too"
+msgstr "Гейт источника: у камина огонь, который видит детектор, останавливает обучение, как метка «Топлю камин»; у обогревателя команды доходят до прибора, когда в работе ещё и управление нагрузкой и нагрузка источника"
 
 msgid "Reset learning"
 msgstr "Сбросить обучение"
@@ -52,3 +52,34 @@ msgstr "База данных не приняла сброс (%(zones)s): поп
 
 msgid "While on, a change made on a wall thermostat or in its app holds that floor for 2 hours; while off, it is only journaled and teplo reverts it at the zone’s next allowed write"
 msgstr "Включено: изменение на настенном термостате или в его приложении оставляет этот пол владельцу на 2 часа. Выключено: изменение только пишется в журнал, а teplo возвращает своё при следующей разрешённой записи зоны"
+
+msgid "teplo has no driver for an air conditioner yet"
+msgstr "У teplo пока нет драйвера кондиционера"
+
+msgid "This room has a heated floor: teplo commands no heat source beside it"
+msgstr "В этой комнате тёплый пол: teplo не управляет источником тепла рядом с ним"
+
+msgid "A heater needs a climate unit whose driver commands it, such as tuya_heater"
+msgstr "Обогревателю нужен климатический прибор с управляющим драйвером, например tuya_heater"
+
+msgid "Commands"
+msgstr "Команды"
+
+msgid "Reach the device"
+msgstr "Доходят до прибора"
+
+#, python-format
+msgid "Held back by: %(gates)s"
+msgstr "Не доходят: %(gates)s"
+
+msgid "the source’s live"
+msgstr "live источника"
+
+msgid "load management live"
+msgstr "load management live"
+
+msgid "no load"
+msgstr "нет нагрузки"
+
+msgid "the load’s live"
+msgstr "live нагрузки"

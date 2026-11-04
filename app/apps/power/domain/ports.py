@@ -1,5 +1,6 @@
 from collections.abc import Collection, Mapping
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Protocol
 
 from apps.devices.domain.kinds import DeviceKind
@@ -21,6 +22,8 @@ class LoadStore(Protocol):
     def all_records(self) -> list[LoadRecord]: ...
 
     def live_zone_slugs(self) -> frozenset[str]: ...
+
+    def live_source_slugs(self) -> frozenset[str]: ...
 
     def mark_shed(self, slug: str, shed: LiveShed) -> None: ...
 
@@ -53,6 +56,27 @@ class ZoneSwitch(Protocol):
 
 class ZoneWriteStamps(Protocol):
     def mark_commanded(self, slug: str, at: datetime) -> None: ...
+
+    def mark_shed(self, slug: str, at: datetime) -> None: ...
+
+
+class SourceSwitch(Protocol):
+    def switch_off(self, source: str, unit: str, at: datetime) -> bool: ...
+
+    def switch_on(
+        self,
+        source: str,
+        unit: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+        interval: timedelta,
+    ) -> bool: ...
+
+
+class SourceWriteStamps(Protocol):
+    def mark_commanded(self, slug: str, at: datetime, *, power: bool, setpoint: Decimal | None) -> None: ...
 
     def mark_shed(self, slug: str, at: datetime) -> None: ...
 

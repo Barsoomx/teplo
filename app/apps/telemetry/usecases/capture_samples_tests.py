@@ -6,11 +6,24 @@ import pytest
 
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
-from apps.devices.domain.readings import Phase, PlugState, TemperatureReading, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateUnitState,
+    Phase,
+    PlugState,
+    TemperatureReading,
+    ThermostatMode,
+    ThermostatState,
+)
 from apps.devices.factories import DeviceFactory
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
-from apps.devices.services.state_store import PlugStateStore, TemperatureStateStore, ThermostatStateStore
+from apps.devices.services.state_store import (
+    ClimateUnitStateStore,
+    PlugStateStore,
+    TemperatureStateStore,
+    ThermostatStateStore,
+)
 from apps.telemetry.domain.samples import SampleValue
 from apps.telemetry.services.sample_buffer import SampleBuffer
 from apps.telemetry.usecases.capture_samples import (
@@ -67,6 +80,8 @@ def f_use_case(
     DeviceFactory(slug='thermostat-hallway')
     DeviceFactory(slug='plug-boiler-1f', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG)
     DeviceFactory(slug='plug-boiler-2f', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG)
+    DeviceFactory(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER)
+    DeviceFactory(slug='heater-bedroom', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER)
     thermostat_store = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
     thermostat_store.record_state(
         'thermostat-kitchen',
@@ -90,12 +105,24 @@ def f_use_case(
             read_at=NOW,
         ),
     )
+    climate_unit_store = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10))
+    climate_unit_store.record_state(
+        'heater-office',
+        ClimateUnitState(
+            mode=ClimateMode.HEAT,
+            target=Decimal(22),
+            room_temperature=Decimal(21),
+            read_at=NOW,
+            level='High',
+        ),
+    )
     return CaptureSamplesUseCase(
         devices=DeviceRepository(),
         thermostat_store=thermostat_store,
         plug_store=plug_store,
         temperature_store=temperature_store,
         phase_meter_store=f_phase_meter_store,
+        climate_unit_store=climate_unit_store,
         buffer=f_buffer,
     )
 
@@ -132,6 +159,7 @@ def f_sensor_use_case(
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
         temperature_store=temperature_store,
         phase_meter_store=f_phase_meter_store,
+        climate_unit_store=ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
         buffer=f_buffer,
     )
 
@@ -160,6 +188,7 @@ def f_silent_meter_use_case(
         plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
         temperature_store=temperature_store,
         phase_meter_store=f_phase_meter_store,
+        climate_unit_store=ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
         buffer=f_buffer,
     )
 
@@ -168,7 +197,7 @@ def test_capture_buffers_available_devices_only(f_use_case: CaptureSamplesUseCas
     output = f_use_case.execute(CaptureSamplesInputDTO(now=NOW))
 
     assert (output, f_buffer.drain()) == (
-        CaptureSamplesOutputDTO(captured=7),
+        CaptureSamplesOutputDTO(captured=10),
         [
             SampleValue(metric='floor_temperature', subject='thermostat-kitchen', value=24.5, recorded_at=NOW),
             SampleValue(metric='floor_setpoint', subject='thermostat-kitchen', value=28.0, recorded_at=NOW),
@@ -177,6 +206,9 @@ def test_capture_buffers_available_devices_only(f_use_case: CaptureSamplesUseCas
             SampleValue(metric='plug_power', subject='plug-boiler-1f', value=1305.4, recorded_at=NOW),
             SampleValue(metric='plug_current', subject='plug-boiler-1f', value=6.02, recorded_at=NOW),
             SampleValue(metric='plug_voltage', subject='plug-boiler-1f', value=216.8, recorded_at=NOW),
+            SampleValue(metric='climate_unit_power', subject='heater-office', value=1.0, recorded_at=NOW),
+            SampleValue(metric='climate_unit_setpoint', subject='heater-office', value=22.0, recorded_at=NOW),
+            SampleValue(metric='climate_unit_temperature', subject='heater-office', value=21.0, recorded_at=NOW),
         ],
     )
 

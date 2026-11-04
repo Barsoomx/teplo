@@ -4,6 +4,12 @@ from datetime import datetime, timedelta
 from django.utils import timezone
 
 from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
+from apps.climate.usecases.run_source_cycle import RunSourceCycleInputDTO, RunSourceCycleUseCase
+from apps.climate.usecases.watch_source_changes import (
+    WatchSourceChangesInputDTO,
+    WatchSourceChangesOutputDTO,
+    WatchSourceChangesUseCase,
+)
 from apps.climate.usecases.watch_thermostat_changes import (
     WatchThermostatChangesInputDTO,
     WatchThermostatChangesOutputDTO,
@@ -13,6 +19,11 @@ from apps.core.domain.ports import Executable
 from apps.core.runtime.periodic import PeriodicJob
 from apps.devices.services.mqtt_listener import mqtt_listener
 from apps.devices.usecases.check_sensors import CheckSensorsInputDTO, CheckSensorsUseCase
+from apps.devices.usecases.poll_climate_units import (
+    PollClimateUnitsInputDTO,
+    PollClimateUnitsOutputDTO,
+    PollClimateUnitsUseCase,
+)
 from apps.devices.usecases.poll_plugs import PollPlugsInputDTO, PollPlugsUseCase
 from apps.devices.usecases.poll_thermostats import (
     PollThermostatsInputDTO,
@@ -58,6 +69,7 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
     return (
         PeriodicJob(name='poll_thermostats', interval=timedelta(seconds=30), action=poll_thermostats),
         PeriodicJob(name='poll_plugs', interval=timedelta(seconds=30), action=poll_plugs),
+        PeriodicJob(name='poll_climate_units', interval=timedelta(seconds=30), action=poll_climate_units),
         PeriodicJob(name='guard_phases', interval=timedelta(seconds=1), action=guard_phases),
         PeriodicJob(
             name='check_sensors',
@@ -67,6 +79,12 @@ def teplo_jobs() -> tuple[PeriodicJob, ...]:
         ),
         PeriodicJob(name='capture_samples', interval=timedelta(minutes=1), action=capture_samples),
         PeriodicJob(name='run_heating_cycle', interval=timedelta(minutes=1), action=run_heating_cycle),
+        PeriodicJob(
+            name='run_source_cycle',
+            interval=timedelta(minutes=1),
+            action=run_source_cycle,
+            delay=timedelta(seconds=30),
+        ),
         PeriodicJob(name='flush_samples', interval=timedelta(minutes=5), action=flush_samples),
         PeriodicJob(name='evaluate_alerts', interval=timedelta(minutes=1), action=evaluate_alerts),
         PeriodicJob(name='report_outages', interval=timedelta(minutes=1), action=report_outages),
@@ -111,6 +129,19 @@ def poll_plugs() -> object:
     return PollPlugsUseCase.init().execute(PollPlugsInputDTO(now=timezone.now()))
 
 
+def poll_climate_units() -> object:
+    return watch_climate_units(PollClimateUnitsUseCase.init(), WatchSourceChangesUseCase.init(), timezone.now())
+
+
+def watch_climate_units(
+    poll: Executable[PollClimateUnitsInputDTO, PollClimateUnitsOutputDTO],
+    watch: Executable[WatchSourceChangesInputDTO, WatchSourceChangesOutputDTO],
+    now: datetime,
+) -> WatchSourceChangesOutputDTO:
+    polled = poll.execute(PollClimateUnitsInputDTO(now=now))
+    return watch.execute(WatchSourceChangesInputDTO(pairs=polled.pairs, now=now))
+
+
 def guard_phases() -> object:
     now = timezone.now()
     WatchPhasesUseCase.init().execute(WatchPhasesInputDTO(now=now))
@@ -129,6 +160,13 @@ def run_heating_cycle() -> object:
     reading = read_clock(clock_trust_source())
     return RunHeatingCycleUseCase.init().execute(
         RunHeatingCycleInputDTO(now=reading.now, monotonic=reading.monotonic, clock_trusted=reading.trusted),
+    )
+
+
+def run_source_cycle() -> object:
+    reading = read_clock(clock_trust_source())
+    return RunSourceCycleUseCase.init().execute(
+        RunSourceCycleInputDTO(now=reading.now, monotonic=reading.monotonic, clock_trusted=reading.trusted),
     )
 
 

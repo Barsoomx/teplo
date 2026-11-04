@@ -13,8 +13,10 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore, phase_meter_store
 from apps.devices.services.state_store import (
+    ClimateUnitStateStore,
     PlugStateStore,
     ThermostatStateStore,
+    climate_unit_state_store,
     plug_state_store,
     thermostat_state_store,
 )
@@ -38,7 +40,7 @@ from apps.power.domain.guard import (
     phase_amps,
     usable_reading,
 )
-from apps.power.domain.load_status import LoadStatus, plug_reading, thermostat_reading
+from apps.power.domain.load_status import LoadStatus, plug_reading, source_reading, thermostat_reading
 from apps.power.domain.loads import (
     MEASURED_PHASES,
     METER_PHASES,
@@ -83,6 +85,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         meter: PhaseMeterStore,
         thermostats: ThermostatStateStore,
         plugs: PlugStateStore,
+        climate_units: ClimateUnitStateStore,
         book: GuardBook,
         clock: Callable[[], float],
         dispatcher: EventDispatcher = event_dispatcher,
@@ -94,6 +97,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         self._meter = meter
         self._thermostats = thermostats
         self._plugs = plugs
+        self._climate_units = climate_units
         self._book = book
         self._clock = clock
 
@@ -106,6 +110,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             meter=phase_meter_store,
             thermostats=thermostat_state_store,
             plugs=plug_state_store,
+            climate_units=climate_unit_state_store,
             book=guard_book,
             clock=time.monotonic,
         )
@@ -142,6 +147,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
             live_zones=self._loads.live_zone_slugs(),
             meter=next(iter(self._devices.slugs_of_kind(DeviceKind.PHASE_METER)), None),
             read_at=at,
+            live_sources=self._loads.live_source_slugs(),
         )
 
     def _currents(self, meter: str | None) -> tuple[dict[LoadPhase, Decimal], dict[LoadPhase, float]]:
@@ -189,7 +195,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
                 continue
 
             readings[record.slug] = seen
-            if before is None or seen is before:
+            if before is None or seen is before or record.kind is LoadKind.SOURCE:
                 continue
 
             change = detect_change(record.slug, before.reading, seen.reading)
@@ -198,6 +204,9 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         return readings, changes
 
     def _seen(self, record: LoadRecord, before: SeenReading | None, at: float) -> SeenReading | None:
+        if record.kind is LoadKind.SOURCE:
+            return self._seen_source(record, before, at)
+
         if record.kind is LoadKind.PLUG:
             plug = self._plugs.snapshot(record.device_slug)
             if not plug.available or plug.error_code is not None or plug.state is None or plug.age is None:
@@ -235,6 +244,23 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
                 setpoint=thermostat.state.setpoint,
                 floor_temperature=thermostat.state.floor_temperature,
                 read_at=at - thermostat.age.total_seconds(),
+            ),
+        )
+
+    def _seen_source(self, record: LoadRecord, before: SeenReading | None, at: float) -> SeenReading | None:
+        unit = self._climate_units.snapshot(record.device_slug)
+        if not unit.available or unit.error_code is not None or unit.state is None or unit.age is None:
+            return None
+
+        if before is not None and before.polled_at == unit.state.read_at:
+            return before
+
+        return SeenReading(
+            polled_at=unit.state.read_at,
+            reading=source_reading(
+                on=unit.state.on,
+                heating=unit.state.heating,
+                read_at=at - unit.age.total_seconds(),
             ),
         )
 

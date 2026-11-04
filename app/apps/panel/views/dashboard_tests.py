@@ -304,6 +304,49 @@ def m_fireplace_overview_use_case(
 
 
 @pytest.fixture
+def m_convector_overview_use_case(
+    request: pytest.FixtureRequest,
+    house_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    convector = replace(
+        SourceOverview(
+            slug='convector-office',
+            name='Конвектор: кабинет',
+            kind=HeatSourceKind.HEATER,
+            live=False,
+            lit_until=None,
+            burning=False,
+            room='office',
+            device='heater-office',
+            priority=1,
+            available=True,
+            on=True,
+            setpoint=Decimal(22),
+            level='High',
+            temperature=Decimal(21),
+            target_on=True,
+            target_setpoint=Decimal(22),
+            pending=PendingWrite(kind=PendingKind.WATCHING, at=None),
+        ),
+        **request.param,
+    )
+    office_intent = RoomIntent(
+        room='office',
+        reason=IntentReason.SETBACK,
+        target=Decimal('19.0'),
+        until=None,
+        forced=(),
+    )
+    ground, upstairs = house_overview.floors
+    bedroom, office = upstairs.rooms
+    office = replace(office, sources=(convector,), adjustable=True, intent=office_intent)
+    floors = (ground, replace(upstairs, rooms=(bedroom, office)))
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(house_overview, floors=floors)
+        yield use_case
+
+
+@pytest.fixture
 def m_pending_overview_use_case(
     request: pytest.FixtureRequest,
     panel_overview: GetPanelOverviewOutputDTO,
@@ -956,3 +999,63 @@ def test_dashboard_says_until_when_teplo_leaves_a_floor_changed_on_its_thermosta
         m_held_by_hand_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == (chip is not None, True, 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_convector_overview_use_case', 'shown', 'hidden'),
+    [
+        ({}, ('Конвектор: кабинет', 'греет до 22° · High · у прибора 21°', 'Наблюдение'), ('teplo поставит',)),
+        (
+            {
+                'live': True,
+                'commands_live': True,
+                'setpoint': Decimal(19),
+                'pending': PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW + timedelta(minutes=12)),
+            },
+            ('греет до 19° · High · у прибора 21°', 'teplo поставит 22° не раньше 16:52'),
+            ('Наблюдение',),
+        ),
+        (
+            {
+                'commands_live': True,
+                'held_until': PANEL_NOW + timedelta(hours=2),
+                'pending': PendingWrite(kind=PendingKind.HANDS_OFF, at=PANEL_NOW + timedelta(hours=2)),
+            },
+            ('Вручную до 18:40',),
+            ('teplo поставит',),
+        ),
+        (
+            {'commands_live': True, 'on': False, 'shed': True, 'pending': PendingWrite(kind=PendingKind.HELD, at=None)},
+            ('выключен · у прибора 21°', 'Отключён управлением нагрузкой'),
+            ('греет до',),
+        ),
+        (
+            {'available': False, 'error_code': 'device_unavailable', 'error': 'timed out'},
+            ('Нет связи', 'is-offline'),
+            ('Нет связи с прибором',),
+        ),
+    ],
+    ids=['watching', 'live_and_waiting_for_its_interval', 'held_by_hand', 'shed', 'unreachable'],
+    indirect=['m_convector_overview_use_case'],
+)
+def test_dashboard_shows_the_office_convector_and_when_teplo_s_target_reaches_it(
+    f_russian_client: Client,
+    m_convector_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    shown: tuple[str, ...],
+    hidden: tuple[str, ...],
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    row_at = content.index('class="load source')
+    row = content[row_at : content.index('</article>', row_at)]
+    office_at = content.index('id="room-office"')
+    assert (
+        [text in row for text in shown],
+        [text in row for text in hidden],
+        'hx-post="/rooms/office/override/"' in content[office_at:],
+        m_convector_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == ([True] * len(shown), [False] * len(hidden), True, 1, 1)

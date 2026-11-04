@@ -8,9 +8,16 @@ from django.db import OperationalError
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceKind
-from apps.devices.domain.readings import Phase, PlugState, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateUnitState,
+    Phase,
+    PlugState,
+    ThermostatMode,
+    ThermostatState,
+)
 from apps.devices.services.phase_meter_store import PhaseMeterStore
-from apps.devices.services.state_store import PlugStateStore, ThermostatStateStore
+from apps.devices.services.state_store import ClimateUnitStateStore, PlugStateStore, ThermostatStateStore
 from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.estimate import EstimateBasis, EstimatePart, PhaseEstimate
 from apps.power.domain.events import (
@@ -81,6 +88,19 @@ BATHROOM = LoadRecord(
     live=False,
     shed=None,
 )
+CONVECTOR = replace(
+    BATHROOM,
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    zone_slug=None,
+    device_slug='heater-office',
+    priority=8,
+    nominal_amps=None,
+    source_slug='convector-office',
+    write_interval=timedelta(minutes=5),
+    rated_amps=Decimal('8.7'),
+)
 ESTIMATING_L2 = replace(CONTROL, estimate=EstimateSettings(phase=LoadPhase.L2, base_amps=Decimal('2.0')))
 ESTIMATE_BASE = EstimatePart(load=None, amps=Decimal('2.0'), basis=EstimateBasis.BASE)
 BATHROOM_START = LoadStatus(
@@ -106,6 +126,7 @@ class GuardRig:
     meter: PhaseMeterStore
     plugs: PlugStateStore
     thermostats: ThermostatStateStore
+    climate_units: ClimateUnitStateStore
     loads: LoadStoreStub
     book: GuardBook
     events: list[DomainEvent]
@@ -165,6 +186,16 @@ def _bathroom(*, heating: bool, second: int) -> ThermostatState:
     )
 
 
+def _convector(*, room_temperature: int, second: int) -> ClimateUnitState:
+    return ClimateUnitState(
+        mode=ClimateMode.HEAT,
+        target=Decimal(22),
+        room_temperature=Decimal(room_temperature),
+        read_at=_at(second),
+        level='High',
+    )
+
+
 def _boiler(on: bool, second: int) -> PlugState:
     return PlugState(
         on=on,
@@ -184,6 +215,7 @@ def _rig(write_errors: tuple[Exception, ...], records: list[LoadRecord], control
     meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=timedelta(minutes=10), clock=clock)
     plugs = PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
     thermostats = ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    climate_units = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
     loads = LoadStoreStub(records=records, live_zones=frozenset(), write_errors=write_errors)
     book = GuardBook()
     return GuardRig(
@@ -191,6 +223,7 @@ def _rig(write_errors: tuple[Exception, ...], records: list[LoadRecord], control
         meter=meter,
         plugs=plugs,
         thermostats=thermostats,
+        climate_units=climate_units,
         loads=loads,
         book=book,
         events=events,
@@ -201,6 +234,7 @@ def _rig(write_errors: tuple[Exception, ...], records: list[LoadRecord], control
             meter=meter,
             thermostats=thermostats,
             plugs=plugs,
+            climate_units=climate_units,
             book=book,
             clock=clock,
             dispatcher=dispatcher,
@@ -233,6 +267,13 @@ def f_rig_estimating_l2() -> GuardRig:
 @pytest.fixture
 def f_rig_measuring_l2() -> GuardRig:
     return _rig_on_l2(CONTROL)
+
+
+@pytest.fixture
+def f_rig_with_a_convector(request: pytest.FixtureRequest) -> GuardRig:
+    rig = _rig((), [BOILER, CONVECTOR], ESTIMATING_L2)
+    rig.climate_units.record_state('heater-office', _convector(room_temperature=request.param, second=0))
+    return rig
 
 
 @pytest.fixture
@@ -383,6 +424,25 @@ def test_estimate_takes_the_place_of_the_unclamped_phase_while_the_samples_keep_
             ),
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ('f_rig_with_a_convector', 'parts'),
+    [
+        (21, (ESTIMATE_BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING))),
+        (22, (ESTIMATE_BASE,)),
+    ],
+    ids=['heating_below_its_setpoint', 'idle_at_its_setpoint'],
+    indirect=['f_rig_with_a_convector'],
+)
+def test_estimate_counts_a_heat_source_at_its_rated_current_while_it_heats(
+    f_rig_with_a_convector: GuardRig,
+    parts: tuple[EstimatePart, ...],
+) -> None:
+    _seconds(f_rig_with_a_convector, 2, WITHOUT_AN_L2_CLAMP)
+
+    estimate = _phases(f_rig_with_a_convector).estimate
+    assert (None if estimate is None else estimate.parts) == parts
 
 
 def test_phase_is_measured_while_no_phase_is_estimated(f_rig_measuring_l2: GuardRig) -> None:

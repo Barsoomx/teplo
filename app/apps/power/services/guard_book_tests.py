@@ -28,6 +28,8 @@ THRESHOLDS = PhaseThresholds(
     meter_lost_after=timedelta(seconds=60),
 )
 CURRENTS = {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: Decimal('15.0'), LoadPhase.L3: Decimal('9.0')}
+ZONE_LOADS = frozenset({'kitchen', 'hallway'})
+SOURCE_LOADS = frozenset({'convector-office'})
 KITCHEN = LoadStatus(
     slug='kitchen',
     kind=LoadKind.ZONE,
@@ -112,7 +114,38 @@ def f_book_after_rounds_of_starts(f_book: GuardBook) -> GuardBook:
 
 @pytest.fixture
 def f_book_with_a_waiting_load(f_book: GuardBook) -> GuardBook:
-    f_book.note_waiting(frozenset({'kitchen'}))
+    f_book.note_waiting(ZONE_LOADS, frozenset({'kitchen'}))
+    return f_book
+
+
+@pytest.fixture
+def f_book_with_a_waiting_zone_and_source(f_book_with_a_waiting_load: GuardBook) -> GuardBook:
+    f_book_with_a_waiting_load.note_waiting(SOURCE_LOADS, frozenset({'convector-office'}))
+    return f_book_with_a_waiting_load
+
+
+@pytest.fixture
+def f_book_with_a_shed_source(f_book: GuardBook) -> GuardBook:
+    convector = replace(
+        KITCHEN_RECORD,
+        slug='convector-office',
+        kind=LoadKind.SOURCE,
+        zone_slug=None,
+        device_slug='heater-office',
+        source_slug='convector-office',
+    )
+    loads = GuardLoads(
+        records=(KITCHEN_RECORD, convector),
+        control=LoadControl(live=True, thresholds=THRESHOLDS, default_amps=Decimal('6.0')),
+        live_zones=frozenset({'kitchen'}),
+        meter='phase-meter',
+        read_at=AT,
+        live_sources=frozenset({'convector-office'}),
+    )
+    shed = replace(KITCHEN_SHED, load='convector-office', was_on=True, device='heater-office')
+    f_book.remember(
+        replace(GuardState.started(loads, AT), shedding=ShedState(sheds={'convector-office': shed})),
+    )
     return f_book
 
 
@@ -162,7 +195,14 @@ def test_book_holds_the_zones_of_live_sheds(f_book_with_a_shed_zone: GuardBook) 
 
 
 def test_book_holds_no_zone_before_the_guard_runs(f_book: GuardBook) -> None:
-    assert (f_book.state(), f_book.held_zones()) == (None, frozenset())
+    assert (f_book.state(), f_book.held_zones(), f_book.held_sources()) == (None, frozenset(), frozenset())
+
+
+def test_book_holds_the_heat_sources_of_live_sheds_apart_from_the_zones(f_book_with_a_shed_source: GuardBook) -> None:
+    assert (f_book_with_a_shed_source.held_sources(), f_book_with_a_shed_source.held_zones()) == (
+        frozenset({'convector-office'}),
+        frozenset(),
+    )
 
 
 def test_round_of_starts_takes_the_permit_of_its_live_start(f_book: GuardBook) -> None:
@@ -212,7 +252,7 @@ def test_book_names_only_the_loads_that_begin_to_wait(
     waiting: frozenset[str],
     began: frozenset[str],
 ) -> None:
-    assert f_book_with_a_waiting_load.note_waiting(waiting) == began
+    assert f_book_with_a_waiting_load.note_waiting(ZONE_LOADS, waiting) == began
 
 
 def test_book_names_the_loads_still_waiting_to_start(f_book_with_a_waiting_load: GuardBook) -> None:
@@ -220,6 +260,24 @@ def test_book_names_the_loads_still_waiting_to_start(f_book_with_a_waiting_load:
 
 
 def test_load_that_stopped_waiting_begins_a_new_wait(f_book_with_a_waiting_load: GuardBook) -> None:
-    f_book_with_a_waiting_load.note_waiting(frozenset())
+    f_book_with_a_waiting_load.note_waiting(ZONE_LOADS, frozenset())
 
-    assert f_book_with_a_waiting_load.note_waiting(frozenset({'kitchen'})) == frozenset({'kitchen'})
+    assert f_book_with_a_waiting_load.note_waiting(ZONE_LOADS, frozenset({'kitchen'})) == frozenset({'kitchen'})
+
+
+def test_each_cycle_ends_only_the_waiting_episodes_of_its_own_loads(
+    f_book_with_a_waiting_zone_and_source: GuardBook,
+) -> None:
+    began = f_book_with_a_waiting_zone_and_source.note_waiting(ZONE_LOADS, frozenset())
+
+    assert (began, f_book_with_a_waiting_zone_and_source.waiting()) == (frozenset(), frozenset({'convector-office'}))
+
+
+def test_a_source_still_waiting_begins_no_new_episode_after_the_zones_asked(
+    f_book_with_a_waiting_zone_and_source: GuardBook,
+) -> None:
+    f_book_with_a_waiting_zone_and_source.note_waiting(ZONE_LOADS, frozenset())
+
+    began = f_book_with_a_waiting_zone_and_source.note_waiting(SOURCE_LOADS, frozenset({'convector-office'}))
+
+    assert began == frozenset()

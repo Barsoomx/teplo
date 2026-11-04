@@ -4,7 +4,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import timedelta
 
-from apps.devices.domain.readings import PlugState, TemperatureReading, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateUnitState,
+    PlugState,
+    ReadingPair,
+    TemperatureReading,
+    ThermostatState,
+)
 
 UNAVAILABLE_AFTER = timedelta(minutes=10)
 
@@ -17,6 +23,25 @@ class DeviceSnapshot[TState]:
     available: bool
     error_code: str | None
     error: str | None
+
+
+def reading_pair[TState](
+    before: DeviceSnapshot[TState],
+    after: TState,
+    *,
+    seen_at: float,
+    after_moment: float,
+) -> ReadingPair[TState] | None:
+    if before.state is None or before.error_code is not None or before.age is None:
+        return None
+
+    return ReadingPair(
+        slug=before.slug,
+        before=before.state,
+        after=after,
+        before_moment=seen_at - before.age.total_seconds(),
+        after_moment=after_moment,
+    )
 
 
 class DeviceStateStore[TState]:
@@ -79,7 +104,10 @@ PlugSnapshot = DeviceSnapshot[PlugState]
 PlugStateStore = DeviceStateStore[PlugState]
 TemperatureSnapshot = DeviceSnapshot[TemperatureReading]
 TemperatureStateStore = DeviceStateStore[TemperatureReading]
+ClimateUnitSnapshot = DeviceSnapshot[ClimateUnitState]
+ClimateUnitStateStore = DeviceStateStore[ClimateUnitState]
 
 thermostat_state_store = ThermostatStateStore(unavailable_after=UNAVAILABLE_AFTER)
 plug_state_store = PlugStateStore(unavailable_after=UNAVAILABLE_AFTER)
 temperature_state_store = TemperatureStateStore(unavailable_after=UNAVAILABLE_AFTER)
+climate_unit_state_store = ClimateUnitStateStore(unavailable_after=UNAVAILABLE_AFTER)

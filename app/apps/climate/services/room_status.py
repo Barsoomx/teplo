@@ -15,6 +15,7 @@ from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_intent import ZoneIntent, decide_floor_mode
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.room_intents import RoomIntentReader
+from apps.climate.services.source_status import SourceStatusReader
 from apps.devices.services.state_store import (
     TemperatureStateStore,
     ThermostatStateStore,
@@ -32,6 +33,7 @@ class RoomStatusReader:
         temperatures: TemperatureStateStore,
         thermostats: ThermostatStateStore,
         gate: LoadGate,
+        sources: SourceStatusReader,
         dry_run: bool,
     ) -> None:
         self._zones = zones
@@ -39,6 +41,7 @@ class RoomStatusReader:
         self._temperatures = temperatures
         self._thermostats = thermostats
         self._gate = gate
+        self._sources = sources
         self._dry_run = dry_run
 
     @classmethod
@@ -49,6 +52,7 @@ class RoomStatusReader:
             temperatures=temperature_state_store,
             thermostats=thermostat_state_store,
             gate=GuardLoadGate.init(),
+            sources=SourceStatusReader.init(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
@@ -58,6 +62,7 @@ class RoomStatusReader:
         backed_up = self._intents.backed_up(intents)
         held = self._gate.held_zones()
         zones = sorted(self._zones.all_settings(), key=lambda zone: zone.name)
+        sources = self._sources.statuses(intents)
         return [
             RoomStatus(
                 slug=room.slug,
@@ -77,6 +82,7 @@ class RoomStatusReader:
                     for zone in zones
                     if zone.room_slug == room.slug
                 ),
+                sources=sources.get(room.slug, ()),
             )
             for room in intents.rooms
         ]

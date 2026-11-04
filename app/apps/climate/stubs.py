@@ -9,7 +9,8 @@ from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.control import ClimateGates
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
-from apps.climate.domain.heat_sources import FireplaceRecord
+from apps.climate.domain.fast_source import SourceStart
+from apps.climate.domain.heat_sources import FireplaceRecord, SourceSettings
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningEntry, ZoneLearningRecord
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
@@ -18,6 +19,7 @@ from apps.climate.domain.room_climate import (
     RoomOverride,
 )
 from apps.climate.domain.room_intent import GuestsRecord
+from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
 from apps.house.domain.errors import RoomNotFoundError
@@ -178,6 +180,86 @@ class FireplaceStoreStub:
         ]
 
 
+class HeatSourceStoreStub:
+    def __init__(self, sources: list[SourceSettings], errors: dict[tuple[str, str], Exception]) -> None:
+        self._sources = sources
+        self._errors = errors
+        self._stamps: list[ZoneStamp] = []
+        self._commanded: list[tuple[str, bool, Decimal | None]] = []
+
+    @property
+    def stamps(self) -> list[ZoneStamp]:
+        return self._stamps
+
+    @property
+    def commanded(self) -> list[tuple[str, bool, Decimal | None]]:
+        return self._commanded
+
+    def commanded_settings(self) -> list[SourceSettings]:
+        return list(self._sources)
+
+    def mark_commanded(self, slug: str, at: datetime, *, power: bool, setpoint: Decimal | None) -> None:
+        self._stamp('last_command_at', slug, at)
+        self._commanded.append((slug, power, setpoint))
+
+    def mark_dry_run(self, slug: str, at: datetime) -> None:
+        self._stamp('last_dry_run_at', slug, at)
+
+    def _stamp(self, stamp: str, slug: str, at: datetime) -> None:
+        error = self._errors.get((stamp, slug))
+        if error is not None:
+            raise error
+
+        self._stamps.append((stamp, slug, at))
+
+
+class SourceHoldStoreStub:
+    def __init__(self, errors: dict[str, Exception]) -> None:
+        self._errors = errors
+        self._holds: list[tuple[str, datetime]] = []
+
+    @property
+    def holds(self) -> list[tuple[str, datetime]]:
+        return self._holds
+
+    def hold_by_hand(self, slug: str, until: datetime) -> None:
+        error = self._errors.get(slug)
+        if error is not None:
+            raise error
+
+        self._holds.append((slug, until))
+
+
+class SourceLoadGateStub:
+    def __init__(self, held: frozenset[str], gated: frozenset[str], answers: dict[str, StartAnswer]) -> None:
+        self._held = held
+        self._gated = gated
+        self._answers = answers
+        self._asked: list[tuple[SourceStart, ...]] = []
+
+    @property
+    def asked(self) -> list[tuple[SourceStart, ...]]:
+        return self._asked
+
+    def held_sources(self) -> frozenset[str]:
+        return self._held
+
+    def gated_sources(self) -> frozenset[str]:
+        return self._gated
+
+    def ask_source_starts(self, starts: Sequence[SourceStart], now: datetime) -> dict[str, StartAnswer]:  # noqa: ARG002
+        self._asked.append(tuple(starts))
+        return {start.source: self._answers[start.source] for start in starts if start.source in self._answers}
+
+
+class ClimateSensorsStoreStub:
+    def __init__(self, sensors: ClimateSensors) -> None:
+        self._sensors = sensors
+
+    def sensors(self) -> ClimateSensors:
+        return self._sensors
+
+
 class LoadGateStub:
     def __init__(self, held: frozenset[str], gated: frozenset[str], answers: dict[str, StartAnswer]) -> None:
         self._held = held
@@ -281,6 +363,14 @@ class RoomClimateConfigStoreStub:
             replace(record, config=replace(record.config, **written)) if record.slug == slug else record
             for record in self._records
         ]
+
+
+class RoomClimateStoreStub:
+    def __init__(self, rooms: list[RoomClimateSettings]) -> None:
+        self._rooms = rooms
+
+    def all_settings(self) -> list[RoomClimateSettings]:
+        return list(self._rooms)
 
 
 class RoomOverrideStoreStub:

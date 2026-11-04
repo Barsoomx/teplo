@@ -1,24 +1,30 @@
 from collections.abc import Mapping
+from datetime import timedelta
 
 from django.db import transaction
 from django.db.models import Max
 
 from apps.core.repositories.write_lock import lock_for_update
+from apps.devices.models import Device
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
-from apps.power.domain.loads import LearnedPhase, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
+from apps.power.domain.loads import LearnedPhase, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason, rated_amps
 from apps.power.models import Load
 
 
 class LoadRepository:
     @staticmethod
     def all_records() -> list[LoadRecord]:
-        loads = Load.objects.select_related('zone__thermostat', 'device').order_by('priority')
+        loads = Load.objects.select_related('zone__thermostat', 'device', 'heat_source__device').order_by('priority')
         return [record for record in map(_to_record, loads) if record is not None]
 
     @staticmethod
     def live_zone_slugs() -> frozenset[str]:
         return frozenset(Load.objects.filter(zone__live_control=True).values_list('zone__slug', flat=True))
+
+    @staticmethod
+    def live_source_slugs() -> frozenset[str]:
+        return frozenset(Load.objects.filter(heat_source__live=True).values_list('heat_source__slug', flat=True))
 
     @staticmethod
     def mark_shed(slug: str, shed: LiveShed) -> None:
@@ -91,6 +97,9 @@ class LoadRepository:
 
 
 def _to_record(load: Load) -> LoadRecord | None:
+    if load.heat_source is not None:
+        return _source_record(load)
+
     device = load.device if load.zone is None else load.zone.thermostat
     if device is None:
         return None
@@ -108,6 +117,31 @@ def _to_record(load: Load) -> LoadRecord | None:
         live=load.live,
         shed=_shed(load, device.slug),
         last_command_at=None if load.zone is None else load.zone.last_command_at,
+    )
+
+
+def _source_record(load: Load) -> LoadRecord | None:
+    source = load.heat_source
+    device: Device | None = None if source is None else source.device
+    if source is None or device is None:
+        return None
+
+    return LoadRecord(
+        slug=load.slug,
+        name=load.name,
+        kind=LoadKind(load.kind),
+        zone_slug=None,
+        device_slug=device.slug,
+        priority=load.priority,
+        phase=LoadPhase(load.phase),
+        nominal_amps=load.nominal_amps,
+        learned=_learned(load),
+        live=load.live,
+        shed=_shed(load, device.slug),
+        last_command_at=source.last_command_at,
+        source_slug=source.slug,
+        write_interval=timedelta(minutes=source.min_write_minutes),
+        rated_amps=None if source.rated_watts is None else rated_amps(source.rated_watts),
     )
 
 

@@ -9,6 +9,7 @@ from django.utils import translation
 from freezegun import freeze_time
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.week_plan import DayPeriod
@@ -16,6 +17,7 @@ from apps.climate.domain.zone_intent import ForcedTarget
 from apps.core.domain.errors import DomainError, SecretMissingError
 from apps.devices.domain.errors import (
     BrokerUnavailableError,
+    ClimateUnitNotControllableError,
     DeviceConfigError,
     DeviceNotFoundError,
     DeviceProtocolError,
@@ -67,6 +69,11 @@ from apps.panel.templatetags.panel_format import (
     room_override_text,
     second_floor_guard_text,
     settings_change_text,
+    source_command_failed_text,
+    source_command_text,
+    source_manual_change_text,
+    source_pending_text,
+    source_state_text,
     start_wait_note,
     start_wait_text,
     steps_down,
@@ -75,7 +82,7 @@ from apps.panel.templatetags.panel_format import (
     weekday_short,
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
-from apps.panel.usecases.get_panel_overview import LoadOverview, ZoneOverview, ZoneRegime
+from apps.panel.usecases.get_panel_overview import LoadOverview, SourceOverview, ZoneOverview, ZoneRegime
 from apps.panel.usecases.get_phase_currents import EstimatePartOverview, PhaseCurrent
 from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
@@ -701,8 +708,17 @@ def test_outage_overload_note_says_which_phase_was_overloaded_before_the_cut(
             ),
             ('Фаза неизвестна', '6,0 А по умолчанию'),
         ),
+        (
+            replace(BOILER_LOAD, phase_origin=PhaseOrigin.SET, amps=Decimal('8.7'), amps_origin=AmpsOrigin.RATED),
+            ('Фаза L2, задана', '8,7 А по мощности'),
+        ),
     ],
-    ids=['learned_phase_nominal_current', 'set_phase_learned_current', 'unknown_phase_default_current'],
+    ids=[
+        'learned_phase_nominal_current',
+        'set_phase_learned_current',
+        'unknown_phase_default_current',
+        'set_phase_rated_current',
+    ],
 )
 def test_load_facts_say_where_the_phase_and_the_current_come_from(
     load: LoadOverview,
@@ -1568,3 +1584,219 @@ def test_manual_change_texts_follow_the_active_language() -> None:
         'Кухня: changed on the thermostat: switched off, 28° → 25°, teplo would leave it alone until 18:40',
         'Thermostat set to 25°: teplo returns to the schedule after 18:40',
     )
+
+
+CONVECTOR_SHED: dict[str, object] = {
+    'load': 'convector-office',
+    'name': 'Конвектор: кабинет',
+    'kind': 'source',
+    'phase': 'l2',
+    'amps': '24.6',
+    'reason': 'overload',
+    'estimated': True,
+}
+CONVECTOR_CHANGE: dict[str, object] = {
+    'source': 'convector-office',
+    'name': 'Конвектор: кабинет',
+    'power': None,
+    'setpoint': ['22', '25'],
+    'until': '2026-11-04T15:40:00Z',
+    'dry_run': False,
+}
+CONVECTOR = SourceOverview(
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=HeatSourceKind.HEATER,
+    live=True,
+    lit_until=None,
+    burning=False,
+    available=True,
+    on=True,
+    setpoint=Decimal(22),
+    level='High',
+    temperature=Decimal(21),
+    target_on=True,
+    target_setpoint=Decimal(22),
+    commands_live=True,
+    pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW + timedelta(minutes=12)),
+)
+
+
+def _source_entry(kind: str, payload: dict[str, object]) -> TimelineEntry:
+    return TimelineEntry(
+        kind=kind,
+        subject='convector-office',
+        subject_name='Конвектор: кабинет',
+        device_kind=DeviceKind.CLIMATE_UNIT,
+        payload=payload,
+        created_at=datetime(2026, 11, 4, 13, 0, tzinfo=MOSCOW),
+    )
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        ({'power': None, 'setpoint': '22', 'dry_run': False}, 'Конвектор: кабинет: поставил 22°'),
+        ({'power': None, 'setpoint': '22', 'dry_run': True}, 'Конвектор: кабинет: поставил бы 22°'),
+        ({'power': True, 'setpoint': '22', 'dry_run': False}, 'Конвектор: кабинет: включил на 22°'),
+        ({'power': True, 'setpoint': None, 'dry_run': True}, 'Конвектор: кабинет: включил бы'),
+        ({'power': False, 'setpoint': None, 'dry_run': False}, 'Конвектор: кабинет: выключил'),
+        ({'power': None, 'setpoint': None, 'dry_run': False}, 'Конвектор: кабинет: неизвестное событие'),
+    ],
+    ids=['set', 'would_set', 'switched_on_at', 'would_switch_on', 'switched_off', 'nothing'],
+)
+def test_source_command_text_says_what_teplo_wrote_or_would_write(payload: dict[str, object], expected: str) -> None:
+    assert source_command_text(_source_entry('source_command_issued', payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        ({'power': None, 'setpoint': '22'}, 'Конвектор: кабинет: не удалось поставить 22°'),
+        ({'power': True, 'setpoint': '22'}, 'Конвектор: кабинет: не удалось включить на 22°'),
+        ({'power': False, 'setpoint': None}, 'Конвектор: кабинет: не удалось выключить'),
+    ],
+    ids=['set', 'switch_on', 'switch_off'],
+)
+def test_source_command_failed_text_says_what_teplo_could_not_write(payload: dict[str, object], expected: str) -> None:
+    assert source_command_failed_text(_source_entry('source_command_failed', payload)) == expected
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (CONVECTOR_CHANGE, 'Конвектор: кабинет: изменили на приборе: 22° → 25°, teplo не трогает до 18:40'),
+        (
+            {**CONVECTOR_CHANGE, 'dry_run': True},
+            'Конвектор: кабинет: изменили на приборе: 22° → 25°, teplo не трогал бы до 18:40',
+        ),
+        (
+            {**CONVECTOR_CHANGE, 'power': [True, False], 'setpoint': None},
+            'Конвектор: кабинет: изменили на приборе: выключили, teplo не трогает до 18:40',
+        ),
+    ],
+    ids=['setpoint', 'setpoint_while_watching', 'switched_off'],
+)
+def test_source_manual_change_text_says_what_was_changed_on_the_unit(payload: dict[str, object], expected: str) -> None:
+    assert source_manual_change_text(_source_entry('source_manual_change', payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        (
+            'load_shed',
+            CONVECTOR_SHED,
+            ('Конвектор: кабинет: выключил обогреватель', 'Перегрузка фазы L2 по оценке: 24,6 А'),
+        ),
+        (
+            'load_shed_dry_run',
+            CONVECTOR_SHED,
+            ('Конвектор: кабинет: выключил бы обогреватель', 'Перегрузка фазы L2 по оценке: 24,6 А'),
+        ),
+        (
+            'load_restored',
+            {**CONVECTOR_SHED, 'amps': '17.2', 'cause': 'calm', 'switched_on': False},
+            ('Конвектор: кабинет: вернул обогреватель комнате', 'Фаза L2 по оценке в норме: 17,2 А'),
+        ),
+        (
+            'load_restored',
+            {**CONVECTOR_SHED, 'cause': 'released', 'switched_on': True},
+            ('Конвектор: кабинет: снова включил обогреватель', 'Управление нагрузкой переключено в настройках'),
+        ),
+    ],
+    ids=['shed', 'shed_in_dry_run', 'handed_back', 'released_and_switched_back_on'],
+)
+def test_load_shed_text_of_a_heat_source_names_the_heater(
+    kind: str,
+    payload: dict[str, object],
+    expected: tuple[str, str],
+) -> None:
+    entry = _load_entry(kind, payload, subject='convector-office', name='Конвектор: кабинет', device_kind=None)
+
+    assert (load_shed_text(entry), load_shed_note(entry)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('command', 'expected'),
+    [
+        ('shed', 'Конвектор: кабинет: не удалось выключить обогреватель'),
+        ('restore', 'Конвектор: кабинет: не удалось снова включить обогреватель'),
+    ],
+    ids=['off', 'on'],
+)
+def test_load_command_text_names_the_heater_teplo_could_not_switch(command: str, expected: str) -> None:
+    entry = _load_entry(
+        'load_command_failed',
+        {'command': command},
+        subject='convector-office',
+        name='Конвектор: кабинет',
+        device_kind=DeviceKind.CLIMATE_UNIT,
+    )
+
+    assert load_command_text(entry) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('error', 'expected'),
+    [
+        (DeviceUnavailableError('timeout'), 'Нет связи с прибором'),
+        (DeviceProtocolError('bad dps'), 'Прибор ответил неожиданно'),
+        (
+            ClimateUnitNotControllableError('heater-office', 'it only reads'),
+            'Драйвер этого прибора не умеет им управлять',
+        ),
+    ],
+    ids=['unavailable', 'protocol', 'not_controllable'],
+)
+def test_failure_note_names_the_unit_for_a_climate_unit(error: DomainError, expected: str) -> None:
+    assert failure_note(error.error_code, error.detail, device=DeviceKind.CLIMATE_UNIT.value) == expected
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('source', 'state', 'pending'),
+    [
+        (CONVECTOR, 'греет до 22° · High · у прибора 21°', 'teplo поставит 22° не раньше 16:52'),
+        (
+            replace(
+                CONVECTOR,
+                on=False,
+                setpoint=Decimal(19),
+                pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW),
+            ),
+            'выключен · у прибора 21°',
+            'teplo поставит 22° в ближайшую минуту',
+        ),
+        (
+            replace(CONVECTOR, target_on=False, target_setpoint=None),
+            'греет до 22° · High · у прибора 21°',
+            'teplo выключит не раньше 16:52',
+        ),
+        (
+            replace(CONVECTOR, on=None, pending=PendingWrite(kind=PendingKind.WATCHING, at=None)),
+            '',
+            '',
+        ),
+    ],
+    ids=[
+        'heating_and_waiting_for_its_interval',
+        'off_and_written_within_the_minute',
+        'to_be_switched_off',
+        'never_read',
+    ],
+)
+def test_source_texts_say_what_the_unit_does_and_when_teplo_s_target_reaches_it(
+    source: SourceOverview,
+    state: str,
+    pending: str,
+) -> None:
+    assert (source_state_text(source), source_pending_text(source)) == (state, pending)

@@ -1,9 +1,10 @@
 from collections.abc import Collection, Mapping
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
+from decimal import Decimal
 from functools import partial
 
-from apps.climate.domain.ports import WriteGate
+from apps.climate.domain.ports import SourceWrites, WriteGate
 from apps.core.domain.errors import DomainError
 from apps.devices.domain.kinds import DeviceKind
 from apps.power.domain.control import LoadControl
@@ -38,9 +39,11 @@ class LoadStoreStub:
         records: list[LoadRecord],
         live_zones: frozenset[str],
         write_errors: tuple[Exception, ...] = (),
+        live_sources: frozenset[str] = frozenset(),
     ) -> None:
         self._records = records
         self._live_zones = live_zones
+        self._live_sources = live_sources
         self._write_errors = write_errors
         self._failed_writes = 0
         self._reads = 0
@@ -58,9 +61,15 @@ class LoadStoreStub:
     def writes(self) -> list[LoadWrite]:
         return self._writes
 
-    def edit(self, records: list[LoadRecord], live_zones: frozenset[str]) -> None:
+    def edit(
+        self,
+        records: list[LoadRecord],
+        live_zones: frozenset[str],
+        live_sources: frozenset[str] = frozenset(),
+    ) -> None:
         self._records = records
         self._live_zones = live_zones
+        self._live_sources = live_sources
 
     def all_records(self) -> list[LoadRecord]:
         self._reads += 1
@@ -68,6 +77,9 @@ class LoadStoreStub:
 
     def live_zone_slugs(self) -> frozenset[str]:
         return self._live_zones
+
+    def live_source_slugs(self) -> frozenset[str]:
+        return self._live_sources
 
     def mark_shed(self, slug: str, shed: LiveShed) -> None:
         self._write(('mark_shed', slug, shed))
@@ -176,6 +188,81 @@ class ZoneSwitchStub:
             raise self._on_error
 
         self._switched_on.append(switch)
+
+
+class SourceSwitchStub:
+    def __init__(self, writes: SourceWrites, error: DomainError | None, stamped: bool = True) -> None:
+        self._writes = writes
+        self._error = error
+        self._stamped = stamped
+        self._switched_off: list[tuple[str, str, datetime]] = []
+        self._switched_on: list[tuple[str, str, datetime]] = []
+
+    @property
+    def switched_off(self) -> list[tuple[str, str, datetime]]:
+        return self._switched_off
+
+    @property
+    def switched_on(self) -> list[tuple[str, str, datetime]]:
+        return self._switched_on
+
+    def switch_off(self, source: str, unit: str, at: datetime) -> bool:
+        if self._error is not None:
+            raise self._error
+
+        shed = self._writes.override(source, at)
+        self._writes.send(shed, partial(self._switched_off.append, (source, unit, at)))
+        if self._stamped:
+            self._writes.stored(shed)
+        return self._stamped
+
+    def switch_on(
+        self,
+        source: str,
+        unit: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+        interval: timedelta,
+    ) -> bool:
+        if self._error is not None:
+            raise self._error
+
+        reservation = self._writes.reserve(source, at, stamped_at=stamped_at, read_at=read_at, interval=interval)
+        if reservation is None:
+            return False
+
+        with self._writes.stamping(reservation):
+            pass
+        return self._writes.write(reservation, partial(self._switched_on.append, (source, unit, at)))
+
+
+class SourceWriteStampsStub:
+    def __init__(self, error: Exception | None) -> None:
+        self._error = error
+        self._stamps: list[tuple[str, datetime, bool, Decimal | None]] = []
+        self._sheds: list[tuple[str, datetime]] = []
+
+    @property
+    def stamps(self) -> list[tuple[str, datetime, bool, Decimal | None]]:
+        return self._stamps
+
+    @property
+    def sheds(self) -> list[tuple[str, datetime]]:
+        return self._sheds
+
+    def mark_commanded(self, slug: str, at: datetime, *, power: bool, setpoint: Decimal | None) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._stamps.append((slug, at, power, setpoint))
+
+    def mark_shed(self, slug: str, at: datetime) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._sheds.append((slug, at))
 
 
 class ZoneWriteStampsStub:

@@ -17,7 +17,7 @@ from apps.panel.usecases.get_journal_timeline import (
 )
 from apps.power.domain.loads import LoadPhase
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
-from apps.power.factories import OutageFactory, PlugLoadFactory, ZoneLoadFactory
+from apps.power.factories import OutageFactory, PlugLoadFactory, SourceLoadFactory, ZoneLoadFactory
 from apps.power.models import Outage
 from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.outage import OutageRepository
@@ -131,6 +131,37 @@ def f_loads_use_case() -> GetJournalTimelineUseCase:
         kind='load_command_failed',
         subject='kitchen',
         payload={'load': 'kitchen', 'command': 'shed'},
+        created_at=MORNING,
+    )
+    return GetJournalTimelineUseCase(
+        journal=JournalRepository(),
+        zones=ZoneRepository(),
+        devices=DeviceRepository(),
+        loads=LoadRepository(),
+        outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+    )
+
+
+@pytest.fixture
+def f_convector_use_case() -> GetJournalTimelineUseCase:
+    SourceLoadFactory.create(
+        slug='convector-office',
+        name='Конвектор: кабинет',
+        heat_source__slug='convector-office',
+        heat_source__device__slug='heater-office',
+        heat_source__device__name='Конвектор: кабинет',
+    )
+    JournalEntryFactory.create(
+        kind='source_command_issued',
+        subject='convector-office',
+        payload={'source': 'convector-office', 'setpoint': '22', 'dry_run': True},
+        created_at=MORNING - timedelta(seconds=1),
+    )
+    JournalEntryFactory.create(
+        kind='device_availability_changed',
+        subject='heater-office',
+        payload={'available': False},
         created_at=MORNING,
     )
     return GetJournalTimelineUseCase(
@@ -258,4 +289,13 @@ def test_timeline_names_a_load_and_the_kind_of_device_behind_it(f_loads_use_case
         ('kitchen', 'Кухня', DeviceKind.THERMOSTAT),
         ('boiler-1f', 'Бойлер 1 этаж', DeviceKind.PLUG),
         ('l2', 'l2', None),
+    ]
+
+
+def test_timeline_names_a_heat_source_and_its_climate_unit(f_convector_use_case: GetJournalTimelineUseCase) -> None:
+    output = f_convector_use_case.execute(GetJournalTimelineInputDTO(limit=10))
+
+    assert [(entry.subject, entry.subject_name, entry.device_kind) for day in output.days for entry in day.entries] == [
+        ('heater-office', 'Конвектор: кабинет', DeviceKind.CLIMATE_UNIT),
+        ('convector-office', 'Конвектор: кабинет', DeviceKind.CLIMATE_UNIT),
     ]

@@ -41,6 +41,35 @@ class ZoneManualChange(DomainEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class SourceCommandIssued(DomainEvent):
+    source: str
+    name: str
+    power: bool | None
+    setpoint: Decimal | None
+    dry_run: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceCommandFailed(DomainEvent):
+    source: str
+    name: str
+    power: bool | None
+    setpoint: Decimal | None
+    error: str
+    error_code: str
+
+
+@dataclass(frozen=True, kw_only=True)
+class SourceManualChange(DomainEvent):
+    source: str
+    name: str
+    power: tuple[bool, bool] | None
+    setpoint: tuple[Decimal, Decimal] | None
+    until: datetime
+    dry_run: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class AirControlDryRun(DomainEvent):
     zone: str
     air: Decimal

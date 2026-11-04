@@ -15,11 +15,18 @@ from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import DeviceUnavailableError
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
-from apps.devices.domain.readings import Phase, PlugState, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateUnitState,
+    Phase,
+    PlugState,
+    ThermostatMode,
+    ThermostatState,
+)
 from apps.devices.factories import DeviceFactory
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
-from apps.devices.services.state_store import PlugStateStore, ThermostatStateStore
+from apps.devices.services.state_store import ClimateUnitStateStore, PlugStateStore, ThermostatStateStore
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
 from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.events import (
@@ -47,7 +54,13 @@ from apps.power.repositories.load import LoadRepository
 from apps.power.repositories.load_settings import LoadSettingsRepository
 from apps.power.services.guard_book import GuardBook
 from apps.power.services.load_switcher import LoadSwitcher
-from apps.power.stubs import DeviceDirectoryStub, LoadSettingsStoreStub, LoadStoreStub, ZoneSwitchStub
+from apps.power.stubs import (
+    DeviceDirectoryStub,
+    LoadSettingsStoreStub,
+    LoadStoreStub,
+    SourceSwitchStub,
+    ZoneSwitchStub,
+)
 from apps.power.usecases.shed_phase_loads import (
     ShedPhaseLoadsInputDTO,
     ShedPhaseLoadsOutputDTO,
@@ -120,6 +133,19 @@ BATHROOM = replace(
     nominal_amps=None,
 )
 BOILER_2F = replace(BOILER, slug='boiler-2f', name='Бойлер 2 этаж', device_slug='plug-boiler-2f', priority=2)
+CONVECTOR = replace(
+    BOILER,
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    device_slug='heater-office',
+    priority=8,
+    nominal_amps=None,
+    source_slug='convector-office',
+    write_interval=timedelta(minutes=5),
+    rated_amps=Decimal('8.7'),
+)
+LIVE_SOURCES = frozenset({'convector-office'})
 LIVE_ZONES = frozenset({'kitchen', 'living-room', 'bathroom-1f'})
 KITCHEN_START = LoadStatus(
     slug='kitchen',
@@ -180,6 +206,8 @@ class House:
     zones: ZoneSwitchStub
     writes: KeyedWriteGate
     events: list[DomainEvent]
+    climate_units: ClimateUnitStateStore
+    sources: SourceSwitchStub
 
 
 def _moment(second: int) -> datetime:
@@ -207,6 +235,16 @@ def _heating() -> ThermostatState:
     )
 
 
+def _convector_heating(second: int) -> ClimateUnitState:
+    return ClimateUnitState(
+        mode=ClimateMode.HEAT,
+        target=Decimal(22),
+        room_temperature=Decimal(20),
+        read_at=_moment(second),
+        level='High',
+    )
+
+
 def _live(*records: LoadRecord) -> list[LoadRecord]:
     return [replace(record, live=True) for record in records]
 
@@ -225,6 +263,7 @@ def _house(
     zone_stamped: bool = True,
     zone_on_error: DomainError | None = None,
     zone_on_stamp_errors: tuple[Exception, ...] = (),
+    live_sources: frozenset[str] = frozenset(),
 ) -> House:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
@@ -234,12 +273,15 @@ def _house(
     meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=UNAVAILABLE_AFTER, clock=clock)
     plugs = PlugStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock)
     thermostats = ThermostatStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock)
+    climate_units = ClimateUnitStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock)
     for record in records:
         if record.kind is LoadKind.PLUG:
             plugs.record_state(record.device_slug, _plug(on=boiler_on, second=0))
+        elif record.kind is LoadKind.SOURCE:
+            climate_units.record_state(record.device_slug, _convector_heating(0))
         else:
             thermostats.record_state(record.device_slug, _heating())
-    loads = LoadStoreStub(records=records, live_zones=live_zones, write_errors=write_errors)
+    loads = LoadStoreStub(records=records, live_zones=live_zones, write_errors=write_errors, live_sources=live_sources)
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error, switch_errors=boiler_switch_errors)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
@@ -251,6 +293,7 @@ def _house(
         on_error=zone_on_error,
         on_stamp_errors=zone_on_stamp_errors,
     )
+    sources = SourceSwitchStub(writes=KeyedWriteGate(clock=clock, key_lock=threading.Lock), error=None)
     book = GuardBook()
     return House(
         guard=Guard(
@@ -263,13 +306,14 @@ def _house(
                 meter=meter,
                 thermostats=thermostats,
                 plugs=plugs,
+                climate_units=climate_units,
                 book=book,
                 clock=clock,
                 dispatcher=dispatcher,
             ),
             shed=ShedPhaseLoadsUseCase(
                 loads=loads,
-                switcher=LoadSwitcher(plugs=plug_provider, zones=zones),
+                switcher=LoadSwitcher(plugs=plug_provider, zones=zones, sources=sources),
                 book=book,
                 clock=clock,
                 dry_run=dry_run,
@@ -286,6 +330,8 @@ def _house(
         zones=zones,
         writes=writes,
         events=events,
+        climate_units=climate_units,
+        sources=sources,
     )
 
 
@@ -383,6 +429,10 @@ def _load_on(house: House) -> None:
     house.loads.edit([replace(record, live=True) for record in house.loads.records], frozenset())
 
 
+def _source_gate_off(house: House) -> None:
+    house.loads.edit(house.loads.records, frozenset(), frozenset())
+
+
 def _zone_live_control_off(house: House) -> None:
     house.loads.edit(house.loads.records, frozenset())
 
@@ -422,6 +472,17 @@ def _thermostat_read_off(house: House, device: str, second: int) -> None:
             read_at=_moment(second),
         ),
     )
+
+
+@pytest.fixture
+def f_convector_house() -> House:
+    return _house(_live(CONVECTOR), LIVE_CONTROL, frozenset(), live_sources=LIVE_SOURCES)
+
+
+@pytest.fixture
+def f_convector_shed_live(f_convector_house: House) -> House:
+    _seconds(f_convector_house.guard, 4, '26.0')
+    return f_convector_house
 
 
 @pytest.fixture
@@ -882,6 +943,7 @@ def f_guard_after_its_first_second() -> Guard:
             meter=meter,
             thermostats=thermostats,
             plugs=plugs,
+            climate_units=ClimateUnitStateStore(unavailable_after=UNAVAILABLE_AFTER, clock=clock),
             book=book,
             clock=clock,
             dispatcher=EventDispatcher(),
@@ -894,6 +956,7 @@ def f_guard_after_its_first_second() -> Guard:
                     writes=KeyedWriteGate(clock=clock, key_lock=threading.Lock),
                     error=None,
                 ),
+                sources=SourceSwitchStub(writes=KeyedWriteGate(clock=clock, key_lock=threading.Lock), error=None),
             ),
             book=book,
             clock=clock,
@@ -2649,4 +2712,89 @@ def test_overload_by_the_estimate_never_sheds_a_load_of_unknown_phase(
                 occurred_at=_moment(4),
             ),
         ],
+    )
+
+
+def test_live_overload_switches_the_heat_source_off_and_stores_the_shed(f_convector_house: House) -> None:
+    _seconds(f_convector_house.guard, 4, '26.0')
+
+    assert (f_convector_house.sources.switched_off, f_convector_house.loads.writes, f_convector_house.events) == (
+        [('convector-office', 'heater-office', _moment(4))],
+        [
+            (
+                'mark_shed',
+                'convector-office',
+                LiveShed(
+                    at=_moment(4),
+                    reason=ShedReason.OVERLOAD,
+                    phase=LoadPhase.L2,
+                    was_on=True,
+                    device='heater-office',
+                ),
+            ),
+        ],
+        [
+            _overload(4, '26.0'),
+            LoadShed(
+                load='convector-office',
+                name='Конвектор: кабинет',
+                kind=LoadKind.SOURCE,
+                phase=LoadPhase.L2,
+                amps=Decimal('26.0'),
+                load_amps=Decimal('8.7'),
+                reason=ShedReason.OVERLOAD,
+                occurred_at=_moment(4),
+            ),
+        ],
+    )
+
+
+def test_owner_switching_a_shed_heat_source_back_on_takes_it_over(f_convector_shed_live: House) -> None:
+    _seconds(f_convector_shed_live.guard, 1, '15.0')
+    f_convector_shed_live.climate_units.record_state('heater-office', _convector_heating(5))
+    outputs = _seconds(f_convector_shed_live.guard, 1, '15.0')
+
+    assert (outputs, f_convector_shed_live.loads.writes[1:], f_convector_shed_live.events[2:]) == (
+        [ShedPhaseLoadsOutputDTO(shed=(), restored=('convector-office',))],
+        [('clear_shed', 'convector-office', None)],
+        [
+            LoadShedOverridden(
+                load='convector-office',
+                name='Конвектор: кабинет',
+                phase=LoadPhase.L2,
+                occurred_at=_moment(6),
+            ),
+        ],
+    )
+
+
+def test_restore_hands_a_shed_heat_source_back_to_the_source_cycle_without_a_write(
+    f_convector_shed_live: House,
+) -> None:
+    outputs = _seconds(f_convector_shed_live.guard, 130, '10.0')
+
+    restores = [event for event in f_convector_shed_live.events if isinstance(event, LoadRestored)]
+    assert (
+        [slugs for _, slugs in _restored_at(outputs, 5)],
+        f_convector_shed_live.sources.switched_on,
+        [(event.cause, event.switched_on) for event in restores],
+        f_convector_shed_live.loads.writes[1:],
+    ) == (
+        [('convector-office',)],
+        [],
+        [(RestoreCause.CALM, False)],
+        [('clear_shed', 'convector-office', None)],
+    )
+
+
+def test_heat_source_released_by_its_gate_is_switched_back_on_at_its_next_allowed_write(
+    f_convector_shed_live: House,
+) -> None:
+    _seconds(f_convector_shed_live.guard, 1, '15.0')
+    _source_gate_off(f_convector_shed_live)
+    outputs = _seconds(f_convector_shed_live.guard, 299, '15.0')
+
+    assert (_restored_at(outputs, 6), f_convector_shed_live.sources.switched_on) == (
+        [(304, ('convector-office',))],
+        [('convector-office', 'heater-office', _moment(304))],
     )

@@ -6,16 +6,23 @@ from django.conf import settings
 
 from apps.core.services.secrets import DeviceSecret, SecretsFile
 from apps.devices.domain.capabilities import (
+    ClimateUnit,
+    ControllableClimateUnit,
     FloorThermostat,
     MeteredPlug,
     PhaseMeter,
     SwitchablePlug,
     TemperatureSensor,
 )
-from apps.devices.domain.errors import DriverNotImplementedError, PlugNotSwitchableError
+from apps.devices.domain.errors import (
+    ClimateUnitNotControllableError,
+    DriverNotImplementedError,
+    PlugNotSwitchableError,
+)
 from apps.devices.domain.kinds import DeviceDriver
 from apps.devices.drivers.esphome_phase_meter import EsphomePhaseMeterDriver
 from apps.devices.drivers.esphome_temperature import EsphomeTemperatureDriver
+from apps.devices.drivers.tuya_heater import TuyaHeaterDriver
 from apps.devices.drivers.tuya_plug import TuyaPlugDriver, TuyaSwitchablePlugDriver
 from apps.devices.drivers.tuya_thermostat import TuyaThermostatDriver
 from apps.devices.models import Device
@@ -26,6 +33,8 @@ PlugFactory = Callable[[DeviceSecret], MeteredPlug]
 SwitchablePlugFactory = Callable[[DeviceSecret], SwitchablePlug]
 TemperatureSensorFactory = Callable[[str], TemperatureSensor]
 PhaseMeterFactory = Callable[[str], PhaseMeter]
+ClimateUnitFactory = Callable[[DeviceSecret], ClimateUnit]
+ControllableClimateUnitFactory = Callable[[DeviceSecret], ControllableClimateUnit]
 
 
 class DriverRegistry:
@@ -38,6 +47,8 @@ class DriverRegistry:
         switchable_plug_factories: dict[DeviceDriver, SwitchablePlugFactory],
         temperature_sensor_factories: dict[DeviceDriver, TemperatureSensorFactory],
         phase_meter_factories: dict[DeviceDriver, PhaseMeterFactory],
+        climate_unit_factories: dict[DeviceDriver, ClimateUnitFactory],
+        controllable_climate_unit_factories: dict[DeviceDriver, ControllableClimateUnitFactory],
     ) -> None:
         self._devices = devices
         self._secrets = secrets
@@ -46,12 +57,17 @@ class DriverRegistry:
         self._switchable_plug_factories = switchable_plug_factories
         self._temperature_sensor_factories = temperature_sensor_factories
         self._phase_meter_factories = phase_meter_factories
+        self._climate_unit_factories = climate_unit_factories
+        self._controllable_climate_unit_factories = controllable_climate_unit_factories
         self._thermostats: dict[str, FloorThermostat] = {}
         self._plugs: dict[str, MeteredPlug] = {}
         self._switchable_plugs: dict[str, SwitchablePlug] = {}
         self._temperature_sensors: dict[str, TemperatureSensor] = {}
         self._phase_meters: dict[str, PhaseMeter] = {}
+        self._climate_units: dict[str, ClimateUnit] = {}
+        self._controllable_climate_units: dict[str, ControllableClimateUnit] = {}
         self._plug_lock = threading.Lock()
+        self._climate_unit_lock = threading.Lock()
 
     @classmethod
     def init(cls) -> 'DriverRegistry':
@@ -63,6 +79,8 @@ class DriverRegistry:
             switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: TuyaSwitchablePlugDriver.init},
             temperature_sensor_factories={DeviceDriver.ESPHOME_TEMPERATURE: EsphomeTemperatureDriver.init},
             phase_meter_factories={DeviceDriver.ESPHOME_PHASE_METER: EsphomePhaseMeterDriver.init},
+            climate_unit_factories={},
+            controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: TuyaHeaterDriver.init},
         )
 
     def thermostat(self, slug: str) -> FloorThermostat:
@@ -103,6 +121,40 @@ class DriverRegistry:
             self._phase_meters[slug] = self._factory(slug, self._phase_meter_factories)(slug)
 
         return self._phase_meters[slug]
+
+    def climate_unit(self, slug: str) -> ClimateUnit:
+        with self._climate_unit_lock:
+            if slug not in self._climate_units:
+                self._climate_units[slug] = self._new_climate_unit(self._devices.get(slug))
+
+            return self._climate_units[slug]
+
+    def controllable_climate_unit(self, slug: str) -> ControllableClimateUnit:
+        device = self._devices.get(slug)
+        if device.monitor_only:
+            raise ClimateUnitNotControllableError(slug, 'it is monitor-only')
+
+        factory = self._controllable_climate_unit_factories.get(DeviceDriver(device.driver))
+        if factory is None:
+            raise ClimateUnitNotControllableError(slug, f'driver {device.driver} only reads')
+
+        with self._climate_unit_lock:
+            unit = self._controllable(slug, factory)
+            self._climate_units[slug] = unit
+            return unit
+
+    def _new_climate_unit(self, device: Device) -> ClimateUnit:
+        controllable = self._controllable_climate_unit_factories.get(DeviceDriver(device.driver))
+        if controllable is not None:
+            return self._controllable(device.slug, controllable)
+
+        return self._factory_of(device, self._climate_unit_factories)(self._secrets.device(device.slug))
+
+    def _controllable(self, slug: str, factory: ControllableClimateUnitFactory) -> ControllableClimateUnit:
+        if slug not in self._controllable_climate_units:
+            self._controllable_climate_units[slug] = factory(self._secrets.device(slug))
+
+        return self._controllable_climate_units[slug]
 
     def _new_plug(self, device: Device) -> MeteredPlug:
         switchable = self._switchable_plug_factories.get(DeviceDriver(device.driver))

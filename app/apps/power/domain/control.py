@@ -36,11 +36,11 @@ class LoadControl:
     estimate: EstimateSettings = NO_ESTIMATE
 
 
-def commands_live(control: LoadControl, load: LoadRecord, *, dry_run: bool, zone_live_control: bool) -> bool:
+def commands_live(control: LoadControl, load: LoadRecord, *, dry_run: bool, controller_live: bool) -> bool:
     if dry_run or not control.live or not load.live:
         return False
 
-    return load.kind is LoadKind.PLUG or zone_live_control
+    return load.kind is LoadKind.PLUG or controller_live
 
 
 def starts_live(control: LoadControl, load: LoadRecord, *, writes_live: bool) -> bool:

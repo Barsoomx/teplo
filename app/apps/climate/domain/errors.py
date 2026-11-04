@@ -28,3 +28,8 @@ class FireplaceNotFoundError(DomainError):
     def __init__(self, room: str | None) -> None:
         detail = 'no fireplace in the house' if room is None else f'no fireplace in the room: {room}'
         super().__init__(detail, error_code='fireplace_not_found')
+
+
+class HeatSourceNotFoundError(DomainError):
+    def __init__(self, slug: str) -> None:
+        super().__init__(f'heat source not found: {slug}', error_code='heat_source_not_found')

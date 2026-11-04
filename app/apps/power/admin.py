@@ -3,7 +3,7 @@ from django.http import HttpRequest
 
 from apps.power.models import Load, LoadSettings, Outage
 
-SHED_IDENTITY_FIELDS = ('slug', 'kind', 'zone', 'device')
+SHED_IDENTITY_FIELDS = ('slug', 'kind', 'zone', 'device', 'heat_source')
 
 
 @admin.register(Outage)
@@ -23,6 +23,7 @@ class LoadAdmin(admin.ModelAdmin):
         'kind',
         'zone',
         'device',
+        'heat_source',
         'phase',
         'nominal_amps',
         'learned_phase',

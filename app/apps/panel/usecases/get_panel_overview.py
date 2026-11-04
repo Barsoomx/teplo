@@ -13,6 +13,7 @@ from apps.climate.domain.learning import ZoneLearningRecord
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.room_climate import RoomClimateSettings
 from apps.climate.domain.room_intent import RoomIntent, RoomIntents, guests_active
+from apps.climate.domain.room_status import SourceStatus
 from apps.climate.domain.schedule import ScheduleTransition, next_transition
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import CycleConditions, ZoneConditions, ZoneDecision, decide_zone
@@ -22,6 +23,7 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook, control_book
 from apps.climate.services.room_intents import RoomIntentReader
+from apps.climate.services.source_status import SourceStatusReader
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
@@ -160,6 +162,22 @@ class SourceOverview:
     live: bool
     lit_until: datetime | None
     burning: bool
+    room: str | None = None
+    device: str | None = None
+    priority: int | None = None
+    available: bool = False
+    error_code: str | None = None
+    error: str | None = None
+    on: bool | None = None
+    setpoint: Decimal | None = None
+    level: str | None = None
+    temperature: Decimal | None = None
+    target_on: bool | None = None
+    target_setpoint: Decimal | None = None
+    commands_live: bool = False
+    held_until: datetime | None = None
+    shed: bool = False
+    pending: PendingWrite | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -209,6 +227,7 @@ class GetPanelOverviewOutputDTO:
     dry_run: bool
     guests_until: datetime | None = None
     guest_rooms: tuple[str, ...] = ()
+    sources: tuple[SourceOverview, ...] = ()
 
 
 class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOverviewOutputDTO]):
@@ -229,6 +248,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         temperature_store: TemperatureStateStore,
         book: ControlBook,
         guard_book: GuardBook,
+        sources: SourceStatusReader,
         clock: ClockTrustSource,
         dry_run: bool,
     ) -> None:
@@ -248,6 +268,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         self._temperature_store = temperature_store
         self._book = book
         self._guard_book = guard_book
+        self._sources = sources
         self._clock = clock
         self._dry_run = dry_run
 
@@ -269,6 +290,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             temperature_store=temperature_state_store,
             book=control_book,
             guard_book=guard_book,
+            sources=SourceStatusReader.init(),
             clock=clock_trust_source(),
             dry_run=settings.TEPLO_DRY_RUN,
         )
@@ -304,6 +326,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         plugs = tuple(self._plug(device) for device in devices if device.kind == DeviceKind.PLUG)
         zone_air = {zone.air_sensor_slug for zone in zones}
         room_sensors = tuple(sensor for slug, sensor in sensors.items() if slug not in zone_air)
+        sources = _room_sources(intents, self._book.burning_rooms(), self._sources.statuses(intents))
         floors = self._floors(
             zone_overviews,
             room_sensors,
@@ -311,12 +334,16 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             devices,
             intents,
             self._comforts(intents.rooms, zones),
+            sources,
         )
         placed = frozenset(room.slug for floor in floors for room in floor.rooms)
         return GetPanelOverviewOutputDTO(
             zones=zone_overviews,
             plugs=plugs,
-            loads=self._load_overviews(frozenset(zone.slug for zone in zones if zone.live_control)),
+            loads=self._load_overviews(
+                frozenset(zone.slug for zone in zones if zone.live_control),
+                {source.slug: source for room_sources in sources.values() for source in room_sources},
+            ),
             sensors=tuple(sensors.values()),
             outdoor=outdoor,
             standalone_sensors=tuple(
@@ -330,6 +357,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             dry_run=self._dry_run,
             guests_until=guests.until if guests_active(guests.until, now) else None,
             guest_rooms=tuple(room.name for room in intents.rooms if room.guest_room),
+            sources=tuple(source for floor in floors for room in floor.rooms for source in sources.get(room.slug, ())),
         )
 
     def _floors(
@@ -340,9 +368,9 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         devices: list[DeviceSettings],
         intents: RoomIntents,
         comforts: dict[str, RoomComfortOverview],
+        sources: Mapping[str, tuple[SourceOverview, ...]],
     ) -> tuple[FloorOverview, ...]:
         climates = {room.slug: room for room in intents.rooms}
-        burning = self._book.burning_rooms()
         return tuple(
             FloorOverview(
                 slug=floor.slug,
@@ -356,7 +384,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                             plugs,
                             devices,
                             comforts.get(room.slug),
-                            _sources(intents, room.slug, burning),
+                            sources.get(room.slug, ()),
                         ),
                         climates.get(room.slug),
                         intents.of(room.slug),
@@ -446,13 +474,17 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             manual_until=manual_until,
         )
 
-    def _load_overviews(self, live_zones: frozenset[str]) -> tuple[LoadOverview, ...]:
+    def _load_overviews(
+        self,
+        live_zones: frozenset[str],
+        sources: Mapping[str, SourceOverview],
+    ) -> tuple[LoadOverview, ...]:
         control = self._load_settings.control()
         state = self._guard_book.state()
         sheds: Mapping[str, Shed] = {} if state is None else state.shedding.sheds
         waiting = self._guard_book.waiting()
         return tuple(
-            self._load(record, control, sheds.get(record.slug), waiting, live_zones)
+            self._load(record, control, sheds.get(record.slug), waiting, live_zones, sources)
             for record in self._loads.all_records()
         )
 
@@ -463,8 +495,15 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         shed: Shed | None,
         waiting: frozenset[str],
         live_zones: frozenset[str],
+        sources: Mapping[str, SourceOverview],
     ) -> LoadOverview:
-        live = commands_live(control, record, dry_run=self._dry_run, zone_live_control=record.zone_slug in live_zones)
+        source = None if record.source_slug is None else sources.get(record.source_slug)
+        live = commands_live(
+            control,
+            record,
+            dry_run=self._dry_run,
+            controller_live=record.zone_slug in live_zones if source is None else source.live,
+        )
         learned = record.learned
         return LoadOverview(
             slug=record.slug,
@@ -481,11 +520,19 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
             nominal_amps=record.nominal_amps,
             amps=record.effective_amps(control.default_amps),
             amps_origin=record.amps_origin,
-            state=load_state(drawing=self._drawing(record), shed=shed, waiting=record.slug in waiting, live=live),
+            state=load_state(
+                drawing=self._drawing(record) if source is None else _source_drawing(source),
+                shed=shed,
+                waiting=record.slug in waiting,
+                live=live,
+            ),
             live=live,
         )
 
     def _drawing(self, record: LoadRecord) -> bool | None:
+        if record.kind is LoadKind.SOURCE:
+            return None
+
         if record.kind is LoadKind.PLUG:
             plug = self._plug_store.snapshot(record.device_slug)
             if not plug.available or plug.state is None:
@@ -559,19 +606,62 @@ def _room(
     )
 
 
-def _sources(intents: RoomIntents, room: str, burning: frozenset[str]) -> tuple[SourceOverview, ...]:
-    return tuple(
-        SourceOverview(
-            slug=fireplace.slug,
-            name=fireplace.name,
-            kind=HeatSourceKind.FIREPLACE,
-            live=fireplace.live,
-            lit_until=fireplace.lit_until if fireplace.lit(intents.now) else None,
-            burning=room in burning,
+def _room_sources(
+    intents: RoomIntents,
+    burning: frozenset[str],
+    statuses: Mapping[str, tuple[SourceStatus, ...]],
+) -> dict[str, tuple[SourceOverview, ...]]:
+    rooms: dict[str, list[SourceOverview]] = {}
+    for fireplace in intents.fireplaces:
+        rooms.setdefault(fireplace.room_slug, []).append(
+            SourceOverview(
+                slug=fireplace.slug,
+                name=fireplace.name,
+                kind=HeatSourceKind.FIREPLACE,
+                live=fireplace.live,
+                lit_until=fireplace.lit_until if fireplace.lit(intents.now) else None,
+                burning=fireplace.room_slug in burning,
+                room=fireplace.room_slug,
+                priority=fireplace.priority,
+            ),
         )
-        for fireplace in intents.fireplaces
-        if fireplace.room_slug == room
+    for room, sources in statuses.items():
+        rooms.setdefault(room, []).extend(_commanded_source(source) for source in sources)
+    return {room: tuple(sources) for room, sources in rooms.items()}
+
+
+def _commanded_source(source: SourceStatus) -> SourceOverview:
+    return SourceOverview(
+        slug=source.slug,
+        name=source.name,
+        kind=source.kind,
+        live=source.live,
+        lit_until=None,
+        burning=False,
+        room=source.room,
+        device=source.device,
+        priority=source.priority,
+        available=source.available,
+        error_code=source.error_code,
+        error=source.error,
+        on=source.on,
+        setpoint=source.setpoint,
+        level=source.level,
+        temperature=source.temperature,
+        target_on=source.target_on,
+        target_setpoint=source.target_setpoint,
+        commands_live=source.commands_live,
+        held_until=source.held_until,
+        shed=source.shed,
+        pending=source.pending,
     )
+
+
+def _source_drawing(source: SourceOverview) -> bool | None:
+    if not source.available or source.on is None or source.setpoint is None:
+        return None
+
+    return source.on and source.temperature is not None and source.temperature < source.setpoint
 
 
 def _with_climate(room: RoomOverview, climate: RoomClimateSettings | None, intent: RoomIntent | None) -> RoomOverview:

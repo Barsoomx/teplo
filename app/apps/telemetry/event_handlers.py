@@ -12,6 +12,9 @@ from apps.climate.domain.events import (
     OptimalStartDryRun,
     RoomOverridden,
     RoomOverrideCleared,
+    SourceCommandFailed,
+    SourceCommandIssued,
+    SourceManualChange,
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
@@ -92,6 +95,21 @@ def journal_zone_boost(event: ZoneBoosted) -> None:
 @domain_event_handler(ZoneManualChange)
 def journal_zone_manual_change(event: ZoneManualChange) -> None:
     _journal('zone_manual_change', event.zone, event)
+
+
+@domain_event_handler(SourceCommandIssued)
+def journal_source_command(event: SourceCommandIssued) -> None:
+    _journal('source_command_issued', event.source, event)
+
+
+@domain_event_handler(SourceCommandFailed)
+def journal_source_command_failure(event: SourceCommandFailed) -> None:
+    _journal('source_command_failed', event.source, event)
+
+
+@domain_event_handler(SourceManualChange)
+def journal_source_manual_change(event: SourceManualChange) -> None:
+    _journal('source_manual_change', event.source, event)
 
 
 @domain_event_handler(AirControlDryRun)

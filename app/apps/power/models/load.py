@@ -33,6 +33,14 @@ class Load(models.Model):
         related_name='load',
         limit_choices_to=SHEDDABLE_PLUGS,
     )
+    heat_source = models.OneToOneField(
+        'climate.HeatSource',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='load',
+        limit_choices_to={'device__isnull': False},
+    )
     priority = models.PositiveIntegerField(unique=True, validators=[MinValueValidator(PRIORITY_MIN)])
     phase = models.CharField(max_length=16, choices=PHASE_CHOICES, default=LoadPhase.UNKNOWN.value)
     nominal_amps = models.DecimalField(
@@ -70,10 +78,26 @@ class Load(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=(
-                    models.Q(kind=LoadKind.ZONE.value, zone__isnull=False, device__isnull=True)
-                    | models.Q(kind=LoadKind.PLUG.value, zone__isnull=True, device__isnull=False)
+                    models.Q(
+                        kind=LoadKind.ZONE.value,
+                        zone__isnull=False,
+                        device__isnull=True,
+                        heat_source__isnull=True,
+                    )
+                    | models.Q(
+                        kind=LoadKind.PLUG.value,
+                        zone__isnull=True,
+                        device__isnull=False,
+                        heat_source__isnull=True,
+                    )
+                    | models.Q(
+                        kind=LoadKind.SOURCE.value,
+                        zone__isnull=True,
+                        device__isnull=True,
+                        heat_source__isnull=False,
+                    )
                 ),
-                name='load_controls_its_zone_or_its_plug',
+                name='load_controls_one_zone_plug_or_source',
             ),
             models.CheckConstraint(condition=models.Q(priority__gte=1), name='load_priority_positive'),
         ]

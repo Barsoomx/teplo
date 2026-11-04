@@ -29,6 +29,10 @@ class GuardBook:
         with self._lock:
             return frozenset() if self._state is None else self._state.held_zones
 
+    def held_sources(self) -> frozenset[str]:
+        with self._lock:
+            return frozenset() if self._state is None else self._state.held_sources
+
     def last_permit_at(self) -> float | None:
         with self._lock:
             return self._last_permit_at
@@ -88,10 +92,10 @@ class GuardBook:
         with self._lock:
             return self._waiting
 
-    def note_waiting(self, waiting: frozenset[str]) -> frozenset[str]:
+    def note_waiting(self, scope: frozenset[str], waiting: frozenset[str]) -> frozenset[str]:
         with self._lock:
             began = waiting - self._waiting
-            self._waiting = waiting
+            self._waiting = (self._waiting - scope) | waiting
             return began
 
 

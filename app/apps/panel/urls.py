@@ -9,6 +9,7 @@ from apps.panel.views.api.v1.phases import PhasesApiView
 from apps.panel.views.api.v1.plugs import PlugsApiView
 from apps.panel.views.api.v1.rooms import RoomsApiView
 from apps.panel.views.api.v1.sensors import SensorsApiView
+from apps.panel.views.api.v1.sources import SourcesApiView
 from apps.panel.views.api.v1.zones import ZonesApiView
 from apps.panel.views.boost_zone import BoostZoneView
 from apps.panel.views.change_comfort_window import ChangeComfortWindowView
@@ -69,6 +70,7 @@ urlpatterns = [
     path('logout/', LogoutView.as_view(), name='logout'),
     path('api/v1/zones/', ZonesApiView.as_view(), name='api-v1-zones'),
     path('api/v1/rooms/', RoomsApiView.as_view(), name='api-v1-rooms'),
+    path('api/v1/sources/', SourcesApiView.as_view(), name='api-v1-sources'),
     path('api/v1/plugs/', PlugsApiView.as_view(), name='api-v1-plugs'),
     path('api/v1/loads/', LoadsApiView.as_view(), name='api-v1-loads'),
     path('api/v1/sensors/', SensorsApiView.as_view(), name='api-v1-sensors'),

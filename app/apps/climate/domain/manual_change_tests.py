@@ -4,8 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from apps.climate.domain.manual_change import ManualChange, teplo_window, thermostat_change
-from apps.devices.domain.readings import ReadingPair, ThermostatMode, ThermostatState
+from apps.climate.domain.manual_change import ManualChange, source_change, teplo_window, thermostat_change
+from apps.devices.domain.readings import ClimateMode, ClimateUnitState, ReadingPair, ThermostatMode, ThermostatState
 
 NOW = datetime(2026, 11, 4, 16, 40, tzinfo=UTC)
 FIRST_POLL = 1000.0
@@ -17,6 +17,25 @@ STATE = ThermostatState(
     heating=True,
     read_at=NOW,
 )
+
+
+CONVECTOR = ClimateUnitState(
+    mode=ClimateMode.HEAT,
+    target=Decimal(22),
+    room_temperature=Decimal(21),
+    read_at=NOW,
+    level='High',
+)
+
+
+def _source_pair(after: ClimateUnitState, *, span: float = 30.0) -> ReadingPair[ClimateUnitState]:
+    return ReadingPair(
+        slug='heater-office',
+        before=CONVECTOR,
+        after=after,
+        before_moment=FIRST_POLL,
+        after_moment=FIRST_POLL + span,
+    )
 
 
 def _pair(after: ThermostatState, *, span: float = 30.0) -> ReadingPair[ThermostatState]:
@@ -82,3 +101,38 @@ def test_change_counts_only_between_polls_at_most_ninety_seconds_apart(span: flo
 
 def test_teplo_window_runs_from_a_minute_before_the_first_poll_to_the_second() -> None:
     assert teplo_window(_pair(STATE, span=45.0)) == (FIRST_POLL - 60, FIRST_POLL + 45)
+
+
+@pytest.mark.parametrize(
+    ('after', 'expected'),
+    [
+        (replace(CONVECTOR, mode=ClimateMode.OFF), ManualChange(power=(True, False), mode=None, setpoint=None)),
+        (
+            replace(CONVECTOR, target=Decimal(25)),
+            ManualChange(power=None, mode=None, setpoint=(Decimal(22), Decimal(25))),
+        ),
+    ],
+    ids=['power', 'setpoint'],
+)
+def test_change_of_a_heat_source_counts_its_power_and_its_setpoint(
+    after: ClimateUnitState,
+    expected: ManualChange,
+) -> None:
+    assert source_change(_source_pair(after)) == expected
+
+
+@pytest.mark.parametrize(
+    'after',
+    [
+        replace(CONVECTOR, level='Low'),
+        replace(CONVECTOR, room_temperature=Decimal(23)),
+        CONVECTOR,
+    ],
+    ids=['level', 'own_temperature', 'nothing'],
+)
+def test_level_and_own_temperature_of_a_heat_source_never_count(after: ClimateUnitState) -> None:
+    assert source_change(_source_pair(after)) is None
+
+
+def test_change_of_a_heat_source_counts_only_between_polls_at_most_ninety_seconds_apart() -> None:
+    assert source_change(_source_pair(replace(CONVECTOR, target=Decimal(25)), span=90.5)) is None

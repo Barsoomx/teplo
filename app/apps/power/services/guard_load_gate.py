@@ -1,10 +1,12 @@
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime
 
 import structlog
 
 from apps.climate.domain.drive import StartAnswer, ZoneStart
+from apps.climate.domain.fast_source import SourceStart
 from apps.power.domain.control import starts_live
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardState, start_view
@@ -15,6 +17,12 @@ from apps.power.domain.start_gate import StartDecision, StartRequest
 from apps.power.services.guard_book import GuardBook, guard_book
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True, kw_only=True)
+class KeyedStart:
+    key: str
+    writes_live: bool
 
 
 class GuardLoadGate:
@@ -29,6 +37,9 @@ class GuardLoadGate:
     def held_zones(self) -> frozenset[str]:
         return self._book.held_zones()
 
+    def held_sources(self) -> frozenset[str]:
+        return self._book.held_sources()
+
     def gated_zones(self) -> frozenset[str]:
         state = self._book.state()
         if state is None:
@@ -40,15 +51,46 @@ class GuardLoadGate:
             if record.zone_slug is not None and starts_live(state.loads.control, record, writes_live=True)
         )
 
+    def gated_sources(self) -> frozenset[str]:
+        state = self._book.state()
+        if state is None:
+            return frozenset()
+
+        return frozenset(
+            record.source_slug
+            for record in state.loads.records
+            if record.source_slug is not None and starts_live(state.loads.control, record, writes_live=True)
+        )
+
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]:
         state = self._book.state()
         if state is None:
             return {}
 
+        records = {record.zone_slug: record for record in state.loads.records if record.zone_slug is not None}
+        keyed = [KeyedStart(key=start.zone, writes_live=start.writes_live) for start in starts]
+        return self._ask(state, keyed, records, now)
+
+    def ask_source_starts(self, starts: Sequence[SourceStart], now: datetime) -> dict[str, StartAnswer]:
+        state = self._book.state()
+        if state is None:
+            return {}
+
+        records = {record.source_slug: record for record in state.loads.records if record.source_slug is not None}
+        keyed = [KeyedStart(key=start.source, writes_live=start.writes_live) for start in starts]
+        return self._ask(state, keyed, records, now)
+
+    def _ask(
+        self,
+        state: GuardState,
+        starts: Sequence[KeyedStart],
+        records: Mapping[str, LoadRecord],
+        now: datetime,
+    ) -> dict[str, StartAnswer]:
         at = self._clock()
         thresholds = state.loads.control.thresholds
         live_view = start_view(state, state.shedding, live=True)
-        requests = _requests(state, starts, live_view.loads)
+        requests = _requests(state, starts, records, live_view.loads)
         decisions = self._book.serve_starts(
             tuple(requests.values()),
             meter=meter_condition(state.phases.meter, at, thresholds),
@@ -58,38 +100,39 @@ class GuardLoadGate:
             thresholds=thresholds,
         )
         began = self._book.note_waiting(
+            frozenset(record.slug for record in records.values()),
             frozenset(slug for slug, decision in decisions.items() if not decision.granted),
         )
-        records = {record.slug: record for record in state.loads.records}
+        by_slug = {record.slug: record for record in state.loads.records}
         return {
-            zone: _answer(
-                records[request.load.slug],
+            key: _answer(
+                by_slug[request.load.slug],
                 request,
                 decisions[request.load.slug],
                 began=request.load.slug in began,
                 estimated=state.loads.control.estimate.phase,
                 now=now,
             )
-            for zone, request in requests.items()
+            for key, request in requests.items()
         }
 
 
 def _requests(
     state: GuardState,
-    starts: Sequence[ZoneStart],
+    starts: Sequence[KeyedStart],
+    records: Mapping[str, LoadRecord],
     statuses: Sequence[LoadStatus],
 ) -> dict[str, StartRequest]:
-    records = {record.zone_slug: record for record in state.loads.records if record.zone_slug is not None}
     by_slug = {status.slug: status for status in statuses}
     requests: dict[str, StartRequest] = {}
     for start in starts:
-        record = records.get(start.zone)
+        record = records.get(start.key)
         if record is None:
             continue
 
         live = starts_live(state.loads.control, record, writes_live=start.writes_live)
         if live or state.phases.meter.seen:
-            requests[start.zone] = StartRequest(
+            requests[start.key] = StartRequest(
                 load=by_slug[record.slug],
                 live=live,
                 handed_back=state.shedding.handed_back.get(record.slug),

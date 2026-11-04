@@ -8,7 +8,8 @@ from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecor
 from apps.climate.domain.comfort_windows import RoomWeek
 from apps.climate.domain.control import ClimateGates
 from apps.climate.domain.drive import StartAnswer, ZoneStart
-from apps.climate.domain.heat_sources import FireplaceRecord
+from apps.climate.domain.fast_source import SourceStart
+from apps.climate.domain.heat_sources import FireplaceRecord, SourceSettings
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningEntry, ZoneLearningRecord
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
@@ -17,6 +18,7 @@ from apps.climate.domain.room_climate import (
     RoomOverride,
 )
 from apps.climate.domain.room_intent import GuestsRecord
+from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.write_guard import WriteReservation
 from apps.climate.domain.zone import ComfortWindow, ZoneSettings
 from apps.climate.domain.zone_config import ZoneConfig, ZoneConfigRecord
@@ -44,6 +46,10 @@ class ClimateGatesStore(Protocol):
     def gates(self) -> ClimateGates: ...
 
 
+class ClimateSensorsStore(Protocol):
+    def sensors(self) -> ClimateSensors: ...
+
+
 class ZoneLearningStore(Protocol):
     def all_records(self) -> dict[str, ZoneLearningRecord]: ...
 
@@ -66,6 +72,26 @@ class FireplaceMarkStore(Protocol):
     def fireplaces_for_update(self, room: str | None) -> list[FireplaceRecord]: ...
 
     def save_lit_until(self, slug: str, until: datetime | None) -> None: ...
+
+
+class HeatSourceStore(Protocol):
+    def commanded_settings(self) -> list[SourceSettings]: ...
+
+    def mark_commanded(self, slug: str, at: datetime, *, power: bool, setpoint: Decimal | None) -> None: ...
+
+    def mark_dry_run(self, slug: str, at: datetime) -> None: ...
+
+
+class SourceHoldStore(Protocol):
+    def hold_by_hand(self, slug: str, until: datetime) -> None: ...
+
+
+class SourceLoadGate(Protocol):
+    def held_sources(self) -> frozenset[str]: ...
+
+    def gated_sources(self) -> frozenset[str]: ...
+
+    def ask_source_starts(self, starts: Sequence[SourceStart], now: datetime) -> dict[str, StartAnswer]: ...
 
 
 class LoadGate(Protocol):
@@ -103,6 +129,42 @@ class WriteGate(Protocol):
     def resume(self, key: str, at: datetime, *, elapsed: timedelta) -> None: ...
 
     def clearing(self, keys: Collection[str]) -> AbstractContextManager[frozenset[str]]: ...
+
+
+class SourceWrites(Protocol):
+    def allows(
+        self,
+        key: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+        interval: timedelta,
+    ) -> bool: ...
+
+    def reserve(
+        self,
+        key: str,
+        at: datetime,
+        *,
+        stamped_at: datetime | None,
+        read_at: float,
+        interval: timedelta,
+    ) -> WriteReservation | None: ...
+
+    def override(self, key: str, at: datetime) -> WriteReservation: ...
+
+    def written_between(self, key: str, since: float, until: float) -> bool: ...
+
+    def stamping(self, reservation: WriteReservation) -> AbstractContextManager[None]: ...
+
+    def stored(self, reservation: WriteReservation) -> None: ...
+
+    def write(self, reservation: WriteReservation, command: Callable[[], None]) -> bool: ...
+
+    def send(self, reservation: WriteReservation, command: Callable[[], None]) -> None: ...
+
+    def resume(self, key: str, at: datetime, *, elapsed: timedelta) -> None: ...
 
 
 class ZoneConfigStore(Protocol):

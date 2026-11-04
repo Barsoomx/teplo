@@ -57,6 +57,20 @@ def m_fireplace_settings_use_case(
         yield use_case
 
 
+@pytest.fixture
+def m_convector_settings_use_case(settings_page: GetSettingsPageOutputDTO) -> Iterator[MagicMock]:
+    bathroom, bedroom = settings_page.rooms
+    office = replace(
+        bathroom,
+        slug='office',
+        name='Кабинет',
+        sources=(SourceGate(id=9, name='Конвектор: кабинет', kind=HeatSourceKind.HEATER, live=False),),
+    )
+    with mock.patch('apps.panel.views.settings_page.GetSettingsPageUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(settings_page, rooms=(office, bedroom))
+        yield use_case
+
+
 def test_settings_page_shows_the_settings_of_every_zone(
     f_russian_client: Client,
     m_settings_use_case: MagicMock,
@@ -241,3 +255,21 @@ def test_settings_page_shows_the_gate_of_manual_changes_on_the_climate_card(
         'href="/admin/climate/climatesettings/1/change/"' in card,
         m_manual_hold_settings_use_case.init.call_count,
     ) == (True, True, 1)
+
+
+def test_settings_page_shows_the_gate_of_a_heat_source_under_its_name(
+    f_russian_client: Client,
+    m_convector_settings_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/settings/')
+
+    content = response.content.decode()
+    card_at = content.index('id="room-settings-office"')
+    card = content[card_at : content.index('</article>', card_at)]
+    gate_at = card.index('Конвектор: кабинет')
+    assert (
+        'Наблюдение' in card[gate_at : card.index('</p>', gate_at)],
+        'href="/admin/climate/heatsource/9/change/"' in card,
+        'Детектор камина' in card,
+        m_convector_settings_use_case.init.call_count,
+    ) == (True, True, False, 1)

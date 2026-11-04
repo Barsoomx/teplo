@@ -2,7 +2,6 @@ from decimal import Decimal
 from typing import Protocol
 
 from apps.devices.domain.readings import (
-    ClimateMode,
     ClimateUnitState,
     EvChargerState,
     PhaseCurrents,
@@ -42,7 +41,11 @@ class PhaseMeter(Protocol):
 class ClimateUnit(Protocol):
     def read_state(self) -> ClimateUnitState: ...
 
-    def set_target(self, mode: ClimateMode, target: Decimal) -> None: ...
+
+class ControllableClimateUnit(ClimateUnit, Protocol):
+    def set_power(self, power: bool) -> None: ...
+
+    def set_setpoint(self, setpoint: Decimal) -> None: ...
 
 
 class EvCharger(Protocol):
@@ -61,3 +64,11 @@ class PlugProvider(Protocol):
 
 class SwitchablePlugProvider(Protocol):
     def switchable_plug(self, slug: str) -> SwitchablePlug: ...
+
+
+class ClimateUnitProvider(Protocol):
+    def climate_unit(self, slug: str) -> ClimateUnit: ...
+
+
+class ControllableClimateUnitProvider(Protocol):
+    def controllable_climate_unit(self, slug: str) -> ControllableClimateUnit: ...

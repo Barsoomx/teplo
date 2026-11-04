@@ -17,6 +17,9 @@ from apps.climate.domain.events import (
     OptimalStartDryRun,
     RoomOverridden,
     RoomOverrideCleared,
+    SourceCommandFailed,
+    SourceCommandIssued,
+    SourceManualChange,
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
@@ -76,6 +79,9 @@ from apps.telemetry.event_handlers import (
     journal_phase_overload,
     journal_room_overridden,
     journal_room_override_cleared,
+    journal_source_command,
+    journal_source_command_failure,
+    journal_source_manual_change,
     journal_start_would_wait_dry_run,
     journal_zone_boost,
     journal_zone_command,
@@ -201,6 +207,84 @@ def test_manual_change_on_a_thermostat_is_journaled_with_its_zone_as_the_subject
         },
         NOW,
     )
+
+
+@pytest.mark.parametrize(
+    ('journal', 'event', 'kind', 'payload'),
+    [
+        (
+            journal_source_command,
+            SourceCommandIssued(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=True,
+                setpoint=Decimal(22),
+                dry_run=True,
+                occurred_at=NOW,
+            ),
+            'source_command_issued',
+            {
+                'source': 'convector-office',
+                'name': 'Конвектор: кабинет',
+                'power': True,
+                'setpoint': '22',
+                'dry_run': True,
+            },
+        ),
+        (
+            journal_source_command_failure,
+            SourceCommandFailed(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=None,
+                setpoint=Decimal(19),
+                error='timeout',
+                error_code='device_unavailable',
+                occurred_at=NOW,
+            ),
+            'source_command_failed',
+            {
+                'source': 'convector-office',
+                'name': 'Конвектор: кабинет',
+                'power': None,
+                'setpoint': '19',
+                'error': 'timeout',
+                'error_code': 'device_unavailable',
+            },
+        ),
+        (
+            journal_source_manual_change,
+            SourceManualChange(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=None,
+                setpoint=(Decimal(22), Decimal(25)),
+                until=NOW + timedelta(hours=2),
+                dry_run=False,
+                occurred_at=NOW,
+            ),
+            'source_manual_change',
+            {
+                'source': 'convector-office',
+                'name': 'Конвектор: кабинет',
+                'power': None,
+                'setpoint': ['22', '25'],
+                'until': '2026-10-29T08:00:00Z',
+                'dry_run': False,
+            },
+        ),
+    ],
+    ids=['command', 'failed_command', 'manual_change'],
+)
+def test_heat_source_entries_are_journaled_with_the_source_as_the_subject(
+    journal: Callable[..., None],
+    event: DomainEvent,
+    kind: str,
+    payload: dict[str, object],
+) -> None:
+    journal(event)
+
+    assert _entry() == (kind, 'convector-office', payload, NOW)
 
 
 def test_air_control_dry_run_is_journaled_with_would_be_state() -> None:

@@ -1,5 +1,5 @@
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -7,11 +7,14 @@ from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.climate.factories import ZoneFactory
-from apps.climate.models import Zone
+from apps.climate.models import HeatSource, Zone
+from apps.devices.domain.kinds import DeviceDriver, DeviceKind
+from apps.devices.factories import DeviceFactory
+from apps.devices.models import Device
 from apps.power.domain.errors import LoadNotFoundError
 from apps.power.domain.load_config import LoadConfig, LoadConfigRecord
 from apps.power.domain.loads import LearnedPhase, LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
-from apps.power.factories import PlugLoadFactory, ZoneLoadFactory
+from apps.power.factories import PlugLoadFactory, SourceLoadFactory, ZoneLoadFactory
 from apps.power.models import Load
 from apps.power.repositories.load import LoadRepository
 
@@ -52,6 +55,49 @@ KITCHEN = LoadRecord(
     live=False,
     shed=None,
 )
+
+CONVECTOR = LoadRecord(
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    zone_slug=None,
+    device_slug='heater-office',
+    priority=8,
+    phase=LoadPhase.L2,
+    nominal_amps=None,
+    learned=None,
+    live=False,
+    shed=None,
+    last_command_at=SHED_AT,
+    source_slug='convector-office',
+    write_interval=timedelta(minutes=5),
+    rated_amps=Decimal('8.7'),
+)
+
+
+@pytest.fixture
+def f_convector() -> Load:
+    return SourceLoadFactory.create(
+        slug='convector-office',
+        name='Конвектор: кабинет',
+        heat_source__slug='convector-office',
+        heat_source__device__slug='heater-office',
+        heat_source__min_write_minutes=5,
+        heat_source__rated_watts=2000,
+        heat_source__last_command_at=SHED_AT,
+        priority=8,
+        phase=LoadPhase.L2,
+    )
+
+
+@pytest.fixture
+def f_plug() -> Device:
+    return DeviceFactory.create(slug='plug-boiler-2f', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_SWITCHABLE_PLUG)
+
+
+@pytest.fixture
+def live_convector(f_convector: Load) -> None:
+    HeatSource.objects.filter(load=f_convector).update(live=True)
 
 
 @pytest.fixture
@@ -176,6 +222,19 @@ def test_live_zone_slugs_are_the_zones_of_loads_under_live_control() -> None:
     assert LoadRepository.live_zone_slugs() == frozenset({'hallway'})
 
 
+@pytest.mark.usefixtures('f_convector', 'f_kitchen')
+def test_record_of_a_heat_source_carries_its_unit_its_stamp_its_interval_and_its_rated_current() -> None:
+    assert LoadRepository.all_records() == [KITCHEN, CONVECTOR]
+
+
+@pytest.mark.usefixtures('live_convector', 'f_kitchen', 'hallway_under_live_control')
+def test_live_source_slugs_are_the_heat_sources_of_loads_whose_own_gate_is_live() -> None:
+    assert (LoadRepository.live_source_slugs(), LoadRepository.live_zone_slugs()) == (
+        frozenset({'convector-office'}),
+        frozenset({'hallway'}),
+    )
+
+
 @pytest.mark.usefixtures('kitchen_written_by_teplo')
 def test_record_of_a_zone_carries_the_last_write_stamp_of_its_zone() -> None:
     assert LoadRepository.all_records() == [replace(KITCHEN, last_command_at=SHED_AT)]
@@ -253,12 +312,17 @@ def test_writes_for_a_load_that_is_gone_change_nothing() -> None:
 
 @pytest.mark.parametrize(
     'overrides',
-    [{'device': None}, {'kind': LoadKind.ZONE}],
-    ids=['plug_load_without_a_plug', 'zone_load_without_a_zone'],
+    [{'device': None}, {'kind': LoadKind.ZONE}, {'kind': LoadKind.SOURCE}],
+    ids=['plug_load_without_a_plug', 'zone_load_without_a_zone', 'source_load_without_a_heat_source'],
 )
 def test_database_refuses_a_load_without_what_its_kind_controls(overrides: dict[str, object]) -> None:
     with pytest.raises(IntegrityError):
         PlugLoadFactory.create(**overrides)
+
+
+def test_database_refuses_a_load_of_a_heat_source_and_a_plug_at_once(f_plug: Device) -> None:
+    with pytest.raises(IntegrityError):
+        SourceLoadFactory.create(device=f_plug)
 
 
 def test_database_refuses_a_load_of_a_zone_and_a_plug_at_once(f_hallway_zone: Zone) -> None:

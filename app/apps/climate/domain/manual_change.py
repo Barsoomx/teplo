@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
 
-from apps.devices.domain.readings import ReadingPair, ThermostatState
+from apps.devices.domain.readings import ClimateUnitState, ReadingPair, ThermostatState
 
 MANUAL_PAIR_SPAN = timedelta(seconds=90)
 WRITE_SETTLE = timedelta(seconds=60)
@@ -20,7 +20,7 @@ class ManualChange:
 
 
 def thermostat_change(pair: ReadingPair[ThermostatState]) -> ManualChange | None:
-    if pair.after_moment - pair.before_moment > MANUAL_PAIR_SPAN.total_seconds():
+    if not _consecutive(pair):
         return None
 
     before, after = pair.before, pair.after
@@ -32,5 +32,22 @@ def thermostat_change(pair: ReadingPair[ThermostatState]) -> ManualChange | None
     return None if change.is_empty else change
 
 
-def teplo_window(pair: ReadingPair[ThermostatState]) -> tuple[float, float]:
+def source_change(pair: ReadingPair[ClimateUnitState]) -> ManualChange | None:
+    if not _consecutive(pair):
+        return None
+
+    before, after = pair.before, pair.after
+    change = ManualChange(
+        power=None if before.on == after.on else (before.on, after.on),
+        mode=None,
+        setpoint=None if before.target == after.target else (before.target, after.target),
+    )
+    return None if change.is_empty else change
+
+
+def teplo_window[TState](pair: ReadingPair[TState]) -> tuple[float, float]:
     return pair.before_moment - WRITE_SETTLE.total_seconds(), pair.after_moment
+
+
+def _consecutive[TState](pair: ReadingPair[TState]) -> bool:
+    return pair.after_moment - pair.before_moment <= MANUAL_PAIR_SPAN.total_seconds()

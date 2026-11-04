@@ -11,10 +11,23 @@ from django.core.management import call_command
 from django.utils import timezone
 
 from apps.climate.models import Zone
-from apps.devices.domain.readings import Phase, PlugState, TemperatureReading, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateUnitState,
+    Phase,
+    PlugState,
+    TemperatureReading,
+    ThermostatMode,
+    ThermostatState,
+)
 from apps.devices.models import Device
 from apps.devices.services.phase_meter_store import phase_meter_store
-from apps.devices.services.state_store import plug_state_store, temperature_state_store, thermostat_state_store
+from apps.devices.services.state_store import (
+    climate_unit_state_store,
+    plug_state_store,
+    temperature_state_store,
+    thermostat_state_store,
+)
 from apps.house.models import Floor, Room
 from apps.power.domain.ev_detection import EvWatch
 from apps.power.domain.loads import LoadPhase
@@ -42,6 +55,7 @@ ENGLISH_DEVICE_NAMES = {
     'air-second-floor': 'Bedroom air',
     'outdoor': 'Outdoor',
     'phase-meter': 'Phase meter',
+    'heater-office': 'Office convector',
 }
 ENGLISH_FLOOR_NAMES = {
     'floor-1': '1st floor',
@@ -54,6 +68,7 @@ ENGLISH_ROOM_NAMES = {
     'office': 'Office',
     'bathroom-2f': 'Bathroom',
 }
+CONVECTOR = 'heater-office'
 READINGS = {
     'thermostat-living-room': ('28.0', '27.6'),
     'thermostat-kitchen': ('28.0', '25.9'),
@@ -317,5 +332,15 @@ def _read_devices() -> None:
                 read_at=read_at,
             ),
         )
+    climate_unit_state_store.record_state(
+        CONVECTOR,
+        ClimateUnitState(
+            mode=ClimateMode.HEAT,
+            target=Decimal(22),
+            room_temperature=Decimal(21),
+            read_at=read_at,
+            level='High',
+        ),
+    )
     for phase, amps in PHASE_CURRENTS.items():
         phase_meter_store.record_current(PHASE_METER, phase, Decimal(amps), read_at)

@@ -13,7 +13,7 @@ from apps.devices.domain.events import DeviceAvailabilityChanged
 from apps.devices.domain.readings import ReadingPair, ThermostatState
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.driver_registry import driver_registry
-from apps.devices.services.state_store import ThermostatSnapshot, ThermostatStateStore, thermostat_state_store
+from apps.devices.services.state_store import ThermostatStateStore, reading_pair, thermostat_state_store
 
 logger = structlog.get_logger(__name__)
 
@@ -66,7 +66,7 @@ class PollThermostatsUseCase(BaseUseCase[PollThermostatsInputDTO, PollThermostat
                 failed.append(slug)
             else:
                 polled.append(slug)
-                pair = _pair(before, state, seen_at=seen_at, after_moment=self._clock())
+                pair = reading_pair(before, state, seen_at=seen_at, after_moment=self._clock())
                 if pair is not None:
                     pairs.append(pair)
             self._report_availability(slug, input_dto.now)
@@ -103,22 +103,3 @@ class PollThermostatsUseCase(BaseUseCase[PollThermostatsInputDTO, PollThermostat
                 occurred_at=now,
             ),
         )
-
-
-def _pair(
-    before: ThermostatSnapshot,
-    after: ThermostatState,
-    *,
-    seen_at: float,
-    after_moment: float,
-) -> ReadingPair[ThermostatState] | None:
-    if before.state is None or before.error_code is not None or before.age is None:
-        return None
-
-    return ReadingPair(
-        slug=before.slug,
-        before=before.state,
-        after=after,
-        before_moment=seen_at - before.age.total_seconds(),
-        after_moment=after_moment,
-    )

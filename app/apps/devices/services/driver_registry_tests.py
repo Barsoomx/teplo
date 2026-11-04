@@ -4,8 +4,20 @@ import pytest
 
 from apps.core.domain.errors import SecretMissingError
 from apps.core.services.secrets import DeviceSecret, SecretsFile
-from apps.devices.domain.capabilities import FloorThermostat, MeteredPlug, PhaseMeter, SwitchablePlug, TemperatureSensor
-from apps.devices.domain.errors import DriverNotImplementedError, PlugNotSwitchableError
+from apps.devices.domain.capabilities import (
+    ClimateUnit,
+    ControllableClimateUnit,
+    FloorThermostat,
+    MeteredPlug,
+    PhaseMeter,
+    SwitchablePlug,
+    TemperatureSensor,
+)
+from apps.devices.domain.errors import (
+    ClimateUnitNotControllableError,
+    DriverNotImplementedError,
+    PlugNotSwitchableError,
+)
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.drivers.esphome_phase_meter import EsphomePhaseMeterDriver
 from apps.devices.drivers.esphome_temperature import EsphomeTemperatureDriver
@@ -15,7 +27,13 @@ from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.driver_registry import DriverRegistry
 from apps.devices.services.phase_meter_store import PhaseMeterStore
 from apps.devices.services.state_store import TemperatureStateStore
-from apps.devices.stubs import FloorThermostatStub, MeteredPlugStub, SwitchablePlugStub
+from apps.devices.stubs import (
+    ClimateUnitStub,
+    ControllableClimateUnitStub,
+    FloorThermostatStub,
+    MeteredPlugStub,
+    SwitchablePlugStub,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -34,6 +52,14 @@ def _stub_switchable_plug_factory(_secret: DeviceSecret) -> SwitchablePlug:
     return SwitchablePlugStub(state=None)
 
 
+def _stub_climate_unit_factory(_secret: DeviceSecret) -> ClimateUnit:
+    return ClimateUnitStub(state=None)
+
+
+def _stub_controllable_climate_unit_factory(_secret: DeviceSecret) -> ControllableClimateUnit:
+    return ControllableClimateUnitStub(state=None)
+
+
 def _temperature_sensor_factory(slug: str) -> TemperatureSensor:
     return EsphomeTemperatureDriver(slug=slug, store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)))
 
@@ -48,6 +74,8 @@ def f_registry() -> DriverRegistry:
     DeviceFactory(slug='thermostat-kitchen')
     DeviceFactory(slug='thermostat-without-secret')
     DeviceFactory(slug='climate-bedroom', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.UNSUPPORTED)
+    DeviceFactory(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER)
+    DeviceFactory(slug='heater-hall', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.ESPHOME_TEMPERATURE)
     DeviceFactory(slug='plug-boiler-1f', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_SWITCHABLE_PLUG)
     DeviceFactory(slug='plug-boiler-2f', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG)
     DeviceFactory(slug='plug-washer', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_PLUG, monitor_only=True)
@@ -58,6 +86,8 @@ def f_registry() -> DriverRegistry:
         devices={
             'thermostat-kitchen': SECRET,
             'climate-bedroom': SECRET,
+            'heater-office': SECRET,
+            'heater-hall': SECRET,
             'plug-boiler-1f': SECRET,
             'plug-boiler-2f': SECRET,
             'plug-washer': SECRET,
@@ -72,6 +102,8 @@ def f_registry() -> DriverRegistry:
         switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: _stub_switchable_plug_factory},
         temperature_sensor_factories={DeviceDriver.ESPHOME_TEMPERATURE: _temperature_sensor_factory},
         phase_meter_factories={DeviceDriver.ESPHOME_PHASE_METER: _phase_meter_factory},
+        climate_unit_factories={DeviceDriver.ESPHOME_TEMPERATURE: _stub_climate_unit_factory},
+        controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: _stub_controllable_climate_unit_factory},
     )
 
 
@@ -80,6 +112,12 @@ def f_plug_read_before_it_became_switchable(f_registry: DriverRegistry) -> Meter
     plug = f_registry.plug('plug-boiler-2f')
     Device.objects.filter(slug='plug-boiler-2f').update(driver=DeviceDriver.TUYA_SWITCHABLE_PLUG)
     return plug
+
+
+@pytest.fixture
+def f_registry_with_a_monitor_only_heater(f_registry: DriverRegistry) -> DriverRegistry:
+    Device.objects.filter(slug='heater-hall').update(monitor_only=True)
+    return f_registry
 
 
 def test_thermostat_is_built_once_per_slug(f_registry: DriverRegistry) -> None:
@@ -192,3 +230,74 @@ def test_temperature_sensor_without_an_esphome_driver_raises(f_registry: DriverR
 def test_phase_meter_with_a_sensor_driver_raises(f_registry: DriverRegistry) -> None:
     with pytest.raises(DriverNotImplementedError):
         f_registry.phase_meter('air-kitchen')
+
+
+@pytest.mark.parametrize('slug', ['heater-office', 'heater-hall'], ids=['controllable', 'read_only'])
+def test_climate_unit_is_built_once_per_slug(f_registry: DriverRegistry, slug: str) -> None:
+    first = f_registry.climate_unit(slug)
+    second = f_registry.climate_unit(slug)
+
+    assert first is second
+
+
+@pytest.mark.parametrize(
+    ('slug', 'driver'),
+    [('heater-office', ControllableClimateUnitStub), ('heater-hall', ClimateUnitStub)],
+    ids=['controllable', 'read_only'],
+)
+def test_climate_unit_is_read_through_the_driver_its_device_declares(
+    f_registry: DriverRegistry,
+    slug: str,
+    driver: type[ClimateUnitStub],
+) -> None:
+    assert type(f_registry.climate_unit(slug)) is driver
+
+
+def test_controllable_climate_unit_is_the_driver_the_poll_reads(f_registry: DriverRegistry) -> None:
+    read = f_registry.climate_unit('heater-office')
+    commanded = f_registry.controllable_climate_unit('heater-office')
+
+    assert (commanded is read, f_registry.climate_unit('heater-office') is commanded) == (True, True)
+
+
+def test_poll_reads_the_climate_unit_built_for_commands(f_registry: DriverRegistry) -> None:
+    commanded = f_registry.controllable_climate_unit('heater-office')
+
+    assert f_registry.climate_unit('heater-office') is commanded
+
+
+@pytest.mark.parametrize(
+    ('slug', 'detail'),
+    [
+        ('heater-hall', 'climate unit heater-hall cannot be controlled: driver esphome_temperature only reads'),
+        ('climate-bedroom', 'climate unit climate-bedroom cannot be controlled: driver unsupported only reads'),
+        (
+            'thermostat-kitchen',
+            'climate unit thermostat-kitchen cannot be controlled: driver tuya_thermostat only reads',
+        ),
+    ],
+    ids=['read_only_driver', 'unsupported_driver', 'not_a_climate_unit'],
+)
+def test_controllable_climate_unit_refuses_a_device_whose_driver_only_reads(
+    f_registry: DriverRegistry,
+    slug: str,
+    detail: str,
+) -> None:
+    with pytest.raises(ClimateUnitNotControllableError) as raised:
+        f_registry.controllable_climate_unit(slug)
+
+    assert (raised.value.error_code, raised.value.detail) == ('climate_unit_not_controllable', detail)
+
+
+def test_controllable_climate_unit_refuses_a_monitor_only_device(
+    f_registry_with_a_monitor_only_heater: DriverRegistry,
+) -> None:
+    with pytest.raises(ClimateUnitNotControllableError) as raised:
+        f_registry_with_a_monitor_only_heater.controllable_climate_unit('heater-hall')
+
+    assert raised.value.detail == 'climate unit heater-hall cannot be controlled: it is monitor-only'
+
+
+def test_climate_unit_with_an_unsupported_driver_raises(f_registry: DriverRegistry) -> None:
+    with pytest.raises(DriverNotImplementedError):
+        f_registry.climate_unit('climate-bedroom')

@@ -73,6 +73,8 @@ from apps.notifications.services.command_replies import (
     room_line,
     room_names,
     setpoint_degrees,
+    source_state_line,
+    source_write_lines,
     zone_state_line,
     zone_write_lines,
 )
@@ -163,9 +165,10 @@ class ClimateCommandRunner:
         until = max((room.intent.until for room in guests if room.intent.until is not None), default=None)
         lines = [] if until is None else [_guests_line(until, guests, now)]
         for room in rooms:
-            if room.zones or room.air is not None:
+            if room.zones or room.air is not None or room.sources:
                 lines.append(room_line(room, now))
                 lines.extend(zone_state_line(zone) for zone in room.zones)
+                lines.extend(source_state_line(source) for source in room.sources)
         phases = self._phases.phases()
         if phases is not None:
             lines.append(phases_line(phases))
@@ -280,10 +283,10 @@ class ClimateCommandRunner:
         values = {'room': status.name, 'target': degrees(status.intent.target)}
         until = status.intent.until
         reply = str(AUTO_OPEN) % values if until is None else str(AUTO) % {**values, 'until': moment_text(until, now)}
-        return '\n'.join([reply, *zone_write_lines([status], now)])
+        return '\n'.join([reply, *_write_lines([status], now)])
 
     def _with_floors(self, reply: str, slug: str, now: datetime, *, clock_trusted: bool) -> str:
-        return '\n'.join([reply, *zone_write_lines(self._changed({slug}, now, clock_trusted=clock_trusted), now)])
+        return '\n'.join([reply, *_write_lines(self._changed({slug}, now, clock_trusted=clock_trusted), now)])
 
     def _changed(self, slugs: Collection[str], now: datetime, *, clock_trusted: bool) -> list[RoomStatus]:
         try:
@@ -306,3 +309,7 @@ class ClimateCommandRunner:
 
 def _guests_line(until: datetime, rooms: Sequence[RoomStatus], now: datetime) -> str:
     return str(GUESTS_SET) % {'until': moment_text(until, now), 'rooms': room_names(room.name for room in rooms)}
+
+
+def _write_lines(rooms: Sequence[RoomStatus], now: datetime) -> list[str]:
+    return [*zone_write_lines(rooms, now), *source_write_lines(rooms, now)]

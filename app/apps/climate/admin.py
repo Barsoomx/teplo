@@ -4,6 +4,7 @@ from enum import StrEnum
 from typing import Any
 
 from django import forms
+from django.conf import settings
 from django.contrib import admin, messages
 from django.db import OperationalError
 from django.db.models import QuerySet
@@ -12,12 +13,14 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.climate_config import start_offset_keeps_band
+from apps.climate.domain.heat_sources import COMMANDED_KINDS, HeatSourceKind
 from apps.climate.models import ClimateSettings, ComfortPeriod, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.climate.models.climate_settings import START_OFFSET_BELOW_MIN_BAND
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.usecases.reset_zone_learning import ResetZoneLearningInputDTO, ResetZoneLearningUseCase
+from apps.devices.domain.kinds import CONTROLLABLE_CLIMATE_UNIT_DRIVERS
 from apps.devices.models import Device
-from apps.power.models import Load
+from apps.power.models import Load, LoadSettings
 
 SHED_ZONE_FIELDS = ('slug', 'thermostat')
 OVERRIDE_FIELDS = ('override_target', 'override_until', 'override_source')
@@ -28,6 +31,21 @@ GUARD_FIELDS = (
     'second_floor_guard_hysteresis',
     'second_floor_guard_live',
 )
+SOURCE_FIELDS = ('slug', 'name', 'room', 'kind', 'device', 'priority', 'live')
+FIREPLACE_FIELDS = ('slug', 'name', 'room', 'kind', 'priority', 'live', 'lit_until')
+SOURCE_COMMAND_FIELDS = ('setpoint_bias', 'max_setpoint', 'min_outdoor', 'min_write_minutes', 'rated_watts')
+SOURCE_STAMP_FIELDS = ('manual_until', 'last_command_at', 'last_dry_run_at', 'commanded_power', 'commanded_setpoint')
+AIR_CONDITIONER_LATER = gettext_lazy('teplo has no driver for an air conditioner yet')
+SOURCE_BESIDE_A_FLOOR = gettext_lazy('This room has a heated floor: teplo commands no heat source beside it')
+HEATER_DRIVER_ONLY_READS = gettext_lazy('A heater needs a climate unit whose driver commands it, such as tuya_heater')
+COMMANDS_REACH_THE_DEVICE = gettext_lazy('Reach the device')
+COMMANDS_HELD_BACK = gettext_lazy('Held back by: %(gates)s')
+SOURCE_GATE = gettext_lazy('the source’s live')
+LOAD_MANAGEMENT_GATE = gettext_lazy('load management live')
+NO_LOAD = gettext_lazy('no load')
+LOAD_GATE = gettext_lazy('the load’s live')
+DRY_RUN_GATE = 'TEPLO_DRY_RUN'
+NO_COMMANDS = '—'
 AIR_SENSOR_OF_A_ZONE = gettext_lazy('This sensor is the air sensor of a zone')
 AIR_SENSOR_IN_ANOTHER_ROOM = gettext_lazy('This sensor is placed in another room')
 NAMES_SEPARATOR = ', '
@@ -210,8 +228,71 @@ class ZoneLearningAdmin(admin.ModelAdmin):
         return False
 
 
+class HeatSourceAdminForm(forms.ModelForm):
+    def clean(self) -> dict[str, Any]:
+        super().clean()
+        kind = self.cleaned_data.get('kind')
+        if kind == HeatSourceKind.AIR_CONDITIONER:
+            self.add_error('kind', AIR_CONDITIONER_LATER)
+        if kind not in COMMANDED_KINDS:
+            return self.cleaned_data
+
+        room = self.cleaned_data.get('room')
+        if room is not None and Zone.objects.filter(room=room).exists():
+            self.add_error('room', SOURCE_BESIDE_A_FLOOR)
+        device = self.cleaned_data.get('device')
+        if kind == HeatSourceKind.HEATER and device is not None and not _commands_climate_units(device.driver):
+            self.add_error('device', HEATER_DRIVER_ONLY_READS)
+        return self.cleaned_data
+
+
 @admin.register(HeatSource)
 class HeatSourceAdmin(admin.ModelAdmin):
-    list_display = ('name', 'room', 'kind', 'device', 'priority', 'live', 'lit_until')
+    form = HeatSourceAdminForm
+    list_display = ('name', 'room', 'kind', 'device', 'priority', 'live', 'lit_until', 'commands')
     list_editable = ('live',)
-    readonly_fields = ('lit_until',)
+    readonly_fields = ('lit_until', *SOURCE_STAMP_FIELDS)
+
+    def get_fields(self, request: HttpRequest, obj: HeatSource | None = None) -> tuple[str, ...]:  # noqa: ARG002
+        if obj is not None and obj.kind == HeatSourceKind.FIREPLACE:
+            return FIREPLACE_FIELDS
+
+        if obj is None:
+            return (*SOURCE_FIELDS, *SOURCE_COMMAND_FIELDS)
+
+        return (*SOURCE_FIELDS, *SOURCE_COMMAND_FIELDS, *SOURCE_STAMP_FIELDS)
+
+    @admin.display(description=gettext_lazy('Commands'))
+    def commands(self, obj: HeatSource) -> str:
+        if obj.kind not in COMMANDED_KINDS:
+            return NO_COMMANDS
+
+        held_back = _held_back_by(obj)
+        if not held_back:
+            return str(COMMANDS_REACH_THE_DEVICE)
+
+        return str(COMMANDS_HELD_BACK) % {'gates': NAMES_SEPARATOR.join(held_back)}
+
+    def save_model(self, request: HttpRequest, obj: HeatSource, form: forms.ModelForm, change: bool) -> None:
+        super().save_model(request, obj, form, change)
+        if obj.device_id is not None:
+            Device.objects.filter(pk=obj.device_id).update(room=obj.room_id)
+
+
+def _commands_climate_units(driver: str) -> bool:
+    return driver in CONTROLLABLE_CLIMATE_UNIT_DRIVERS
+
+
+def _held_back_by(source: HeatSource) -> list[str]:
+    held_back: list[str] = [DRY_RUN_GATE] if settings.TEPLO_DRY_RUN else []
+    if not source.live:
+        held_back.append(str(SOURCE_GATE))
+    load_settings = LoadSettings.objects.order_by('pk').first()
+    if load_settings is None or not load_settings.load_management_live:
+        held_back.append(str(LOAD_MANAGEMENT_GATE))
+    load = Load.objects.filter(heat_source=source).first()
+    if load is None:
+        held_back.append(str(NO_LOAD))
+    elif not load.live:
+        held_back.append(str(LOAD_GATE))
+    return held_back

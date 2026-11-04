@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from apps.power.domain.estimate import EstimateBasis, EstimatePart, PhaseEstimate, estimate_phase
-from apps.power.domain.load_status import LoadReading, plug_reading, thermostat_reading
+from apps.power.domain.load_status import LoadReading, plug_reading, source_reading, thermostat_reading
 from apps.power.domain.loads import LearnedPhase, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.shedding import Shed
 
@@ -40,6 +40,29 @@ BATHROOM = LoadRecord(
     learned=None,
     live=True,
     shed=None,
+)
+CONVECTOR = replace(
+    BATHROOM,
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    zone_slug=None,
+    device_slug='heater-office',
+    priority=8,
+    source_slug='convector-office',
+    rated_amps=Decimal('8.7'),
+)
+CONVECTOR_SHED = Shed(
+    load='convector-office',
+    phase=LoadPhase.L2,
+    amps=Decimal('8.7'),
+    live=True,
+    reason=ShedReason.OVERLOAD,
+    was_on=True,
+    device='heater-office',
+    at=AT - 5,
+    occurred_at=NOW,
+    settled_at=AT,
 )
 BOILER_ON = plug_reading(on=True, current=Decimal('6.42'), read_at=AT - 20)
 BOILER_OFF = plug_reading(on=False, current=Decimal(0), read_at=AT - 20)
@@ -216,3 +239,31 @@ def test_parts_of_no_current_are_left_out_and_the_sum_is_rounded_to_hundredths()
         amps=Decimal('6.02'),
         parts=(EstimatePart(load='boiler-2f', amps=Decimal('6.015'), basis=EstimateBasis.MEASURED),),
     )
+
+
+@pytest.mark.parametrize(
+    ('reading', 'live_sheds', 'parts'),
+    [
+        (
+            source_reading(on=True, heating=True, read_at=AT - 10),
+            {},
+            (BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING)),
+        ),
+        (source_reading(on=True, heating=False, read_at=AT - 10), {}, (BASE,)),
+        (source_reading(on=True, heating=True, read_at=AT - 10), {'convector-office': CONVECTOR_SHED}, (BASE,)),
+        (
+            source_reading(on=True, heating=True, read_at=AT - 4),
+            {'convector-office': CONVECTOR_SHED},
+            (BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING)),
+        ),
+    ],
+    ids=['heating', 'at_its_setpoint', 'shed_live_and_unread_since', 'switched_back_on_after_the_shed'],
+)
+def test_heat_source_counts_its_rated_current_while_it_heats_and_nothing_after_a_live_shed_until_read_again(
+    reading: LoadReading,
+    live_sheds: Mapping[str, Shed],
+    parts: tuple[EstimatePart, ...],
+) -> None:
+    estimate = _estimate([CONVECTOR], {'convector-office': reading}, live_sheds=live_sheds, live_starts={})
+
+    assert estimate.parts == parts

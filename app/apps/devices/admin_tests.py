@@ -4,8 +4,9 @@ from django.contrib.auth.models import User
 from django.http import HttpRequest
 from django.test import RequestFactory
 
-from apps.climate.factories import ZoneFactory
-from apps.climate.models import Zone
+from apps.climate.domain.heat_sources import HeatSourceKind
+from apps.climate.factories import HeatSourceFactory, ZoneFactory
+from apps.climate.models import HeatSource, Zone
 from apps.devices.admin import DeviceAdmin
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
@@ -49,6 +50,17 @@ def f_oven() -> Device:
     )
 
 
+@pytest.fixture
+def f_convector() -> HeatSource:
+    return HeatSourceFactory.create(
+        slug='convector-office',
+        kind=HeatSourceKind.HEATER,
+        device=DeviceFactory.create(
+            slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER
+        ),
+    )
+
+
 def test_room_is_read_only_for_a_device_that_serves_a_zone(
     f_device_admin: DeviceAdmin,
     f_request: HttpRequest,
@@ -73,3 +85,16 @@ def test_room_is_editable_for_a_plug(f_device_admin: DeviceAdmin, f_request: Htt
         'room' in f_device_admin.get_readonly_fields(f_request),
         'room' in form.base_fields,
     ) == (False, False, True)
+
+
+def test_room_is_read_only_for_the_device_of_a_heat_source(
+    f_device_admin: DeviceAdmin,
+    f_request: HttpRequest,
+    f_convector: HeatSource,
+) -> None:
+    device = f_convector.device
+
+    assert (
+        'room' in f_device_admin.get_readonly_fields(f_request, device),
+        'room' in f_device_admin.get_form(f_request, device, change=True).base_fields,
+    ) == (True, False)

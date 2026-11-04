@@ -1,7 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal
+from datetime import datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from enum import StrEnum
 
 from apps.devices.domain.readings import Phase
@@ -10,6 +10,7 @@ from apps.devices.domain.readings import Phase
 class LoadKind(StrEnum):
     ZONE = 'zone'
     PLUG = 'plug'
+    SOURCE = 'source'
 
 
 class LoadPhase(StrEnum):
@@ -21,6 +22,8 @@ class LoadPhase(StrEnum):
 
 MEASURED_PHASES = (LoadPhase.L1, LoadPhase.L2, LoadPhase.L3)
 METER_PHASES = {Phase.A: LoadPhase.L1, Phase.B: LoadPhase.L2, Phase.C: LoadPhase.L3}
+NOMINAL_VOLTS = Decimal(230)
+RATED_AMPS_STEP = Decimal('0.1')
 
 
 class PhaseOrigin(StrEnum):
@@ -32,6 +35,7 @@ class PhaseOrigin(StrEnum):
 class AmpsOrigin(StrEnum):
     NOMINAL = 'nominal'
     LEARNED = 'learned'
+    RATED = 'rated'
     DEFAULT = 'default'
 
 
@@ -71,6 +75,9 @@ class LoadRecord:
     live: bool
     shed: LiveShed | None
     last_command_at: datetime | None = None
+    source_slug: str | None = None
+    write_interval: timedelta | None = None
+    rated_amps: Decimal | None = None
 
     @property
     def effective_phase(self) -> LoadPhase:
@@ -91,13 +98,23 @@ class LoadRecord:
         if self.nominal_amps is not None:
             return AmpsOrigin.NOMINAL
 
-        return AmpsOrigin.DEFAULT if self.learned is None else AmpsOrigin.LEARNED
+        if self.learned is not None:
+            return AmpsOrigin.LEARNED
+
+        return AmpsOrigin.DEFAULT if self.rated_amps is None else AmpsOrigin.RATED
 
     def effective_amps(self, default: Decimal) -> Decimal:
         if self.nominal_amps is not None:
             return self.nominal_amps
 
-        return default if self.learned is None else self.learned.amps
+        if self.learned is not None:
+            return self.learned.amps
+
+        return default if self.rated_amps is None else self.rated_amps
+
+
+def rated_amps(watts: int) -> Decimal:
+    return (Decimal(watts) / NOMINAL_VOLTS).quantize(RATED_AMPS_STEP, rounding=ROUND_HALF_UP)
 
 
 def measured_currents(amps: Mapping[Phase, Decimal]) -> dict[LoadPhase, Decimal]:

@@ -120,6 +120,19 @@ SHED_KITCHEN_RECORD = replace(
     nominal_amps=Decimal('8.0'),
     shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=None, device='thermostat-kitchen'),
 )
+SHED_CONVECTOR_RECORD = replace(
+    SHED_BOILER_RECORD,
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=LoadKind.SOURCE,
+    device_slug='heater-office',
+    priority=8,
+    nominal_amps=None,
+    rated_amps=Decimal('8.7'),
+    source_slug='convector-office',
+    write_interval=timedelta(minutes=5),
+    shed=LiveShed(at=NOW, reason=ShedReason.OVERLOAD, phase=LoadPhase.L2, was_on=True, device='heater-office'),
+)
 BOILER_RECORD = replace(SHED_BOILER_RECORD, shed=None)
 BOILER_POINTED_AT_ANOTHER_PLUG = replace(BOILER_RECORD, device_slug='plug-boiler-2f')
 
@@ -352,6 +365,42 @@ def test_resumed_zone_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
     )
 
 
+def test_resumed_heat_source_shed_counts_as_one_whose_write_stamp_was_lost() -> None:
+    resumed = resumed_shed(SHED_CONVECTOR_RECORD, at=AT, now=NOW, default_amps=Decimal('6.0'))
+
+    assert resumed == Shed(
+        load='convector-office',
+        phase=LoadPhase.L2,
+        amps=Decimal('8.7'),
+        live=True,
+        reason=ShedReason.OVERLOAD,
+        was_on=True,
+        device='heater-office',
+        at=AT,
+        occurred_at=NOW,
+        settled_at=SETTLED,
+        unstamped_write_at=AT,
+    )
+
+
+@pytest.mark.parametrize(
+    ('now', 'expected'),
+    [
+        (
+            NOW + timedelta(minutes=3),
+            ShedWriteHold(key='convector-office', at=NOW, elapsed=timedelta(minutes=3)),
+        ),
+        (NOW + timedelta(minutes=5), None),
+    ],
+    ids=['within_its_interval', 'its_interval_after_the_shed'],
+)
+def test_live_shed_of_a_heat_source_stored_before_a_restart_holds_its_writes_by_its_slug(
+    now: datetime,
+    expected: ShedWriteHold | None,
+) -> None:
+    assert resumed_write_hold(SHED_CONVECTOR_RECORD, now=now, write_interval=timedelta(minutes=5)) == expected
+
+
 @pytest.mark.parametrize(
     ('record', 'unstamped_write_at'),
     [
@@ -411,18 +460,18 @@ def test_floor_handed_back_before_a_restart_resumes_as_a_hand_back_and_not_as_a_
         (
             SHED_KITCHEN_RECORD,
             NOW + timedelta(minutes=10),
-            ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(minutes=10)),
+            ShedWriteHold(key='kitchen', at=NOW, elapsed=timedelta(minutes=10)),
         ),
         (
             replace(SHED_KITCHEN_RECORD, shed=stored_shed(KITCHEN_SHED, handed_back=True)),
             NOW + timedelta(minutes=10),
-            ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(minutes=10)),
+            ShedWriteHold(key='kitchen', at=NOW, elapsed=timedelta(minutes=10)),
         ),
-        (SHED_KITCHEN_RECORD, NOW - timedelta(hours=1), ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(0))),
+        (SHED_KITCHEN_RECORD, NOW - timedelta(hours=1), ShedWriteHold(key='kitchen', at=NOW, elapsed=timedelta(0))),
         (
             replace(SHED_KITCHEN_RECORD, shed=stored_shed(KITCHEN_SHED, handed_back=True), last_command_at=NOW),
             NOW - timedelta(hours=1),
-            ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(0)),
+            ShedWriteHold(key='kitchen', at=NOW, elapsed=timedelta(0)),
         ),
         (
             replace(
@@ -431,7 +480,7 @@ def test_floor_handed_back_before_a_restart_resumes_as_a_hand_back_and_not_as_a_
                 last_command_at=NOW + WRITE_INTERVAL - timedelta(seconds=1),
             ),
             NOW - timedelta(hours=1),
-            ShedWriteHold(zone='kitchen', at=NOW, elapsed=timedelta(0)),
+            ShedWriteHold(key='kitchen', at=NOW, elapsed=timedelta(0)),
         ),
         (
             replace(

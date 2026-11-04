@@ -151,6 +151,37 @@ def test_a_room_is_adjustable_while_one_of_its_zones_reads_the_air(
     ]
 
 
+@pytest.fixture
+def f_bedroom_with_a_source(request: pytest.FixtureRequest, f_bedroom: RoomClimate) -> RoomClimate:
+    kind, driver = request.param
+    HeatSourceFactory.create(
+        room=f_bedroom.room,
+        kind=kind,
+        device=None
+        if driver is None
+        else DeviceFactory.create(slug='heater-bedroom', kind=DeviceKind.CLIMATE_UNIT, driver=driver),
+    )
+    return f_bedroom
+
+
+@pytest.mark.parametrize(
+    ('f_bedroom_with_a_source', 'adjustable'),
+    [
+        ((HeatSourceKind.HEATER, DeviceDriver.TUYA_HEATER), True),
+        ((HeatSourceKind.FIREPLACE, None), False),
+    ],
+    ids=['heater', 'fireplace'],
+    indirect=['f_bedroom_with_a_source'],
+)
+def test_a_room_is_adjustable_while_a_heat_source_teplo_commands_heats_it(
+    f_bedroom_with_a_source: RoomClimate,
+    adjustable: bool,
+) -> None:
+    assert [(room.slug, room.adjustable) for room in RoomClimateRepository.all_settings()] == [
+        (f_bedroom_with_a_source.room.slug, adjustable),
+    ]
+
+
 @pytest.mark.usefixtures('f_bedroom', 'f_overridden_open_space')
 def test_override_saved_for_a_room_is_read_back_with_its_source() -> None:
     assert [(room.slug, room.override) for room in RoomClimateRepository.all_settings()] == [

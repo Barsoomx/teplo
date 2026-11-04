@@ -58,6 +58,7 @@ logger = structlog.get_logger(__name__)
 
 LIVE_FIRST = (True, False)
 SAVE_RETRY = timedelta(minutes=1)
+SWITCHED_LOADS = (LoadKind.PLUG, LoadKind.SOURCE)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -332,7 +333,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if record is None:
             return shedding
 
-        was_on = True if record.kind is LoadKind.PLUG else None
+        was_on = True if record.kind in SWITCHED_LOADS else None
         stamp_lost = False
         if live:
             try:
@@ -440,7 +441,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             if shed.live == live
             and self._live_load(state.loads, shed.load) == live
             and not _moved(state, shed)
-            and can_hand_back(shed, at, MIN_WRITE_INTERVAL)
+            and can_hand_back(shed, at, _write_interval(state.loads.record(shed.load)))
         )
         calm = calm_phases(state.phases.watches, at, thresholds, live=live)
         if meter is MeterCondition.LOST:
@@ -619,7 +620,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             loads.control,
             record,
             dry_run=self._dry_run,
-            zone_live_control=record.zone_slug in loads.live_zones,
+            controller_live=_controller_live(loads, record),
         )
 
     def _live_load(self, loads: GuardLoads, slug: str) -> bool:
@@ -636,11 +637,26 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if record.kind is LoadKind.PLUG:
             return True
 
+        interval = _write_interval(record)
         if self._cycle_writes(state.loads, record, shed):
-            return can_hand_back(shed, at, MIN_WRITE_INTERVAL)
+            return can_hand_back(shed, at, interval)
 
         failed_at = shedding.failed.get(record.slug)
-        return elapsed(shed.at, at, MIN_WRITE_INTERVAL) and elapsed(failed_at, at, MIN_WRITE_INTERVAL)
+        return elapsed(shed.at, at, interval) and elapsed(failed_at, at, interval)
+
+
+def _controller_live(loads: GuardLoads, record: LoadRecord) -> bool:
+    if record.source_slug is not None:
+        return record.source_slug in loads.live_sources
+
+    return record.zone_slug in loads.live_zones
+
+
+def _write_interval(record: LoadRecord | None) -> timedelta:
+    if record is None or record.write_interval is None:
+        return MIN_WRITE_INTERVAL
+
+    return record.write_interval
 
 
 def _reading(state: GuardState, slug: str) -> LoadReading | None:

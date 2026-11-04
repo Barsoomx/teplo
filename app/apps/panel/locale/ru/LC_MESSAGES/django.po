@@ -1279,3 +1279,147 @@ msgstr "Изменён на термостате: teplo не трогает до
 
 msgid "Manual changes on the thermostats"
 msgstr "Ручная правка на термостатах"
+
+#, python-format
+msgid "By hand until %(time)s"
+msgstr "Вручную до %(time)s"
+
+msgid "Off by load management"
+msgstr "Отключён управлением нагрузкой"
+
+#, python-format
+msgid "%(name)s: the heater was switched on by hand, the shed is dropped"
+msgstr "%(name)s: обогреватель включили вручную, отключение снято"
+
+msgid "No connection to the unit"
+msgstr "Нет связи с прибором"
+
+msgid "The unit sent an unexpected reply"
+msgstr "Прибор ответил неожиданно"
+
+msgid "The secrets file has no address and key for this unit"
+msgstr "В файле секретов нет адреса и ключа этого прибора"
+
+msgid "The secrets file gives this unit a wrong address or protocol"
+msgstr "Файл секретов даёт этому прибору неверный адрес или протокол"
+
+msgid "The driver of this unit cannot command it"
+msgstr "Драйвер этого прибора не умеет им управлять"
+
+#, python-format
+msgid "%(name)s: changed on the unit: %(changes)s, teplo leaves it alone until %(time)s"
+msgstr "%(name)s: изменили на приборе: %(changes)s, teplo не трогает до %(time)s"
+
+#, python-format
+msgid "%(name)s: changed on the unit: %(changes)s, teplo would leave it alone until %(time)s"
+msgstr "%(name)s: изменили на приборе: %(changes)s, teplo не трогал бы до %(time)s"
+
+#, python-format
+msgid "%(name)s: switched on at %(setpoint)s°"
+msgstr "%(name)s: включил на %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: switched on"
+msgstr "%(name)s: включил"
+
+#, python-format
+msgid "%(name)s: switched off"
+msgstr "%(name)s: выключил"
+
+#, python-format
+msgid "%(name)s: set %(setpoint)s°"
+msgstr "%(name)s: поставил %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: would switch on at %(setpoint)s°"
+msgstr "%(name)s: включил бы на %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: would switch on"
+msgstr "%(name)s: включил бы"
+
+#, python-format
+msgid "%(name)s: would switch off"
+msgstr "%(name)s: выключил бы"
+
+#, python-format
+msgid "%(name)s: would set %(setpoint)s°"
+msgstr "%(name)s: поставил бы %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: could not switch on at %(setpoint)s°"
+msgstr "%(name)s: не удалось включить на %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: could not switch on"
+msgstr "%(name)s: не удалось включить"
+
+#, python-format
+msgid "%(name)s: could not switch off"
+msgstr "%(name)s: не удалось выключить"
+
+#, python-format
+msgid "%(name)s: could not set %(setpoint)s°"
+msgstr "%(name)s: не удалось поставить %(setpoint)s°"
+
+#, python-format
+msgid "%(name)s: a command failed"
+msgstr "%(name)s: команда не прошла"
+
+#, python-format
+msgid "heats up to %(setpoint)s°"
+msgstr "греет до %(setpoint)s°"
+
+msgid "the unit is off"
+msgstr "выключен"
+
+#, python-format
+msgid "%(temperature)s° at the unit"
+msgstr "у прибора %(temperature)s°"
+
+#, python-format
+msgid "teplo sets %(setpoint)s° no sooner than %(time)s"
+msgstr "teplo поставит %(setpoint)s° не раньше %(time)s"
+
+#, python-format
+msgid "teplo sets %(setpoint)s° within the next minute"
+msgstr "teplo поставит %(setpoint)s° в ближайшую минуту"
+
+#, python-format
+msgid "teplo switches it off no sooner than %(time)s"
+msgstr "teplo выключит не раньше %(time)s"
+
+msgid "teplo switches it off within the next minute"
+msgstr "teplo выключит в ближайшую минуту"
+
+#, python-format
+msgid "%(name)s: switched the heater off"
+msgstr "%(name)s: выключил обогреватель"
+
+#, python-format
+msgid "%(name)s: would switch the heater off"
+msgstr "%(name)s: выключил бы обогреватель"
+
+#, python-format
+msgid "%(name)s: handed the heater back to its room"
+msgstr "%(name)s: вернул обогреватель комнате"
+
+#, python-format
+msgid "%(name)s: would hand the heater back to its room"
+msgstr "%(name)s: вернул бы обогреватель комнате"
+
+#, python-format
+msgid "%(name)s: switched the heater back on"
+msgstr "%(name)s: снова включил обогреватель"
+
+#, python-format
+msgid "%(name)s: could not switch the heater off"
+msgstr "%(name)s: не удалось выключить обогреватель"
+
+#, python-format
+msgid "%(name)s: could not switch the heater back on"
+msgstr "%(name)s: не удалось снова включить обогреватель"
+
+#, python-format
+msgid "%(amps)s A by its rated power"
+msgstr "%(amps)s А по мощности"

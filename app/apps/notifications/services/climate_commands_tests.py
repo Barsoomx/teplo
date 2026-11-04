@@ -8,10 +8,10 @@ from django.db import OperationalError
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.errors import ClockUntrustedError, FireplaceNotFoundError, RoomNotAdjustableError
-from apps.climate.domain.heat_sources import FireplaceRecord
+from apps.climate.domain.heat_sources import FireplaceRecord, HeatSourceKind
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import IntentReason, OverrideChange, RoomIntent
-from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.climate.domain.room_status import RoomStatus, SourceStatus, ZoneStatus
 from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.usecases.boost_zones import BoostZonesInputDTO, BoostZonesOutputDTO
 from apps.climate.usecases.clear_room_override import ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO
@@ -103,6 +103,36 @@ BEDROOM = RoomStatus(
 )
 OFFICE = replace(BEDROOM, slug='office', name='Кабинет', air=None, intent=replace(BEDROOM.intent, room='office'))
 HOUSE = [OPEN_SPACE, BATHROOM, BEDROOM, OFFICE]
+OFFICE_ROOM = CommandRoom(slug='office', name='Кабинет', level=2, stems=('кабинет', 'офис'))
+CONVECTOR = SourceStatus(
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    kind=HeatSourceKind.HEATER,
+    room='office',
+    device='heater-office',
+    priority=1,
+    live=False,
+    available=True,
+    error_code=None,
+    error=None,
+    on=True,
+    setpoint=Decimal(19),
+    level='High',
+    temperature=Decimal(21),
+    target_on=True,
+    target_setpoint=Decimal(19),
+    commands_live=False,
+    held_until=None,
+    shed=False,
+    pending=PendingWrite(kind=PendingKind.HOLDS, at=None),
+)
+HEATED_OFFICE = replace(OFFICE, adjustable=True, sources=(CONVECTOR,))
+HEATED_OFFICE_AFTER = replace(
+    HEATED_OFFICE,
+    sources=(
+        replace(CONVECTOR, target_setpoint=Decimal(22), pending=PendingWrite(kind=PendingKind.WATCHING, at=None)),
+    ),
+)
 WRITES = {
     'living-room': PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW),
     'kitchen': PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=12)),
@@ -180,6 +210,34 @@ def _runner(
         phases=PhaseReadoutStub(phases=PHASES),
         language=language,
     )
+
+
+@pytest.fixture
+def f_office_override() -> ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO]:
+    return ExecutableStub(
+        outcomes=(OverrideRoomOutputDTO(room='office', name='Кабинет', target=Decimal('21.5'), until=UNTIL),),
+    )
+
+
+@pytest.fixture
+def f_office_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_office_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+) -> ClimateCommandRunner:
+    rooms = RoomStatusSourceStub(readings=([BEDROOM, HEATED_OFFICE], [BEDROOM, HEATED_OFFICE_AFTER]))
+    return _runner(f_guests, f_office_override, f_clear, f_boost, rooms)
+
+
+@pytest.fixture
+def f_heated_office_status_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+) -> ClimateCommandRunner:
+    return _runner(f_guests, f_override, f_clear, f_boost, RoomStatusSourceStub(readings=([HEATED_OFFICE],)))
 
 
 @pytest.fixture
@@ -673,4 +731,37 @@ def test_fireplace_commands_mark_every_fireplace_of_the_house_and_say_what_they_
     assert (f_fireplace.inputs, reply) == (
         [MarkFireplaceInputDTO(room=None, lit=lit, now=NOW, source=CommandSource.TELEGRAM)],
         expected,
+    )
+
+
+def test_cold_in_the_office_raises_its_target_and_names_what_the_convector_takes(
+    f_office_runner: ClimateCommandRunner,
+    f_office_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+) -> None:
+    reply = f_office_runner.run(OwnerCommand(kind=CommandKind.WARMER, room=OFFICE_ROOM), NOW, clock_trusted=True)
+
+    assert (f_office_override.inputs, reply) == (
+        [
+            OverrideRoomInputDTO(
+                room='office',
+                change=OverrideChange.WARMER,
+                value=None,
+                now=NOW,
+                clock_trusted=True,
+                source=CommandSource.TELEGRAM,
+            ),
+        ],
+        'Кабинет: 21,5° до 18:40.\nКонвектор: кабинет: 22° — наблюдение, команда не уходит',
+    )
+
+
+def test_status_lists_a_room_heated_by_a_source_with_what_the_unit_reads(
+    f_heated_office_status_runner: ClimateCommandRunner,
+) -> None:
+    reply = f_heated_office_status_runner.run(OwnerCommand(kind=CommandKind.STATUS), NOW, clock_trusted=True)
+
+    assert reply == (
+        'Кабинет: цель 19,5°, ночь\n'
+        'Конвектор: кабинет: включён на 19°, у прибора 21°\n'
+        'Фазы: L1 12,4 А · L2 ≈8,4 А · L3 —'
     )

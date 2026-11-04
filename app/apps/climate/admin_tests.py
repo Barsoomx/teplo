@@ -20,14 +20,20 @@ from apps.climate.admin import (
     ZoneLearningAdmin,
 )
 from apps.climate.domain.heat_sources import HeatSourceKind
-from apps.climate.factories import ClimateSettingsFactory, RoomClimateFactory, ZoneFactory, ZoneLearningFactory
+from apps.climate.factories import (
+    ClimateSettingsFactory,
+    HeatSourceFactory,
+    RoomClimateFactory,
+    ZoneFactory,
+    ZoneLearningFactory,
+)
 from apps.climate.models import ClimateSettings, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.house.factories import RoomFactory
 from apps.house.models import Room
-from apps.power.factories import ZoneLoadFactory
+from apps.power.factories import LoadSettingsFactory, SourceLoadFactory, ZoneLoadFactory
 from apps.telemetry.models import JournalEntry
 
 pytestmark = pytest.mark.django_db
@@ -59,6 +65,8 @@ IDLE_NOT_BELOW_LIMIT = (
     'The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats'
 )
 DEVICE_UNLESS_FIREPLACE = 'A fireplace has no device, and any other heat source needs its device'
+SOURCE_STAMP_FIELDS = ('manual_until', 'last_command_at', 'last_dry_run_at', 'commanded_power', 'commanded_setpoint')
+SOURCE_COMMANDS_POSTED = {'setpoint_bias': '0.0', 'max_setpoint': '24.0', 'min_write_minutes': '5'}
 LEARNING_URL = '/admin/climate/zonelearning/'
 
 
@@ -533,7 +541,7 @@ def f_open_space() -> Room:
 
 @pytest.fixture
 def f_climate_unit() -> Device:
-    return DeviceFactory.create(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.UNSUPPORTED)
+    return DeviceFactory.create(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER)
 
 
 @pytest.fixture
@@ -546,7 +554,50 @@ def f_heat_source_posted(request: pytest.FixtureRequest, f_open_space: Room, f_c
         'kind': kind,
         'device': str(f_climate_unit.pk) if with_device else '',
         'priority': '1',
+        **SOURCE_COMMANDS_POSTED,
     }
+
+
+@pytest.fixture
+def f_office() -> Room:
+    return RoomFactory.create(slug='office', name='Кабинет')
+
+
+@pytest.fixture
+def f_heater_posted(request: pytest.FixtureRequest, f_office: Room, f_open_space: Room) -> dict[str, str]:
+    kind, room, driver = request.param
+    ZoneFactory.create(slug='kitchen', room=f_open_space)
+    device = DeviceFactory.create(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=driver)
+    return {
+        'slug': 'convector-office',
+        'name': 'Конвектор: кабинет',
+        'room': str((f_office if room == 'office' else f_open_space).pk),
+        'kind': kind,
+        'device': str(device.pk),
+        'priority': '1',
+        **SOURCE_COMMANDS_POSTED,
+    }
+
+
+@pytest.fixture
+def f_convector(f_office: Room, f_climate_unit: Device) -> HeatSource:
+    return HeatSourceFactory.create(
+        slug='convector-office',
+        name='Конвектор: кабинет',
+        room=f_office,
+        kind=HeatSourceKind.HEATER,
+        device=f_climate_unit,
+    )
+
+
+@pytest.fixture
+def f_convector_gates(request: pytest.FixtureRequest, f_convector: HeatSource) -> HeatSource:
+    source_live, load_live, management_live = request.param
+    HeatSource.objects.filter(pk=f_convector.pk).update(live=source_live)
+    if load_live is not None:
+        SourceLoadFactory.create(heat_source=f_convector, live=load_live)
+    LoadSettingsFactory.create(load_management_live=management_live)
+    return HeatSource.objects.get(pk=f_convector.pk)
 
 
 @pytest.fixture
@@ -582,7 +633,101 @@ def test_heat_source_admin_lists_the_sources_with_their_gate_and_shows_the_mark_
         f_heat_source_admin.list_editable,
         f_heat_source_admin.get_readonly_fields(f_request),
         'lit_until' in form.base_fields,
-    ) == (('name', 'room', 'kind', 'device', 'priority', 'live', 'lit_until'), ('live',), ('lit_until',), False)
+    ) == (
+        ('name', 'room', 'kind', 'device', 'priority', 'live', 'lit_until', 'commands'),
+        ('live',),
+        ('lit_until', *SOURCE_STAMP_FIELDS),
+        False,
+    )
+
+
+def test_heater_page_edits_its_commands_and_shows_what_teplo_stored_read_only(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_request: HttpRequest,
+    f_convector: HeatSource,
+) -> None:
+    form = f_heat_source_admin.get_form(f_request, f_convector, change=True)
+
+    assert (
+        {'setpoint_bias', 'max_setpoint', 'min_outdoor', 'min_write_minutes', 'rated_watts'} <= set(form.base_fields),
+        set(SOURCE_STAMP_FIELDS) & set(form.base_fields),
+        set(SOURCE_STAMP_FIELDS) <= set(f_heat_source_admin.get_fields(f_request, f_convector)),
+    ) == (True, set(), True)
+
+
+@pytest.mark.parametrize(
+    ('f_heater_posted', 'errors'),
+    [
+        ((HeatSourceKind.HEATER, 'office', DeviceDriver.TUYA_HEATER), {}),
+        (
+            (HeatSourceKind.HEATER, 'open-space', DeviceDriver.TUYA_HEATER),
+            {'room': ['В этой комнате тёплый пол: teplo не управляет источником тепла рядом с ним']},
+        ),
+        (
+            (HeatSourceKind.HEATER, 'office', DeviceDriver.UNSUPPORTED),
+            {'device': ['Обогревателю нужен климатический прибор с управляющим драйвером, например tuya_heater']},
+        ),
+        (
+            (HeatSourceKind.AIR_CONDITIONER, 'office', DeviceDriver.TUYA_HEATER),
+            {'kind': ['У teplo пока нет драйвера кондиционера']},
+        ),
+    ],
+    ids=['heater', 'beside_a_floor', 'driver_only_reads', 'air_conditioner'],
+    indirect=['f_heater_posted'],
+)
+@pytest.mark.usefixtures('russian')
+def test_heat_source_page_refuses_a_source_teplo_cannot_command(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_request: HttpRequest,
+    f_heater_posted: dict[str, str],
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_heat_source_admin.get_form(f_request)(f_heater_posted)
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.parametrize(
+    ('f_convector_gates', 'commands'),
+    [
+        ((True, True, True), 'Не доходят: TEPLO_DRY_RUN'),
+        (
+            (False, False, False),
+            'Не доходят: TEPLO_DRY_RUN, live источника, load management live, live нагрузки',
+        ),
+        ((True, None, True), 'Не доходят: TEPLO_DRY_RUN, нет нагрузки'),
+    ],
+    ids=['every_gate_but_dry_run', 'every_gate_closed', 'no_load'],
+    indirect=['f_convector_gates'],
+)
+@pytest.mark.usefixtures('russian')
+def test_heat_source_list_names_the_gates_that_hold_its_commands_back(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_convector_gates: HeatSource,
+    commands: str,
+) -> None:
+    assert f_heat_source_admin.commands(f_convector_gates) == commands
+
+
+def test_saving_a_heat_source_places_its_device_in_its_room(
+    f_admin_client: Client,
+    f_convector: HeatSource,
+    f_office: Room,
+) -> None:
+    f_admin_client.post(
+        f'/admin/climate/heatsource/{f_convector.pk}/change/',
+        {
+            'slug': 'convector-office',
+            'name': 'Конвектор: кабинет',
+            'room': str(f_office.pk),
+            'kind': HeatSourceKind.HEATER,
+            'device': str(f_convector.device_id),
+            'priority': '1',
+            **SOURCE_COMMANDS_POSTED,
+        },
+    )
+
+    assert Device.objects.get(slug='heater-office').room_id == f_office.pk
 
 
 @pytest.mark.parametrize(

@@ -23,6 +23,7 @@ class GuardLoads:
     live_zones: frozenset[str]
     meter: str | None
     read_at: float
+    live_sources: frozenset[str] = frozenset()
 
     def record(self, slug: str) -> LoadRecord | None:
         return next((record for record in self.records if record.slug == slug), None)
@@ -116,10 +117,23 @@ class GuardState:
 
     @property
     def held_zones(self) -> frozenset[str]:
-        live = {slug for slug, shed in self.shedding.sheds.items() if shed.live}
+        live = self._live_sheds
         return frozenset(
             record.zone_slug for record in self.loads.records if record.zone_slug is not None and record.slug in live
         )
+
+    @property
+    def held_sources(self) -> frozenset[str]:
+        live = self._live_sheds
+        return frozenset(
+            record.source_slug
+            for record in self.loads.records
+            if record.source_slug is not None and record.slug in live
+        )
+
+    @property
+    def _live_sheds(self) -> frozenset[str]:
+        return frozenset(slug for slug, shed in self.shedding.sheds.items() if shed.live)
 
 
 def follow_samples(

@@ -3,6 +3,7 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.domain.external_heat import AirPoint, FireWatch
+from apps.climate.domain.fast_source import SourceTarget
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode
 from apps.climate.services.control_book import ControlBook
@@ -20,6 +21,7 @@ BURNING = FireWatch(
     fire_since=60.0,
 )
 CALM = FireWatch(points={'air-bedroom': (AirPoint(moment=60.0, air=Decimal('19.0')),)})
+JOURNALED = SourceTarget(power=True, setpoint=Decimal(22))
 
 
 @pytest.fixture
@@ -29,6 +31,7 @@ def f_book() -> ControlBook:
     book.remember_backup('bedroom', True)
     book.remember_fire('open-space', BURNING)
     book.remember_fire('bedroom', CALM)
+    book.remember_source_journaled('convector-office', JOURNALED)
     return book
 
 
@@ -58,3 +61,13 @@ def test_fire_watch_is_kept_per_room_and_starts_empty(f_book: ControlBook) -> No
 
 def test_burning_rooms_are_the_rooms_whose_watch_sees_a_fire(f_book: ControlBook) -> None:
     assert f_book.burning_rooms() == frozenset({'open-space'})
+
+
+def test_book_remembers_the_target_last_journaled_for_each_heat_source(f_book: ControlBook) -> None:
+    assert (f_book.source_journaled('convector-office'), f_book.source_journaled('ac-bedroom')) == (JOURNALED, None)
+
+
+def test_book_notices_a_room_without_its_climate_once(f_book: ControlBook) -> None:
+    first = f_book.first_notice_without_climate('office')
+
+    assert (first, f_book.first_notice_without_climate('office')) == (True, False)

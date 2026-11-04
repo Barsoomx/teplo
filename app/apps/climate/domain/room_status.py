@@ -1,7 +1,9 @@
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.drive import PendingWrite
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.room_intent import RoomIntent
 
 
@@ -20,6 +22,30 @@ class ZoneStatus:
 
 
 @dataclass(frozen=True, kw_only=True)
+class SourceStatus:
+    slug: str
+    name: str
+    kind: HeatSourceKind
+    room: str
+    device: str
+    priority: int
+    live: bool
+    available: bool
+    error_code: str | None
+    error: str | None
+    on: bool | None
+    setpoint: Decimal | None
+    level: str | None
+    temperature: Decimal | None
+    target_on: bool | None
+    target_setpoint: Decimal | None
+    commands_live: bool
+    held_until: datetime | None
+    shed: bool
+    pending: PendingWrite | None
+
+
+@dataclass(frozen=True, kw_only=True)
 class RoomStatus:
     slug: str
     name: str
@@ -28,3 +54,4 @@ class RoomStatus:
     adjustable: bool
     guest_room: bool
     zones: tuple[ZoneStatus, ...]
+    sources: tuple[SourceStatus, ...] = ()

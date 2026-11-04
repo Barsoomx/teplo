@@ -120,7 +120,7 @@ def _refusal(
     at: float,
     thresholds: PhaseThresholds,
 ) -> StartRefusal | None:
-    if meter is MeterCondition.STALE or (meter is MeterCondition.LOST and load.kind is LoadKind.PLUG):
+    if meter is MeterCondition.STALE or (meter is MeterCondition.LOST and load.kind is not LoadKind.ZONE):
         return StartRefusal.METER_STALE
 
     if meter is MeterCondition.LOST and any(

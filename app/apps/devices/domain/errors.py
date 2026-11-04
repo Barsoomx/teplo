@@ -28,6 +28,13 @@ class PlugNotSwitchableError(DomainError):
         super().__init__(f'plug {slug} cannot be switched: {reason}', error_code='plug_not_switchable')
 
 
+class ClimateUnitNotControllableError(DomainError):
+    def __init__(self, slug: str, reason: str) -> None:
+        super().__init__(
+            f'climate unit {slug} cannot be controlled: {reason}', error_code='climate_unit_not_controllable'
+        )
+
+
 class DeviceConfigError(DomainError):
     def __init__(self, detail: str) -> None:
         super().__init__(detail, error_code='device_config_invalid')

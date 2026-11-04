@@ -46,6 +46,14 @@ KITCHEN = LoadStatus(
 )
 HALLWAY = replace(KITCHEN, slug='hallway', priority=4, drawing=True)
 BOILER = replace(KITCHEN, slug='boiler-1f', kind=LoadKind.PLUG, priority=1, amps=Decimal('6.0'))
+CONVECTOR = replace(
+    KITCHEN,
+    slug='convector-office',
+    kind=LoadKind.SOURCE,
+    priority=8,
+    phase=LoadPhase.L2,
+    amps=Decimal('8.7'),
+)
 GRANTED = StartDecision(load='kitchen', refusal=None, overrun=None)
 LIVING_ROOM = replace(KITCHEN, slug='living-room', priority=7, phase=LoadPhase.L3)
 GRANTED_LIVING_ROOM = StartDecision(load='living-room', refusal=None, overrun=None)
@@ -138,7 +146,7 @@ def test_start_is_refused_when_it_would_push_a_phase_over_the_start_ceiling(
     )
 
 
-@pytest.mark.parametrize('load', [KITCHEN, BOILER], ids=['zone', 'plug'])
+@pytest.mark.parametrize('load', [KITCHEN, BOILER, CONVECTOR], ids=['zone', 'plug', 'heat_source'])
 def test_start_waits_while_the_meter_is_stale(load: LoadStatus) -> None:
     assert _decide(load, MeterCondition.STALE) == StartDecision(
         load=load.slug,
@@ -147,9 +155,10 @@ def test_start_waits_while_the_meter_is_stale(load: LoadStatus) -> None:
     )
 
 
-def test_lost_meter_starts_no_plug() -> None:
-    assert _decide(BOILER, MeterCondition.LOST) == StartDecision(
-        load='boiler-1f',
+@pytest.mark.parametrize('load', [BOILER, CONVECTOR], ids=['plug', 'heat_source'])
+def test_lost_meter_starts_no_plug_and_no_heat_source(load: LoadStatus) -> None:
+    assert _decide(load, MeterCondition.LOST) == StartDecision(
+        load=load.slug,
         refusal=StartRefusal.METER_STALE,
         overrun=None,
     )

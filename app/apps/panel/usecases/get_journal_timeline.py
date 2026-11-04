@@ -17,7 +17,11 @@ from apps.telemetry.models import JournalEntry
 from apps.telemetry.repositories.journal import JournalRepository
 
 POWER_OUTAGE = 'power_outage'
-LOAD_DEVICE_KINDS = {LoadKind.PLUG: DeviceKind.PLUG, LoadKind.ZONE: DeviceKind.THERMOSTAT}
+LOAD_DEVICE_KINDS = {
+    LoadKind.PLUG: DeviceKind.PLUG,
+    LoadKind.ZONE: DeviceKind.THERMOSTAT,
+    LoadKind.SOURCE: DeviceKind.CLIMATE_UNIT,
+}
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -36,10 +36,17 @@ BOILER = LoadRecord(
     shed=None,
 )
 KITCHEN = replace(BOILER, slug='kitchen', kind=LoadKind.ZONE, zone_slug='kitchen', device_slug='thermostat-kitchen')
+CONVECTOR = replace(
+    BOILER,
+    slug='convector-office',
+    kind=LoadKind.SOURCE,
+    device_slug='heater-office',
+    source_slug='convector-office',
+)
 
 
 @pytest.mark.parametrize(
-    ('dry_run', 'management_live', 'load', 'zone_live_control', 'expected'),
+    ('dry_run', 'management_live', 'load', 'controller_live', 'expected'),
     [
         (False, True, BOILER, False, True),
         (True, True, BOILER, True, False),
@@ -47,6 +54,9 @@ KITCHEN = replace(BOILER, slug='kitchen', kind=LoadKind.ZONE, zone_slug='kitchen
         (False, True, replace(BOILER, live=False), True, False),
         (False, True, KITCHEN, True, True),
         (False, True, KITCHEN, False, False),
+        (False, True, CONVECTOR, True, True),
+        (False, True, CONVECTOR, False, False),
+        (False, False, CONVECTOR, True, False),
     ],
     ids=[
         'plug_with_every_gate_open',
@@ -55,18 +65,21 @@ KITCHEN = replace(BOILER, slug='kitchen', kind=LoadKind.ZONE, zone_slug='kitchen
         'load_off',
         'zone_with_live_control',
         'zone_without_live_control',
+        'live_heat_source',
+        'heat_source_watching',
+        'heat_source_without_load_management',
     ],
 )
 def test_commands_reach_a_load_only_through_every_gate(
     dry_run: bool,
     management_live: bool,
     load: LoadRecord,
-    zone_live_control: bool,
+    controller_live: bool,
     expected: bool,
 ) -> None:
     control = replace(CONTROL, live=management_live)
 
-    assert commands_live(control, load, dry_run=dry_run, zone_live_control=zone_live_control) is expected
+    assert commands_live(control, load, dry_run=dry_run, controller_live=controller_live) is expected
 
 
 @pytest.mark.parametrize(

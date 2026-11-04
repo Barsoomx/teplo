@@ -16,12 +16,12 @@
         <div class="event-body"><p class="event-text">{% translate 'teplo started' %}</p></div>
         {% elif entry.kind == 'device_availability_changed' and entry.payload.available %}
         <span class="event-mark event-mark-online">{% icon 'wifi' %}</span>
-        <div class="event-body"><p class="event-text">{% if entry.device_kind == 'plug' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: plug is online{% endblocktranslate %}{% elif entry.device_kind == 'temperature_sensor' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: sensor is online{% endblocktranslate %}{% elif entry.device_kind == 'phase_meter' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: online{% endblocktranslate %}{% else %}{% blocktranslate with name=entry.subject_name %}{{ name }}: thermostat is online{% endblocktranslate %}{% endif %}</p></div>
+        <div class="event-body"><p class="event-text">{% if entry.device_kind == 'plug' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: plug is online{% endblocktranslate %}{% elif entry.device_kind == 'temperature_sensor' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: sensor is online{% endblocktranslate %}{% elif entry.device_kind == 'phase_meter' or entry.device_kind == 'climate_unit' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: online{% endblocktranslate %}{% else %}{% blocktranslate with name=entry.subject_name %}{{ name }}: thermostat is online{% endblocktranslate %}{% endif %}</p></div>
         {% elif entry.kind == 'device_availability_changed' %}
         <span class="event-mark event-mark-warn">{% icon 'wifi-off' %}</span>
         {% failure_note entry.payload.error_code entry.payload.reason omit='device_unavailable' device=entry.device_kind as note %}
         <div class="event-body"{% if entry.payload.reason %} title="{{ entry.payload.reason }}"{% endif %}>
-          <p class="event-text">{% if entry.device_kind == 'plug' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the plug{% endblocktranslate %}{% elif entry.device_kind == 'temperature_sensor' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the sensor{% endblocktranslate %}{% elif entry.device_kind == 'phase_meter' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection{% endblocktranslate %}{% else %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the thermostat{% endblocktranslate %}{% endif %}</p>
+          <p class="event-text">{% if entry.device_kind == 'plug' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the plug{% endblocktranslate %}{% elif entry.device_kind == 'temperature_sensor' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the sensor{% endblocktranslate %}{% elif entry.device_kind == 'phase_meter' or entry.device_kind == 'climate_unit' %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection{% endblocktranslate %}{% else %}{% blocktranslate with name=entry.subject_name %}{{ name }}: no connection to the thermostat{% endblocktranslate %}{% endif %}</p>
           {% if note %}<p class="event-note">{{ note }}</p>{% endif %}
         </div>
         {% elif entry.kind == 'zone_command_issued' %}
@@ -40,6 +40,19 @@
         {% elif entry.kind == 'zone_manual_change' %}
         <span class="event-mark">{% icon 'thermometer' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|manual_change_text }}</p></div>
+        {% elif entry.kind == 'source_command_issued' %}
+        <span class="event-mark{% if not entry.payload.dry_run %} event-mark-command{% endif %}">{% icon 'flame' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|source_command_text }}</p></div>
+        {% elif entry.kind == 'source_command_failed' %}
+        <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
+        {% failure_note entry.payload.error_code entry.payload.error device='climate_unit' as note %}
+        <div class="event-body"{% if entry.payload.error %} title="{{ entry.payload.error }}"{% endif %}>
+          <p class="event-text">{{ entry|source_command_failed_text }}</p>
+          {% if note %}<p class="event-note">{{ note }}</p>{% endif %}
+        </div>
+        {% elif entry.kind == 'source_manual_change' %}
+        <span class="event-mark">{% icon 'flame' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|source_manual_change_text }}</p></div>
         {% elif entry.kind == 'zone_boosted' %}
         <span class="event-mark event-mark-boost">{% icon 'flame' %}</span>
         <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name until=entry.payload.until|local_time %}{{ name }}: boost until {{ until }}{% endblocktranslate %}</p></div>
@@ -124,7 +137,7 @@
         </div>
         {% elif entry.kind == 'load_shed_overridden' %}
         <span class="event-mark">{% icon 'power' %}</span>
-        <div class="event-body"><p class="event-text">{% blocktranslate with name=entry|load_name %}{{ name }}: the plug was switched on by hand, the shed is dropped{% endblocktranslate %}</p></div>
+        <div class="event-body"><p class="event-text">{% if entry.device_kind == 'climate_unit' %}{% blocktranslate with name=entry|load_name %}{{ name }}: the heater was switched on by hand, the shed is dropped{% endblocktranslate %}{% else %}{% blocktranslate with name=entry|load_name %}{{ name }}: the plug was switched on by hand, the shed is dropped{% endblocktranslate %}{% endif %}</p></div>
         {% elif entry.kind == 'load_command_failed' %}
         <span class="event-mark event-mark-warn">{% icon 'triangle-alert' %}</span>
         {% failure_note entry.payload.error_code entry.payload.error device=entry.device_kind as note %}
