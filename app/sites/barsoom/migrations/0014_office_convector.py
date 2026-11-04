@@ -75,11 +75,6 @@ def remove_convector(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) 
     apps.get_model('power', 'Load').objects.filter(slug=CONVECTOR).delete()
     apps.get_model('climate', 'HeatSource').objects.filter(slug=CONVECTOR).delete()
     apps.get_model('devices', 'Device').objects.filter(slug=HEATER_DEVICE).delete()
-    apps.get_model('climate', 'ComfortPeriod').objects.filter(
-        room_climate__room__slug=OFFICE,
-        start=COMFORT_START,
-        end=COMFORT_END,
-    ).delete()
 
 
 class Migration(migrations.Migration):

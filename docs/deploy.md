@@ -34,6 +34,8 @@ flowchart LR
 
 A failed step stops the script before `current` moves, so the running release stays in place.
 
+Between `migrate` and the restart the running release works on the new schema. The release that brings the office convector adds a load of kind `source`, which the releases before it do not know: until the restart, a few seconds, their settings page and the save of the shedding order fail on it, while the dashboard, the heating cycle and load management run on. Open `/settings/` once the new release runs, and never start an older release on that schema before undoing its migrations (see [Roll back](#roll-back)).
+
 The release that brings the panel's settings pages adds two checks to the database: every zone's idle floor setpoint below its floor limit, and the climate settings' air start offset at or above the minimum band, 0.20 °C as the migration seeds it. The admin of earlier releases checked neither, so before that deploy look for a value that breaks them:
 
 ```sh
@@ -332,7 +334,7 @@ The bias added to the target, the interval between commands, the highest setpoin
 
 An older release does not know the migrations of a newer one, so undo them before it runs, from the release you leave and the newest first.
 
-Rolling back past the office convector takes two steps. First untick `live` of «Конвектор: кабинет» in `/admin/climate/heatsource/` and wait until no load on the dashboard reads «Отключена»: an older release never switches the convector back on. Then `migrate climate 0013` undoes the site's `0014_office_convector` first, which deletes the convector's load, its heat source, the device `heater-office` and the office's windows 13:00–23:45, then the source loads and the heat sources' command fields, and `migrate devices 0003` drops the heater driver and the constraint on commanding drivers:
+Rolling back past the office convector takes two steps. First untick `live` of «Конвектор: кабинет» in `/admin/climate/heatsource/` and wait until no load on the dashboard reads «Отключена»: an older release never switches the convector back on. Then `migrate climate 0013` undoes the site's `0014_office_convector` first, which deletes the convector's load, its heat source and the device `heater-office` and keeps the office's comfort windows, which an older release reads as the office's schedule and a later deploy finds in place, then the source loads and the heat sources' command fields, and `migrate devices 0003` drops the heater driver and the constraint on commanding drivers. Until both have run, an older release cannot open its settings page or save the shedding order, as it does not know the convector's load:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; manage="/opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py"; $manage migrate climate 0013 && $manage migrate devices 0003'
