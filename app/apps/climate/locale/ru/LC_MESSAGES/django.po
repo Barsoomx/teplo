@@ -44,7 +44,7 @@ msgstr "Обучение сброшено: %(zones)s"
 
 #, python-format
 msgid "Nothing to reset: %(zones)s learned nothing yet"
-msgstr "Сбрасывать нечего: %(zones)s ещё ничего не выучили"
+msgstr "Сбрасывать нечего, обучения ещё нет: %(zones)s"
 
 #, python-format
 msgid "The database did not take the reset of %(zones)s: try again"

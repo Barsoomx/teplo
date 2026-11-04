@@ -18,7 +18,7 @@ HELP = gettext_lazy(
     'холодно в <room>, жарко в <room> — 1° warmer or cooler for 2 hours\n'
     '<room> 22 — hold 22° for 2 hours; <room> авто — back to the schedule\n'
     'буст <room> — warm floor for 2 hours\n'
-    'топлю камин, камин погас — mark the fireplace for 4 hours\n'
+    'топлю камин — mark the fireplace lit for 4 hours; камин погас — clear the mark\n'
     'статус — rooms, targets and phases',
 )
 UNKNOWN_ROOM = gettext_lazy('I do not know this room. Rooms: %(rooms)s')

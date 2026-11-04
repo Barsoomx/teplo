@@ -784,7 +784,7 @@ def test_reset_learning_action_resets_the_zones_that_learned_and_names_them(
         sorted(JournalEntry.objects.values_list('kind', 'subject')),
     ) == (
         200,
-        ['Обучение сброшено: Гостиная, Кухня', 'Сбрасывать нечего: Прихожая ещё ничего не выучили'],
+        ['Обучение сброшено: Гостиная, Кухня', 'Сбрасывать нечего, обучения ещё нет: Прихожая'],
         [('hallway', None, 0, 0), ('kitchen', None, 0, 1), ('living-room', None, 0, 1)],
         [('zone_learning_reset', 'kitchen'), ('zone_learning_reset', 'living-room')],
     )

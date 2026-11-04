@@ -171,7 +171,7 @@ HELP = (
     'холодно в <комната>, жарко в <комната> — на 1° теплее или холоднее на 2 часа\n'
     '<комната> 22 — держать 22° 2 часа; <комната> авто — вернуть расписание\n'
     'буст <комната> — тёплый пол на 2 часа\n'
-    'топлю камин, камин погас — отметить камин на 4 часа\n'
+    'топлю камин — камин топится 4 часа; камин погас — снять отметку\n'
     'статус — комнаты, цели и фазы'
 )
 ROOM_NAMES = 'Гостиная, кухня и прихожая; Санузел 2 этаж; Спальня; Кабинет'
@@ -283,6 +283,19 @@ def f_runner(
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     return _runner(f_guests, f_override, f_clear, f_boost, f_rooms)
+
+
+@pytest.fixture
+def f_guest_office_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+) -> ClimateCommandRunner:
+    rooms = RoomStatusSourceStub(
+        readings=([replace(HEATED_OFFICE, guest_room=True)], [replace(HEATED_OFFICE_AFTER, guest_room=True)]),
+    )
+    return _runner(f_guests, f_override, f_clear, f_boost, rooms)
 
 
 @pytest.fixture
@@ -411,6 +424,14 @@ def test_guests_hold_the_guest_rooms_and_name_what_each_floor_does(
     assert (f_guests.inputs, reply) == (
         [SetGuestsInputDTO(nights=1, now=NOW, clock_trusted=True, source=CommandSource.TELEGRAM)],
         f'Гости до 14:00 завтра: Гостиная, кухня и прихожая в комфорте.\n{OPEN_SPACE_FLOORS}',
+    )
+
+
+def test_guests_name_the_setpoint_the_source_of_a_guest_room_takes(f_guest_office_runner: ClimateCommandRunner) -> None:
+    reply = f_guest_office_runner.run(OwnerCommand(kind=CommandKind.GUESTS, nights=1), NOW, clock_trusted=True)
+
+    assert reply == (
+        'Гости до 14:00 завтра: Кабинет в комфорте.\nКонвектор: кабинет: 22° — наблюдение, команда не уходит'
     )
 
 

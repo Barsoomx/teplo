@@ -206,7 +206,7 @@ class ClimateCommandRunner:
 
         rooms = self._changed({room.slug for room in guest_rooms}, now, clock_trusted=clock_trusted)
         lines = [] if until is None else [_guests_line(until, guest_rooms, now)]
-        return '\n'.join([*lines, *zone_write_lines(rooms, now)])
+        return '\n'.join([*lines, *_write_lines(rooms, now)])
 
     def _room_command(self, command: OwnerCommand, room: CommandRoom, now: datetime, *, clock_trusted: bool) -> str:
         if command.kind is CommandKind.AUTO:
