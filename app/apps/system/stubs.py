@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from apps.core.stubs import WallClockStub
-from apps.system.domain.clock import ClockStatus, ClockStatusCode
+from apps.system.domain.clock import ClockReading, ClockStatus, ClockStatusCode
 
 
 class ClockStub:
@@ -35,3 +35,13 @@ class SteppingMonotonicClockStub:
     def __call__(self) -> float:
         self._wall_clock.advance(self._step)
         return self._now
+
+
+class ClockReadingsStub:
+    def __init__(self, readings: tuple[ClockReading, ...]) -> None:
+        self._readings = readings
+        self._reads = 0
+
+    def __call__(self) -> ClockReading:
+        self._reads += 1
+        return self._readings[min(self._reads, len(self._readings)) - 1]

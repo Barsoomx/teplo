@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import partial
 
 import pytest
@@ -10,6 +10,7 @@ from apps.notifications.services.command_listener import CommandListener, Receiv
 from apps.notifications.stubs import ExecutableStub, StartThreadStub, StopSignalStub
 from apps.notifications.usecases.receive_commands import ReceiveCommandsInputDTO, ReceiveCommandsOutputDTO
 from apps.system.domain.clock import ClockReading
+from apps.system.stubs import ClockReadingsStub
 
 pytestmark = pytest.mark.django_db
 
@@ -17,6 +18,8 @@ NOW = datetime(2026, 11, 4, 13, 40, tzinfo=UTC)
 SECRET = TelegramSecret(token='123456:telegram-token', chat_id='-1001234', proxy=None, commands=True)
 TIMED_OUT = CommandPollError('telegram unreachable: timed out')
 STARTED = {'event': 'owner_commands_started', 'log_level': 'info'}
+TRUSTED = ClockReading(now=NOW, monotonic=0.0, trusted=True)
+UNTRUSTED = ClockReading(now=NOW - timedelta(hours=5), monotonic=0.0, trusted=False)
 POLL_FAILED = {
     'event': 'owner_commands_poll_failed',
     'error_code': 'owner_commands_unreachable',
@@ -73,6 +76,22 @@ def f_listener(f_factory: ReceiveFactoryStub, f_signal: StopSignalStub, f_thread
         secret=SECRET,
         receive_factory=f_factory,
         read_clock=partial(ClockReading, now=NOW, monotonic=0.0, trusted=True),
+        stop_signal=f_signal,
+        start_thread=f_thread,
+        retry_after=30.0,
+    )
+
+
+@pytest.fixture
+def f_syncing_listener(
+    f_factory: ReceiveFactoryStub,
+    f_signal: StopSignalStub,
+    f_thread: StartThreadStub,
+) -> CommandListener:
+    return CommandListener(
+        secret=SECRET,
+        receive_factory=f_factory,
+        read_clock=ClockReadingsStub(readings=(UNTRUSTED, UNTRUSTED, TRUSTED)),
         stop_signal=f_signal,
         start_thread=f_thread,
         retry_after=30.0,
@@ -150,6 +169,22 @@ def test_a_failed_poll_waits_30_seconds_and_is_logged_once_a_streak(
         [_input(None, resume=True), _input(None, resume=True), _input(None, resume=True), _input(42, resume=False)],
         [30.0, 30.0, 30.0],
         [POLL_FAILED, {'event': 'owner_commands_poll_recovered', 'log_level': 'info'}, POLL_FAILED, STARTED],
+    )
+
+
+@pytest.mark.parametrize(('f_receive', 'f_signal'), [((_answered(42),), 3)], indirect=True)
+def test_the_listener_polls_only_once_the_clock_is_synchronised(
+    f_syncing_listener: CommandListener,
+    f_receive: ExecutableStub[ReceiveCommandsInputDTO, ReceiveCommandsOutputDTO],
+    f_signal: StopSignalStub,
+) -> None:
+    with capture_logs() as logs:
+        f_syncing_listener.start()
+
+    assert (f_receive.inputs, f_signal.waits, logs) == (
+        [_input(None, resume=True)],
+        [30.0, 30.0],
+        [{'event': 'owner_commands_wait_for_clock', 'log_level': 'info'}, STARTED],
     )
 
 

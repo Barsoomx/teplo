@@ -142,6 +142,9 @@ msgstr "Гостевых комнат нет: отметьте их в наст�
 msgid "Guests: from 1 to 3 nights."
 msgstr "Гости: от 1 до 3 ночей."
 
+msgid "The clock is not synced: guests can be switched on once it is."
+msgstr "Часы не синхронизированы: гостей можно включить, когда часы синхронизируются."
+
 #, python-format
 msgid "%(room)s: %(target)s° until %(until)s."
 msgstr "%(room)s: %(target)s° до %(until)s."

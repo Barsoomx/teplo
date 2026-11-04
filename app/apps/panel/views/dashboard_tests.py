@@ -40,6 +40,8 @@ MOSCOW = ZoneInfo('Europe/Moscow')
 PANEL_NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
 GUESTS_LEAVE = datetime(2026, 11, 5, 14, 0, tzinfo=MOSCOW)
 OPEN_SPACE = 'Гостиная, кухня и прихожая'
+SYNCED = ClockStatus(trusted=True, code=ClockStatusCode.NTP_SYNCHRONIZED, reason='ntp synchronized')
+UNSYNCED = ClockStatus(trusted=False, code=ClockStatusCode.NTP_NOT_SYNCHRONIZED, reason='ntp not synchronized')
 
 
 @pytest.fixture
@@ -237,8 +239,8 @@ def m_guests_overview_use_case(
     request: pytest.FixtureRequest,
     house_overview: GetPanelOverviewOutputDTO,
 ) -> Iterator[MagicMock]:
-    guest_rooms, guests_until = request.param
-    overview = replace(house_overview, guest_rooms=guest_rooms, guests_until=guests_until)
+    guest_rooms, guests_until, clock = request.param
+    overview = replace(house_overview, guest_rooms=guest_rooms, guests_until=guests_until, clock=clock)
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = overview
         yield use_case
@@ -652,13 +654,25 @@ def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> N
     ('m_guests_overview_use_case', 'texts'),
     [
         (
-            ((OPEN_SPACE,), None),
+            ((OPEN_SPACE,), None, SYNCED),
             (True, 'title="Гостевые комнаты: Гостиная, кухня и прихожая"', 'Гости<', 'hx-vals=\'{"nights": 1}\''),
         ),
-        (((OPEN_SPACE,), GUESTS_LEAVE), (True, 'Гости до 14:00 завтра', 'Гости уехали', 'hx-vals=\'{"nights": 0}\'')),
-        (((), None), (False, 'Гостевые комнаты', 'Гости<', '/guests/')),
+        (
+            ((OPEN_SPACE,), GUESTS_LEAVE, SYNCED),
+            (True, 'Гости до 14:00 завтра', 'Гости уехали', 'hx-vals=\'{"nights": 0}\''),
+        ),
+        (
+            ((OPEN_SPACE,), None, UNSYNCED),
+            (
+                True,
+                'title="Гостей можно включить, когда часы синхронизируются"',
+                'hx-disabled-elt="this" disabled>',
+                'Гости<',
+            ),
+        ),
+        (((), None, SYNCED), (False, 'Гостевые комнаты', 'Гости<', '/guests/')),
     ],
-    ids=['offered', 'staying', 'no_guest_room'],
+    ids=['offered', 'staying', 'waiting_for_the_clock', 'no_guest_room'],
     indirect=['m_guests_overview_use_case'],
 )
 def test_dashboard_switches_guests_on_and_off_in_the_house_facts(

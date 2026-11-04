@@ -6,7 +6,7 @@ from django.db import OperationalError
 from django.utils import translation
 from django.utils.functional import Promise
 
-from apps.climate.domain.errors import RoomNotAdjustableError, ZoneNotFoundError
+from apps.climate.domain.errors import ClockUntrustedError, RoomNotAdjustableError, ZoneNotFoundError
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import (
     MAX_GUEST_NIGHTS,
@@ -38,6 +38,7 @@ from apps.notifications.services.command_replies import (
     BOOST,
     BOOST_FOR_COLD,
     BUSY,
+    GUESTS_CLOCK,
     GUESTS_OFF,
     GUESTS_SET,
     HELP,
@@ -115,7 +116,9 @@ class ClimateCommandRunner:
             return self._guests(command.nights or 0, now, clock_trusted=clock_trusted)
 
         if command.kind is CommandKind.GUESTS_OFF:
-            self._set_guests.execute(SetGuestsInputDTO(nights=0, now=now, source=CommandSource.TELEGRAM))
+            self._set_guests.execute(
+                SetGuestsInputDTO(nights=0, now=now, clock_trusted=clock_trusted, source=CommandSource.TELEGRAM),
+            )
             return str(GUESTS_OFF)
 
         if command.kind is CommandKind.UNKNOWN_ROOM:
@@ -155,10 +158,12 @@ class ClimateCommandRunner:
 
         try:
             until = self._set_guests.execute(
-                SetGuestsInputDTO(nights=nights, now=now, source=CommandSource.TELEGRAM),
+                SetGuestsInputDTO(nights=nights, now=now, clock_trusted=clock_trusted, source=CommandSource.TELEGRAM),
             ).until
         except SettingsRejectedError:
             return str(NIGHTS)
+        except ClockUntrustedError:
+            return str(GUESTS_CLOCK)
 
         rooms = self._guest_rooms(now, clock_trusted=clock_trusted)
         lines = [] if until is None else [_guests_line(until, rooms, now)]

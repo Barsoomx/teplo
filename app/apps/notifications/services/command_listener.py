@@ -79,9 +79,16 @@ class CommandListener:
         offset: int | None = None
         resume = True
         failing = False
+        waiting = False
         while not self._stop_signal.is_set():
             try:
-                output = self._receive(receive, offset, resume=resume)
+                reading = self._read_clock()
+                if not reading.trusted:
+                    waiting = self._wait_for_clock(waiting=waiting)
+                    continue
+
+                waiting = False
+                output = self._receive(receive, reading, offset, resume=resume)
             except CommandPollError as error:
                 if not failing:
                     logger.warning('owner_commands_poll_failed', error_code=error.error_code, detail=error.detail)
@@ -99,8 +106,20 @@ class CommandListener:
                 logger.info('owner_commands_poll_recovered')
             offset, resume, failing = output.offset, False, False
 
-    def _receive(self, receive: Receive, offset: int | None, *, resume: bool) -> ReceiveCommandsOutputDTO:
-        reading = self._read_clock()
+    def _wait_for_clock(self, *, waiting: bool) -> bool:
+        if not waiting:
+            logger.info('owner_commands_wait_for_clock')
+        self._stop_signal.wait(self._retry_after)
+        return True
+
+    def _receive(
+        self,
+        receive: Receive,
+        reading: ClockReading,
+        offset: int | None,
+        *,
+        resume: bool,
+    ) -> ReceiveCommandsOutputDTO:
         close_old_connections()
         try:
             return receive.execute(

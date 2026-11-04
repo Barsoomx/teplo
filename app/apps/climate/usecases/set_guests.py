@@ -3,6 +3,7 @@ from datetime import datetime
 
 from django.utils import timezone
 
+from apps.climate.domain.errors import ClockUntrustedError
 from apps.climate.domain.events import GuestsCleared, GuestsSet
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.ports import GuestsStore
@@ -20,6 +21,7 @@ from apps.core.services.database_transaction import DatabaseTransaction
 class SetGuestsInputDTO:
     nights: int
     now: datetime
+    clock_trusted: bool
     source: CommandSource
 
 
@@ -46,6 +48,9 @@ class SetGuestsUseCase(BaseUseCase[SetGuestsInputDTO, SetGuestsOutputDTO]):
     def _execute(self, input_dto: SetGuestsInputDTO) -> SetGuestsOutputDTO:
         if not 0 <= input_dto.nights <= MAX_GUEST_NIGHTS:
             raise SettingsRejectedError((SettingProblem(field='nights', code='out_of_range'),))
+
+        if input_dto.nights > 0 and not input_dto.clock_trusted:
+            raise ClockUntrustedError
 
         with self._transaction():
             until, event = self._set(input_dto)

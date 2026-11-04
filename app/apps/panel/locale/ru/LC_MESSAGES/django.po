@@ -1064,6 +1064,9 @@ msgstr "Гости"
 msgid "Guests have left"
 msgstr "Гости уехали"
 
+msgid "Guests can be switched on once the clock is synced"
+msgstr "Гостей можно включить, когда часы синхронизируются"
+
 #, python-format
 msgid "Guests until %(time)s"
 msgstr "Гости до %(time)s"

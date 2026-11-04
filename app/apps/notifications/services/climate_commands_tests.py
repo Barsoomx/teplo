@@ -7,7 +7,7 @@ import pytest
 from django.db import OperationalError
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
-from apps.climate.domain.errors import RoomNotAdjustableError
+from apps.climate.domain.errors import ClockUntrustedError, RoomNotAdjustableError
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import IntentReason, OverrideChange, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
@@ -214,6 +214,22 @@ def f_status_runner(
 
 
 @pytest.fixture
+def f_clockless_guests() -> ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO]:
+    return ExecutableStub(outcomes=(ClockUntrustedError(),))
+
+
+@pytest.fixture
+def f_clockless_runner(
+    f_clockless_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_rooms: RoomStatusSourceStub,
+) -> ClimateCommandRunner:
+    return _runner(f_clockless_guests, f_override, f_clear, f_boost, f_rooms)
+
+
+@pytest.fixture
 def f_hostless_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
@@ -284,7 +300,7 @@ def test_guests_hold_the_guest_rooms_and_name_what_each_floor_does(
     reply = f_runner.run(OwnerCommand(kind=CommandKind.GUESTS, nights=1), NOW, clock_trusted=True)
 
     assert (f_guests.inputs, reply) == (
-        [SetGuestsInputDTO(nights=1, now=NOW, source=CommandSource.TELEGRAM)],
+        [SetGuestsInputDTO(nights=1, now=NOW, clock_trusted=True, source=CommandSource.TELEGRAM)],
         f'Гости до 14:00 завтра: Гостиная, кухня и прихожая в комфорте.\n{OPEN_SPACE_FLOORS}',
     )
 
@@ -298,6 +314,18 @@ def test_guests_for_nights_out_of_range_change_nothing(
     reply = f_runner.run(OwnerCommand(kind=CommandKind.GUESTS, nights=nights), NOW, clock_trusted=True)
 
     assert (f_guests.inputs, reply) == ([], 'Гости: от 1 до 3 ночей.')
+
+
+def test_guests_on_an_untrusted_clock_wait_for_it(
+    f_clockless_runner: ClimateCommandRunner,
+    f_clockless_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+) -> None:
+    reply = f_clockless_runner.run(OwnerCommand(kind=CommandKind.GUESTS, nights=1), NOW, clock_trusted=False)
+
+    assert (f_clockless_guests.inputs, reply) == (
+        [SetGuestsInputDTO(nights=1, now=NOW, clock_trusted=False, source=CommandSource.TELEGRAM)],
+        'Часы не синхронизированы: гостей можно включить, когда часы синхронизируются.',
+    )
 
 
 def test_guests_without_a_guest_room_change_nothing(
@@ -316,7 +344,7 @@ def test_guests_off_end_the_guests(
     reply = f_runner.run(OwnerCommand(kind=CommandKind.GUESTS_OFF), NOW, clock_trusted=True)
 
     assert (f_guests.inputs, reply) == (
-        [SetGuestsInputDTO(nights=0, now=NOW, source=CommandSource.TELEGRAM)],
+        [SetGuestsInputDTO(nights=0, now=NOW, clock_trusted=True, source=CommandSource.TELEGRAM)],
         'Режим гостей выключен.',
     )
 

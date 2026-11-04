@@ -5,6 +5,7 @@ import pytest
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
+from apps.climate.domain.errors import ClockUntrustedError
 from apps.climate.domain.events import GuestsCleared, GuestsSet
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import GuestsRecord
@@ -75,7 +76,9 @@ def test_guests_stay_until_the_end_hour_after_the_coming_night(
     nights: int,
     until: datetime,
 ) -> None:
-    output = f_use_case.execute(SetGuestsInputDTO(nights=nights, now=now, source=CommandSource.PANEL))
+    output = f_use_case.execute(
+        SetGuestsInputDTO(nights=nights, now=now, clock_trusted=True, source=CommandSource.PANEL),
+    )
 
     assert (output, f_guests.saved, f_events, f_transaction.outcomes) == (
         SetGuestsOutputDTO(until=until),
@@ -87,7 +90,9 @@ def test_guests_stay_until_the_end_hour_after_the_coming_night(
 
 @pytest.mark.parametrize('f_guests', [(None, 12)], indirect=True)
 def test_guests_leave_at_the_hour_of_the_settings(f_use_case: SetGuestsUseCase) -> None:
-    output = f_use_case.execute(SetGuestsInputDTO(nights=1, now=EVENING, source=CommandSource.TELEGRAM))
+    output = f_use_case.execute(
+        SetGuestsInputDTO(nights=1, now=EVENING, clock_trusted=True, source=CommandSource.TELEGRAM),
+    )
 
     assert output.until == datetime(2026, 11, 5, 12, 0, tzinfo=MOSCOW)
 
@@ -108,7 +113,9 @@ def test_no_nights_end_guests_and_journal_it_only_while_they_stay(
     f_events: list[DomainEvent],
     events: list[DomainEvent],
 ) -> None:
-    output = f_use_case.execute(SetGuestsInputDTO(nights=0, now=EVENING, source=CommandSource.TELEGRAM))
+    output = f_use_case.execute(
+        SetGuestsInputDTO(nights=0, now=EVENING, clock_trusted=True, source=CommandSource.TELEGRAM),
+    )
 
     assert (output, f_guests.saved, f_events) == (SetGuestsOutputDTO(until=None), [None], events)
 
@@ -122,7 +129,9 @@ def test_guests_for_more_than_three_nights_are_refused_before_anything_is_read(
     nights: int,
 ) -> None:
     with pytest.raises(SettingsRejectedError) as raised:
-        f_use_case.execute(SetGuestsInputDTO(nights=nights, now=EVENING, source=CommandSource.PANEL))
+        f_use_case.execute(
+            SetGuestsInputDTO(nights=nights, now=EVENING, clock_trusted=True, source=CommandSource.PANEL),
+        )
 
     assert (raised.value.problems, f_guests.saved, f_events, f_transaction.outcomes) == (
         (SettingProblem(field='nights', code='out_of_range'),),
@@ -132,12 +141,43 @@ def test_guests_for_more_than_three_nights_are_refused_before_anything_is_read(
     )
 
 
+def test_guests_wait_for_a_synchronised_clock_to_know_their_end(
+    f_use_case: SetGuestsUseCase,
+    f_guests: GuestsStoreStub,
+    f_transaction: TransactionStub,
+    f_events: list[DomainEvent],
+) -> None:
+    with pytest.raises(ClockUntrustedError):
+        f_use_case.execute(SetGuestsInputDTO(nights=1, now=LATE_NIGHT, clock_trusted=False, source=CommandSource.PANEL))
+
+    assert (f_guests.saved, f_events, f_transaction.outcomes) == ([], [], [])
+
+
+@pytest.mark.parametrize('f_guests', [(TOMORROW_AT_TWO, 14)], indirect=True)
+def test_guests_end_on_an_untrusted_clock_too(
+    f_use_case: SetGuestsUseCase,
+    f_guests: GuestsStoreStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(
+        SetGuestsInputDTO(nights=0, now=EVENING, clock_trusted=False, source=CommandSource.PANEL),
+    )
+
+    assert (output, f_guests.saved, f_events) == (
+        SetGuestsOutputDTO(until=None),
+        [None],
+        [GuestsCleared(source=CommandSource.PANEL, occurred_at=EVENING)],
+    )
+
+
 @pytest.mark.django_db
 def test_stored_guests_are_locked_before_they_are_read_and_journaled_once_set(
     f_stored_guests: ClimateSettings,
 ) -> None:
     with CaptureQueriesContext(connection) as queries:
-        SetGuestsUseCase.init().execute(SetGuestsInputDTO(nights=1, now=EVENING, source=CommandSource.PANEL))
+        SetGuestsUseCase.init().execute(
+            SetGuestsInputDTO(nights=1, now=EVENING, clock_trusted=True, source=CommandSource.PANEL),
+        )
 
     statements = [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]
     assert (

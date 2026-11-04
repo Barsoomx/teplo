@@ -14,3 +14,11 @@ class ComfortWindowNotFoundError(DomainError):
 class RoomNotAdjustableError(DomainError):
     def __init__(self, slug: str) -> None:
         super().__init__(f'room not adjustable: {slug}', error_code='room_not_adjustable')
+
+
+class ClockUntrustedError(DomainError):
+    def __init__(self) -> None:
+        super().__init__(
+            'the clock is not synchronised, so guests would end at the wrong hour',
+            error_code='clock_untrusted',
+        )
