@@ -23,6 +23,16 @@ UNEQUAL_OPEN_SPACE = (
     'site_barsoom 0009: the open-space zones living-room, kitchen and hallway differ in comfort windows '
     'or air targets; make them equal in the panel, then migrate again'
 )
+MISSING_SOURCE = (
+    'site_barsoom 0009: the room %(room)s holds the zones %(zones)s but no zone %(zone)s, whose comfort windows and '
+    'air targets it takes; in /admin/climate/zone/ give that zone back the slug %(zone)s and the room %(room)s, or '
+    'add it again there, then migrate again'
+)
+UNRESOLVED_BEDROOM = (
+    'site_barsoom 0009: no room has the slug bedroom, whose backup heat goes back into the climate settings as the '
+    'second-floor guard, while a room climate names an air sensor or a backup zone; give the bedroom back the slug '
+    'bedroom in /admin/house/room/, then roll back again'
+)
 
 
 def move_comfort(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -> None:
@@ -31,6 +41,7 @@ def move_comfort(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -> N
     climate_model = apps.get_model('climate', 'RoomClimate')
     rooms = {room.slug: room for room in apps.get_model('house', 'Room').objects.all()}
     zones = {zone.slug: zone for zone in zone_model.objects.all()}
+    _check_sources(rooms, zones)
     open_space = [zones[slug] for slug in OPEN_SPACE_ZONES if slug in zones]
     if len({_comfort(zone, period_model) for zone in open_space}) > 1:
         raise RuntimeError(UNEQUAL_OPEN_SPACE)
@@ -63,15 +74,7 @@ def restore_comfort(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -
     zone_model = apps.get_model('climate', 'Zone')
     period_model = apps.get_model('climate', 'ComfortPeriod')
     climate_model = apps.get_model('climate', 'RoomClimate')
-    bedroom = climate_model.objects.filter(room__slug=BEDROOM).first()
-    if bedroom is not None:
-        apps.get_model('climate', 'ClimateSettings').objects.update(
-            second_floor_sensor_id=bedroom.air_sensor_id,
-            second_floor_guard_zone_id=bedroom.backup_zone_id,
-            second_floor_guard_threshold=bedroom.backup_below,
-            second_floor_guard_hysteresis=bedroom.backup_hysteresis,
-            second_floor_guard_live=bedroom.backup_live,
-        )
+    apps.get_model('climate', 'ClimateSettings').objects.update(**_guard(climate_model))
     for climate in climate_model.objects.all():
         zones = list(zone_model.objects.filter(room_id=climate.room_id))
         windows = list(period_model.objects.filter(room_climate=climate).values_list('weekday', 'start', 'end'))
@@ -92,6 +95,34 @@ def restore_comfort(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -
 def _comfort(zone: Model, period_model: type[Model]) -> tuple[frozenset[tuple[object, ...]], Decimal, Decimal]:
     windows = frozenset(period_model.objects.filter(zone=zone).values_list('weekday', 'start', 'end'))
     return windows, zone.comfort_air_target, zone.night_air_target
+
+
+def _check_sources(rooms: dict[str, Model], zones: dict[str, Model]) -> None:
+    for room_slug, zone_slug in ROOM_ZONES:
+        room = rooms.get(room_slug)
+        if room is None or zone_slug in zones:
+            continue
+
+        held = sorted(zone.slug for zone in zones.values() if zone.room_id == room.pk)
+        if held:
+            raise RuntimeError(MISSING_SOURCE % {'room': room_slug, 'zones': ', '.join(held), 'zone': zone_slug})
+
+
+def _guard(climate_model: type[Model]) -> dict[str, object]:
+    bedroom = climate_model.objects.filter(room__slug=BEDROOM).first()
+    if bedroom is not None:
+        return {
+            'second_floor_sensor_id': bedroom.air_sensor_id,
+            'second_floor_guard_zone_id': bedroom.backup_zone_id,
+            'second_floor_guard_threshold': bedroom.backup_below,
+            'second_floor_guard_hysteresis': bedroom.backup_hysteresis,
+            'second_floor_guard_live': bedroom.backup_live,
+        }
+
+    if climate_model.objects.exclude(air_sensor=None, backup_zone=None).exists():
+        raise RuntimeError(UNRESOLVED_BEDROOM)
+
+    return {'second_floor_sensor_id': None, 'second_floor_guard_zone_id': None}
 
 
 def _bedroom(apps: StateApps) -> dict[str, object]:

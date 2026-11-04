@@ -54,6 +54,48 @@ jobs:
           TEPLO_SITE=example TEPLO_DB_PATH=/tmp/teplo-example.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.models import Zone; from apps.devices.models import Device; from apps.house.repositories.house import HouseRepository; assert ([(floor.slug, [room.slug for room in floor.rooms]) for floor in HouseRepository.floors()], sorted(Zone.objects.values_list('slug', 'room__slug')), sorted(Device.objects.values_list('slug', 'room__slug')), Device.objects.get(slug='air-second-floor').name) == ([('floor-1', ['living-room', 'bathroom']), ('floor-2', ['bedroom'])], [('bathroom', 'bathroom'), ('living-room', 'living-room')], [('air-living-room', 'living-room'), ('air-second-floor', 'bedroom'), ('outdoor', None), ('phase-meter', None), ('plug-water-heater', 'bathroom'), ('thermostat-bathroom', 'bathroom'), ('thermostat-living-room', 'living-room')], 'Bedroom air sensor')"
           TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom.sqlite3 poetry run python app/manage.py shell -c "from apps.house.repositories.house import HouseRepository; bathroom = ('санузел', 'санузл', 'ванн', 'туалет'); assert [(room.slug, room.aliases) for room in HouseRepository.rooms()] == [('open-space', ('гостин', 'кухн', 'прихож', 'зал')), ('bathroom-1f', bathroom), ('bedroom', ('спальн',)), ('office', ('кабинет', 'офис')), ('bathroom-2f', bathroom)]"
           TEPLO_SITE=example TEPLO_DB_PATH=/tmp/teplo-example.sqlite3 poetry run python app/manage.py shell -c "from apps.house.repositories.house import HouseRepository; assert [(room.slug, room.aliases) for room in HouseRepository.rooms()] == [('living-room', ('living', 'гостин')), ('bathroom', ('bath', 'ванн', 'санузел', 'санузл')), ('bedroom', ('bed', 'спальн'))]"
+      - name: Site migrations stop before a room loses its comfort or the bedroom its backup heat
+        env:
+          DJANGO_SETTINGS_MODULE: settings.settings
+          DJANGO_SECRET_KEY: ci-site-migrations-only
+        run: |
+          sql() { poetry run python app/manage.py shell -c "from django.db import connection; connection.cursor().execute(\"$1\")"; }
+          refused() { if poetry run python app/manage.py migrate "$@" --noinput 2> /tmp/refused.log; then echo 'migrate went through'; exit 1; fi; tail -n 1 /tmp/refused.log; }
+          export TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom-lounge.sqlite3
+          poetry run python app/manage.py migrate site_barsoom 0007 --noinput
+          sql "UPDATE climate_zone SET slug = 'lounge' WHERE slug = 'living-room'"
+          refused
+          grep -q 'the room open-space holds the zones hallway, kitchen but no zone living-room' /tmp/refused.log
+          poetry run python app/manage.py shell -c "from apps.climate.models import RoomClimate; assert not RoomClimate.objects.exists()"
+          sql "UPDATE climate_zone SET slug = 'living-room', room_id = (SELECT id FROM house_room WHERE slug = 'open-space') WHERE slug = 'lounge'"
+          poetry run python app/manage.py migrate --noinput
+          poetry run python app/manage.py shell -c "from apps.climate.models import ComfortPeriod; from apps.climate.repositories.room_climate import RoomClimateRepository; rooms = {room.slug: room for room in RoomClimateRepository.all_settings()}; assert (len(rooms['open-space'].windows), ComfortPeriod.objects.count()) == (7, 56)"
+          export TEPLO_SITE=example TEPLO_DB_PATH=/tmp/teplo-example-lounge.sqlite3
+          poetry run python app/manage.py migrate site_example 0008 --noinput
+          sql "UPDATE climate_zone SET slug = 'lounge' WHERE slug = 'living-room'"
+          refused
+          grep -q 'the room living-room holds the zones lounge but no zone living-room' /tmp/refused.log
+          poetry run python app/manage.py shell -c "from apps.climate.models import RoomClimate; assert not RoomClimate.objects.exists()"
+          sql "UPDATE climate_zone SET slug = 'living-room' WHERE slug = 'lounge'"
+          poetry run python app/manage.py migrate --noinput
+          poetry run python app/manage.py shell -c "from apps.climate.repositories.room_climate import RoomClimateRepository; rooms = {room.slug: room for room in RoomClimateRepository.all_settings()}; assert len(rooms['living-room'].windows) == 7"
+          for site in example:bathroom barsoom:bathroom-2f; do
+            name=${site%%:*}
+            cp /tmp/teplo-$name.sqlite3 /tmp/teplo-$name-renamed-bedroom.sqlite3
+            export TEPLO_SITE=$name TEPLO_DB_PATH=/tmp/teplo-$name-renamed-bedroom.sqlite3
+            poetry run python app/manage.py shell -c "from apps.climate.models import RoomClimate; from apps.house.models import Room; RoomClimate.objects.filter(room__slug='bedroom').update(backup_below='18.5', backup_live=True); Room.objects.filter(slug='bedroom').update(slug='master-bedroom')"
+            refused climate 0009
+            grep -q 'no room has the slug bedroom' /tmp/refused.log
+            poetry run python app/manage.py shell -c "from apps.climate.models import RoomClimate; assert RoomClimate.objects.filter(room__slug='master-bedroom', backup_zone__slug='${site#*:}').exists()"
+            poetry run python app/manage.py shell -c "from apps.house.models import Room; Room.objects.filter(slug='master-bedroom').update(slug='bedroom')"
+            poetry run python app/manage.py migrate climate 0009 --noinput
+            poetry run python app/manage.py shell -c "from decimal import Decimal; from apps.climate.models import ClimateSettings; assert list(ClimateSettings.objects.values_list('second_floor_sensor__slug', 'second_floor_guard_zone__slug', 'second_floor_guard_threshold', 'second_floor_guard_live')) == [('air-second-floor', '${site#*:}', Decimal('18.5'), True)]"
+            cp /tmp/teplo-$name.sqlite3 /tmp/teplo-$name-bedroomless.sqlite3
+            export TEPLO_DB_PATH=/tmp/teplo-$name-bedroomless.sqlite3
+            poetry run python app/manage.py shell -c "from apps.house.models import Room; Room.objects.filter(slug='bedroom').delete()"
+            poetry run python app/manage.py migrate climate 0009 --noinput
+            poetry run python app/manage.py shell -c "from apps.climate.models import ClimateSettings; assert list(ClimateSettings.objects.values_list('second_floor_sensor', 'second_floor_guard_zone')) == [(None, None)]"
+          done
       - name: Site migrations roll back past the house
         env:
           DJANGO_SETTINGS_MODULE: settings.settings

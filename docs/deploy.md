@@ -315,7 +315,7 @@ Rolling back past guests and room overrides takes one step. `migrate climate 001
 ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate climate 0010'
 ```
 
-Rolling back past the room comfort takes one step. `migrate climate 0009` undoes the site's `0009_room_comfort` first: it copies each room's comfort windows and air targets back onto its zones, the bedroom's backup heat back into the climate settings as the second-floor guard, and deletes the windows only a room held and the room climates; then it undoes the schema:
+Rolling back past the room comfort takes one step. `migrate climate 0009` undoes the site's `0009_room_comfort` first: it copies each room's comfort windows and air targets back onto its zones, the backup heat of the room with the slug `bedroom` back into the climate settings as the second-floor guard, and deletes the windows only a room held and the room climates; then it undoes the schema. When no room has that slug while a room climate still names an air sensor or a backup zone, as after the bedroom's slug was changed in `/admin/house/room/`, it stops before it changes anything and says so: give the bedroom back the slug `bedroom` there and run it again. With no such room and no room climate naming either, as after the bedroom was deleted, the guard gets no sensor and no zone and stays off:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate climate 0009'
