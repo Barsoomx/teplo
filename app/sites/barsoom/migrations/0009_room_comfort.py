@@ -30,8 +30,9 @@ MISSING_SOURCE = (
 )
 UNRESOLVED_BEDROOM = (
     'site_barsoom 0009: no room has the slug bedroom, whose backup heat goes back into the climate settings as the '
-    'second-floor guard, while a room climate names an air sensor or a backup zone; give the bedroom back the slug '
-    'bedroom in /admin/house/room/, then roll back again'
+    'second-floor guard, while a room climate names an air sensor or a backup zone; run migrate house 0002 so that '
+    '/admin/house/room/ works again, give the room that holds the backup heat the slug bedroom there, or clear the '
+    'air sensor and backup zone of the other room climates in /admin/climate/roomclimate/, then roll back again'
 )
 
 
