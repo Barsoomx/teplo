@@ -1,7 +1,7 @@
 import itertools
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Collection, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import replace
 from datetime import datetime, timedelta
@@ -98,13 +98,16 @@ class ZoneWriteGate:
                 stored_at=moment,
             )
 
-    def clear(self, zone: str) -> bool:
+    @contextmanager
+    def clearing(self, zones: Collection[str]) -> Iterator[frozenset[str]]:
         with self._lock:
-            if override_holds(self._slots.get(zone), self._clock()):
-                return False
-
-            self._slots.pop(zone, None)
-            return True
+            moment = self._clock()
+            seen = {zone: self._slots.get(zone) for zone in zones}
+        freed = frozenset(zone for zone, slot in seen.items() if not override_holds(slot, moment))
+        yield freed
+        with self._lock:
+            for zone in freed:
+                self._free(zone, seen[zone])
 
     def _holds(self, reservation: WriteReservation) -> bool:
         with self._lock:
@@ -116,6 +119,11 @@ class ZoneWriteGate:
             if zone not in self._zone_locks:
                 self._zone_locks[zone] = self._zone_lock()
             return self._zone_locks[zone]
+
+    def _free(self, zone: str, seen: WriteSlot | None) -> None:
+        slot = self._slots.get(zone)
+        if slot is not None and seen is not None and slot.generation == seen.generation:
+            del self._slots[zone]
 
     def _take(self, zone: str, at: datetime, moment: float, *, override: bool) -> WriteReservation:
         previous = self._slots.get(zone)

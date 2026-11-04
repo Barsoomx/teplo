@@ -30,7 +30,8 @@ def _kitchen_shed(gate: ZoneWriteGate) -> None:
 
 
 def _kitchen_boosted(gate: ZoneWriteGate) -> None:
-    gate.clear('kitchen')
+    with gate.clearing(('kitchen',)):
+        pass
 
 
 def _stored(gate: ZoneWriteGate, reservation: WriteReservation) -> None:
@@ -516,16 +517,54 @@ def test_shed_of_another_zone_goes_out_at_once_during_a_write(
 
 @pytest.mark.usefixtures('f_reservation')
 def test_cleared_zone_takes_its_next_write_at_once(f_gate: ZoneWriteGate) -> None:
-    freed = f_gate.clear('kitchen')
+    with f_gate.clearing(('kitchen', 'living-room')) as freed:
+        pass
 
     assert (freed, f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None, read_at=START)) == (
-        True,
+        frozenset({'kitchen', 'living-room'}),
         WriteReservation(
             zone='kitchen',
             slot=WriteSlot(generation=2, at=NOW + timedelta(minutes=1), moment=START),
             previous=None,
         ),
     )
+
+
+@pytest.mark.usefixtures('f_reservation')
+def test_clearing_the_database_refuses_leaves_the_slot_holding_the_zone(f_gate: ZoneWriteGate) -> None:
+    with pytest.raises(OperationalError), f_gate.clearing(('kitchen',)):
+        raise OperationalError('database is locked')
+
+    assert f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None, read_at=START) is None
+
+
+def test_clearing_frees_a_slot_whose_stamp_is_stored_meanwhile(
+    f_gate: ZoneWriteGate,
+    f_reservation: WriteReservation,
+) -> None:
+    with f_gate.clearing(('kitchen',)):
+        _stored(f_gate, f_reservation)
+
+    assert f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None, read_at=START) == WriteReservation(
+        zone='kitchen',
+        slot=WriteSlot(generation=2, at=NOW + timedelta(minutes=1), moment=START),
+        previous=None,
+    )
+
+
+@pytest.mark.usefixtures('f_reservation')
+def test_clearing_keeps_the_slot_of_a_shed_that_overtakes_it(f_gate: ZoneWriteGate) -> None:
+    with f_gate.clearing(('kitchen',)):
+        _kitchen_shed(f_gate)
+
+    assert f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None, read_at=START) is None
+
+
+def test_clearing_keeps_the_slot_of_a_first_write_that_overtakes_it(f_gate: ZoneWriteGate) -> None:
+    with f_gate.clearing(('kitchen',)):
+        f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START)
+
+    assert f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None, read_at=START) is None
 
 
 @pytest.mark.parametrize(
@@ -555,6 +594,9 @@ def test_clear_keeps_the_slot_of_a_shed_for_thirty_minutes_on_the_monotonic_cloc
 ) -> None:
     f_clock.advance(seconds)
 
-    freed = f_gate.clear('kitchen')
+    with f_gate.clearing(('kitchen',)) as freed:
+        pass
 
-    assert (freed, f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None, read_at=f_clock())) == expected
+    assert ('kitchen' in freed, f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None, read_at=f_clock())) == (
+        expected
+    )

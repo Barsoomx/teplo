@@ -93,6 +93,11 @@ SHED_BOILER = replace(
 )
 
 
+def _boost_frees(writes: ZoneWriteGate, zone: str) -> bool:
+    with writes.clearing((zone,)) as freed:
+        return zone in freed
+
+
 @pytest.fixture
 def f_clock() -> MonotonicClockStub:
     return MonotonicClockStub(now=START)
@@ -160,7 +165,7 @@ def test_recovered_hold_keeps_a_boost_from_freeing_the_zone_until_thirty_minutes
 ) -> None:
     f_clock.advance(seconds)
 
-    assert f_recovered_writes.clear('kitchen') is freed
+    assert _boost_frees(f_recovered_writes, 'kitchen') is freed
 
 
 @pytest.mark.parametrize(
@@ -199,7 +204,7 @@ def test_hold_recovered_on_a_clock_reading_earlier_than_the_shed_counts_thirty_m
 ) -> None:
     f_clock.advance(seconds)
 
-    assert f_writes_recovered_on_a_clock_behind_the_shed.clear('kitchen') is freed
+    assert _boost_frees(f_writes_recovered_on_a_clock_behind_the_shed, 'kitchen') is freed
 
 
 def test_recovery_on_a_clock_reading_earlier_than_the_sheds_holds_no_floor_written_half_an_hour_after_its_shed(
@@ -208,7 +213,7 @@ def test_recovery_on_a_clock_reading_earlier_than_the_sheds_holds_no_floor_writt
 ) -> None:
     output = f_use_case.execute(RecoverWriteHoldsInputDTO(now=SHED_AT - timedelta(hours=1)))
 
-    assert (output, f_writes.clear('hallway'), f_writes.clear('kitchen')) == (
+    assert (output, _boost_frees(f_writes, 'hallway'), _boost_frees(f_writes, 'kitchen')) == (
         RecoverWriteHoldsOutputDTO(zones=('kitchen', 'living-room')),
         True,
         False,
@@ -221,4 +226,4 @@ def test_teplo_in_dry_run_recovers_no_hold(
 ) -> None:
     output = f_dry_run_use_case.execute(RecoverWriteHoldsInputDTO(now=NOW))
 
-    assert (output, f_writes.clear('kitchen')) == (RecoverWriteHoldsOutputDTO(zones=()), True)
+    assert (output, _boost_frees(f_writes, 'kitchen')) == (RecoverWriteHoldsOutputDTO(zones=()), True)

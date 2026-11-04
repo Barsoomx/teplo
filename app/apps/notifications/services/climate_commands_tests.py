@@ -12,7 +12,7 @@ from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import IntentReason, OverrideChange, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
 from apps.climate.domain.zone_intent import ForcedTarget
-from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO
+from apps.climate.usecases.boost_zones import BoostZonesInputDTO, BoostZonesOutputDTO
 from apps.climate.usecases.clear_room_override import ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO
 from apps.climate.usecases.override_room import OverrideRoomInputDTO, OverrideRoomOutputDTO
 from apps.climate.usecases.set_guests import SetGuestsInputDTO, SetGuestsOutputDTO
@@ -144,7 +144,7 @@ def _runner(
     guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     rooms: RoomStatusSourceStub,
     language: str = 'ru',
 ) -> ClimateCommandRunner:
@@ -184,8 +184,8 @@ def f_clear() -> ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutp
 
 
 @pytest.fixture
-def f_boost() -> ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO]:
-    return ExecutableStub(outcomes=(BoostZoneOutputDTO(zone='bathroom-2f', until=UNTIL),))
+def f_boost() -> ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO]:
+    return ExecutableStub(outcomes=(BoostZonesOutputDTO(zones=('bathroom-2f',), until=UNTIL),))
 
 
 @pytest.fixture
@@ -198,7 +198,7 @@ def f_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     return _runner(f_guests, f_override, f_clear, f_boost, f_rooms)
@@ -209,7 +209,7 @@ def f_status_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
 ) -> ClimateCommandRunner:
     return _runner(f_guests, f_override, f_clear, f_boost, RoomStatusSourceStub(readings=(GUESTS_HOUSE,)))
 
@@ -224,7 +224,7 @@ def f_clockless_runner(
     f_clockless_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     return _runner(f_clockless_guests, f_override, f_clear, f_boost, f_rooms)
@@ -236,7 +236,7 @@ def f_unread_after_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
 ) -> ClimateCommandRunner:
     return _runner(f_guests, f_override, f_clear, f_boost, RoomStatusSourceStub(readings=request.param))
 
@@ -246,7 +246,7 @@ def f_hostless_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
 ) -> ClimateCommandRunner:
     rooms = RoomStatusSourceStub(readings=([replace(OPEN_SPACE, guest_room=False), BATHROOM],))
     return _runner(f_guests, f_override, f_clear, f_boost, rooms)
@@ -257,7 +257,7 @@ def f_refused_runner(
     request: pytest.FixtureRequest,
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     return _runner(f_guests, ExecutableStub(outcomes=(request.param,)), f_clear, f_boost, f_rooms)
@@ -267,7 +267,7 @@ def f_refused_runner(
 def f_uncleared_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     clear = ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO](
@@ -281,10 +281,26 @@ def f_english_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     return _runner(f_guests, f_override, f_clear, f_boost, f_rooms, language='en')
+
+
+@pytest.fixture
+def f_locked_boost() -> ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO]:
+    return ExecutableStub(outcomes=(LOCKED,))
+
+
+@pytest.fixture
+def f_locked_boost_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_locked_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+    f_rooms: RoomStatusSourceStub,
+) -> ClimateCommandRunner:
+    return _runner(f_guests, f_override, f_clear, f_locked_boost, f_rooms)
 
 
 def test_status_gives_the_guests_each_room_with_its_target_and_floors_and_the_phases(
@@ -401,13 +417,13 @@ def test_a_target_command_overrides_a_room_that_reads_the_air_and_names_each_flo
 def test_cold_in_a_room_with_floors_and_no_air_reading_boosts_its_floors(
     f_runner: ClimateCommandRunner,
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
 ) -> None:
     reply = f_runner.run(OwnerCommand(kind=CommandKind.WARMER, room=BATHROOM_ROOM), NOW, clock_trusted=True)
 
     assert (f_override.inputs, f_boost.inputs, reply) == (
         [],
-        [BoostZoneInputDTO(zone='bathroom-2f', now=NOW)],
+        [BoostZonesInputDTO(zones=('bathroom-2f',), now=NOW)],
         'Санузел 2 этаж: датчика воздуха нет — буст до 18:40.\nСанузел 2 этаж: пол 30° в ближайшую минуту',
     )
 
@@ -431,7 +447,7 @@ def test_cold_in_a_room_with_floors_and_no_air_reading_boosts_its_floors(
 def test_a_command_a_room_cannot_take_is_answered_and_changes_nothing(
     f_runner: ClimateCommandRunner,
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     command: OwnerCommand,
     expected: str,
 ) -> None:
@@ -442,13 +458,29 @@ def test_a_command_a_room_cannot_take_is_answered_and_changes_nothing(
 
 def test_boost_boosts_every_floor_of_the_room(
     f_runner: ClimateCommandRunner,
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
 ) -> None:
     reply = f_runner.run(OwnerCommand(kind=CommandKind.BOOST, room=OPEN_SPACE_ROOM), NOW, clock_trusted=True)
 
     assert (f_boost.inputs, reply) == (
-        [BoostZoneInputDTO(zone=zone, now=NOW) for zone in ('living-room', 'kitchen', 'hallway')],
+        [BoostZonesInputDTO(zones=('living-room', 'kitchen', 'hallway'), now=NOW)],
         f'Гостиная, кухня и прихожая: буст до 18:40.\n{OPEN_SPACE_FLOORS}',
+    )
+
+
+def test_boost_the_database_refuses_is_answered_busy_after_one_try_for_every_floor_of_the_room(
+    f_locked_boost_runner: ClimateCommandRunner,
+    f_locked_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+) -> None:
+    reply = f_locked_boost_runner.run(
+        OwnerCommand(kind=CommandKind.BOOST, room=OPEN_SPACE_ROOM),
+        NOW,
+        clock_trusted=True,
+    )
+
+    assert (f_locked_boost.inputs, reply) == (
+        [BoostZonesInputDTO(zones=('living-room', 'kitchen', 'hallway'), now=NOW)],
+        'База данных занята: повторите через минуту.',
     )
 
 
@@ -551,7 +583,7 @@ def test_a_change_whose_floors_cannot_be_read_back_is_answered_with_what_it_did(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
     f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     command: OwnerCommand,
     expected: str,
 ) -> None:

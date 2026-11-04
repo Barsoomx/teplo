@@ -130,3 +130,13 @@ def test_boost_unknown_zone_raises(f_use_case: BoostZoneUseCase, f_events: list[
         f_use_case.execute(BoostZoneInputDTO(zone='attic', now=NOW))
 
     assert f_events == []
+
+
+def test_boost_the_database_does_not_store_keeps_the_zones_write_slot(
+    f_use_case: BoostZoneUseCase,
+    f_writes: ZoneWriteGate,
+) -> None:
+    with pytest.raises(ZoneNotFoundError):
+        f_use_case.execute(BoostZoneInputDTO(zone='bathroom-1f', now=NOW))
+
+    assert f_writes.reserve('bathroom-1f', NOW, stamped_at=None, read_at=0.0) is None

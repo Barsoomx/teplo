@@ -17,7 +17,7 @@ from apps.climate.domain.room_intent import (
 )
 from apps.climate.domain.room_status import RoomStatus
 from apps.climate.services.room_status import RoomStatusReader
-from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO, BoostZoneUseCase
+from apps.climate.usecases.boost_zones import BoostZonesInputDTO, BoostZonesOutputDTO, BoostZonesUseCase
 from apps.climate.usecases.clear_room_override import (
     ClearRoomOverrideInputDTO,
     ClearRoomOverrideOutputDTO,
@@ -77,7 +77,7 @@ class ClimateCommandRunner:
         guests: Executable[SetGuestsInputDTO, SetGuestsOutputDTO],
         override: Executable[OverrideRoomInputDTO, OverrideRoomOutputDTO],
         clear: Executable[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
-        boost: Executable[BoostZoneInputDTO, BoostZoneOutputDTO],
+        boost: Executable[BoostZonesInputDTO, BoostZonesOutputDTO],
         rooms: RoomStatusSource,
         phases: PhaseReadout,
         language: str,
@@ -85,7 +85,7 @@ class ClimateCommandRunner:
         self._set_guests = guests
         self._override_room = override
         self._clear_override = clear
-        self._boost_zone = boost
+        self._boost_zones = boost
         self._rooms = rooms
         self._phases = phases
         self._language = language
@@ -96,7 +96,7 @@ class ClimateCommandRunner:
             guests=SetGuestsUseCase.init(),
             override=OverrideRoomUseCase.init(),
             clear=ClearRoomOverrideUseCase.init(),
-            boost=BoostZoneUseCase.init(),
+            boost=BoostZonesUseCase.init(),
             rooms=RoomStatusReader.init(),
             phases=PhaseMeterReadout.init(),
             language=settings.TEPLO_ALERT_LANGUAGE,
@@ -227,8 +227,9 @@ class ClimateCommandRunner:
         if not status.zones:
             return str(NO_FLOOR) % {'room': status.name}
 
-        ends = [self._boost_zone.execute(BoostZoneInputDTO(zone=zone.slug, now=now)).until for zone in status.zones]
-        reply = str(template) % {'room': status.name, 'until': moment_text(max(ends), now)}
+        zones = tuple(zone.slug for zone in status.zones)
+        until = self._boost_zones.execute(BoostZonesInputDTO(zones=zones, now=now)).until
+        reply = str(template) % {'room': status.name, 'until': moment_text(until, now)}
         return self._with_floors(reply, status.slug, now, clock_trusted=clock_trusted)
 
     def _auto(self, room: CommandRoom, now: datetime, *, clock_trusted: bool) -> str:
