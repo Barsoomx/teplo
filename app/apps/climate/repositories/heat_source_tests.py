@@ -95,6 +95,19 @@ def f_house(f_open_space: Room, f_climate_unit: Device) -> Room:
 
 
 @pytest.fixture
+def f_shed_convector(f_climate_unit: Device) -> HeatSource:
+    source = HeatSourceFactory.create(
+        slug='heater-office',
+        name='Конвектор: кабинет',
+        room=RoomFactory.create(slug='office', name='Кабинет'),
+        kind=HeatSourceKind.HEATER,
+        device=f_climate_unit,
+    )
+    SourceLoadFactory.create(heat_source=source, shed_at=COMMANDED_AT - timedelta(minutes=1))
+    return source
+
+
+@pytest.fixture
 def convector_with_a_live_load(f_climate_unit: Device) -> None:
     source = HeatSourceFactory.create(
         slug='heater-office',
@@ -224,6 +237,12 @@ def test_hold_by_hand_of_a_source_teplo_stamped_since_it_was_read_stores_nothing
     )
 
     assert (held, HeatSourceRepository.commanded_settings()[0].manual_until) == (False, None)
+
+
+def test_hold_by_hand_of_a_source_load_management_keeps_off_stores_nothing(f_shed_convector: HeatSource) -> None:
+    held = HeatSourceRepository.hold_by_hand(f_shed_convector.slug, COMMANDED_AT + timedelta(hours=2), stamped_at=None)
+
+    assert (held, HeatSource.objects.get(pk=f_shed_convector.pk).manual_until) == (False, None)
 
 
 def test_hold_by_hand_of_a_source_that_is_gone_raises() -> None:

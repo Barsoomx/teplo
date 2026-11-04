@@ -47,7 +47,11 @@ class ZoneRepository:
 
     @staticmethod
     def hold_by_hand(slug: str, until: datetime, *, stamped_at: datetime | None) -> bool:
-        if Zone.objects.filter(slug=slug, last_command_at=stamped_at).update(manual_until=until) == 1:
+        zones = Zone.objects.filter(slug=slug, last_command_at=stamped_at).exclude(
+            load__shed_at__isnull=False,
+            load__shed_handed_back=False,
+        )
+        if zones.update(manual_until=until) == 1:
             return True
 
         if not Zone.objects.filter(slug=slug).exists():

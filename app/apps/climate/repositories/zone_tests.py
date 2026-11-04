@@ -24,6 +24,7 @@ from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.house.factories import RoomFactory
 from apps.house.models import Room
+from apps.power.factories import ZoneLoadFactory
 
 pytestmark = pytest.mark.django_db
 
@@ -181,6 +182,18 @@ def f_commanded_zone(f_zone: Zone) -> Zone:
         last_air_dry_run_at=NOW - timedelta(minutes=5),
     )
     return f_zone
+
+
+@pytest.fixture
+def f_shed_zone(f_commanded_zone: Zone) -> Zone:
+    ZoneLoadFactory.create(zone=f_commanded_zone, shed_at=NOW - timedelta(minutes=1))
+    return f_commanded_zone
+
+
+@pytest.fixture
+def f_zone_handed_back(f_commanded_zone: Zone) -> Zone:
+    ZoneLoadFactory.create(zone=f_commanded_zone, shed_at=NOW - timedelta(minutes=1), shed_handed_back=True)
+    return f_commanded_zone
 
 
 @pytest.fixture
@@ -393,6 +406,24 @@ def test_hold_by_hand_of_a_zone_teplo_stamped_since_it_was_read_stores_nothing(
     held = ZoneRepository.hold_by_hand(f_commanded_zone.slug, NOW + timedelta(hours=2), stamped_at=stamped_at)
 
     assert (held, Zone.objects.get(pk=f_commanded_zone.pk).manual_until) == (False, None)
+
+
+def test_hold_by_hand_of_a_zone_load_management_keeps_off_stores_nothing(f_shed_zone: Zone) -> None:
+    held = ZoneRepository.hold_by_hand(
+        f_shed_zone.slug, NOW + timedelta(hours=2), stamped_at=NOW - timedelta(minutes=5)
+    )
+
+    assert (held, Zone.objects.get(pk=f_shed_zone.pk).manual_until) == (False, None)
+
+
+def test_hold_by_hand_of_a_zone_load_management_handed_back_is_stored(f_zone_handed_back: Zone) -> None:
+    held = ZoneRepository.hold_by_hand(
+        f_zone_handed_back.slug,
+        NOW + timedelta(hours=2),
+        stamped_at=NOW - timedelta(minutes=5),
+    )
+
+    assert (held, Zone.objects.get(pk=f_zone_handed_back.pk).manual_until) == (True, NOW + timedelta(hours=2))
 
 
 def test_hold_by_hand_of_an_unknown_zone_raises() -> None:
