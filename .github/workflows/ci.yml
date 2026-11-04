@@ -167,3 +167,18 @@ jobs:
             poetry run python app/manage.py migrate --noinput
           done
           TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom-convector.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.repositories.heat_source import HeatSourceRepository; from apps.power.repositories.load import LoadRepository; assert ([(source.slug, source.device_slug, source.load, source.live) for source in HeatSourceRepository.commanded_settings()], [(load.slug, load.priority) for load in LoadRepository.all_records()][-1]) == ([('convector-office', 'heater-office', 'convector-office', False)], ('convector-office', 8))"
+      - name: Site migrations stop a rollback past the office convector while another heater is added
+        env:
+          DJANGO_SETTINGS_MODULE: settings.settings
+          DJANGO_SECRET_KEY: ci-site-migrations-only
+        run: |
+          refused() { if poetry run python app/manage.py migrate "$@" --noinput 2> /tmp/refused.log; then echo 'migrate went through'; exit 1; fi; tail -n 1 /tmp/refused.log; }
+          cp /tmp/teplo-barsoom.sqlite3 /tmp/teplo-barsoom-heater.sqlite3
+          export TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom-heater.sqlite3
+          poetry run python app/manage.py shell -c "from apps.climate.models import HeatSource; from apps.devices.models import Device; from apps.house.models import Room; bedroom = Room.objects.get(slug='bedroom'); device = Device.objects.create(slug='heater-bedroom', name='Heater: bedroom', kind='climate_unit', driver='tuya_heater', room=bedroom); HeatSource.objects.create(slug='heater-bedroom', name='Heater: bedroom', room=bedroom, kind='heater', device=device)"
+          refused climate 0013
+          grep -q 'before this rollback: heater-bedroom' /tmp/refused.log
+          poetry run python app/manage.py shell -c "from apps.climate.models import HeatSource; from apps.devices.models import Device; from apps.power.models import Load; assert (HeatSource.objects.filter(slug='convector-office').exists(), Load.objects.filter(slug='convector-office').exists(), Device.objects.filter(slug='heater-office').exists()) == (True, True, True)"
+          poetry run python app/manage.py shell -c "from apps.climate.models import HeatSource; from apps.devices.models import Device; HeatSource.objects.filter(slug='heater-bedroom').delete(); Device.objects.filter(slug='heater-bedroom').delete()"
+          poetry run python app/manage.py migrate climate 0013 --noinput
+          poetry run python app/manage.py migrate --noinput

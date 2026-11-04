@@ -72,9 +72,28 @@ def _add_office_windows(apps: StateApps, office: object) -> None:
 
 
 def remove_convector(apps: StateApps, _schema_editor: BaseDatabaseSchemaEditor) -> None:
+    _refuse_other_heaters(apps)
     apps.get_model('power', 'Load').objects.filter(slug=CONVECTOR).delete()
     apps.get_model('climate', 'HeatSource').objects.filter(slug=CONVECTOR).delete()
     apps.get_model('devices', 'Device').objects.filter(slug=HEATER_DEVICE).delete()
+
+
+def _refuse_other_heaters(apps: StateApps) -> None:
+    sources = apps.get_model('climate', 'HeatSource').objects.exclude(slug=CONVECTOR).exclude(kind='fireplace')
+    loads = apps.get_model('power', 'Load').objects.filter(kind='source').exclude(slug=CONVECTOR)
+    devices = apps.get_model('devices', 'Device').objects.filter(driver='tuya_heater').exclude(slug=HEATER_DEVICE)
+    others = sorted(
+        {
+            *sources.values_list('slug', flat=True),
+            *loads.values_list('slug', flat=True),
+            *devices.values_list('slug', flat=True),
+        },
+    )
+    if others:
+        raise RuntimeError(
+            'an older release knows no heater but the office convector; delete in the admin the heat sources, '
+            f'loads and devices added for another heater before this rollback: {", ".join(others)}',
+        )
 
 
 class Migration(migrations.Migration):
