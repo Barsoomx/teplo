@@ -3,11 +3,12 @@ from datetime import timedelta
 
 from apps.climate.domain.comfort_windows import WEEKDAYS, RoomWeek, StoredWindow
 from apps.climate.domain.modes import ZoneKind
-from apps.climate.domain.ports import ClimateConfigStore, ComfortWindowStore, ZoneStore
+from apps.climate.domain.ports import ClimateConfigStore, ComfortWindowStore, HeatSourceStore, ZoneStore
 from apps.climate.domain.week_plan import DayPeriod, day_periods
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.comfort_period import ComfortPeriodRepository
+from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.house.domain.ports import HouseStore
@@ -41,6 +42,7 @@ class RoomSchedule:
     floor_name: str
     preheat_lead: timedelta
     zones: tuple[ZoneWarmUp, ...]
+    sources: tuple[str, ...]
     days: tuple[ScheduleDay, ...]
 
 
@@ -67,12 +69,14 @@ class GetSchedulePageUseCase(BaseUseCase[GetSchedulePageInputDTO, GetSchedulePag
         windows: ComfortWindowStore,
         house: HouseStore,
         climate_settings: ClimateConfigStore,
+        sources: HeatSourceStore,
     ) -> None:
         super().__init__()
         self._zones = zones
         self._windows = windows
         self._house = house
         self._climate_settings = climate_settings
+        self._sources = sources
 
     @classmethod
     def init(cls) -> 'GetSchedulePageUseCase':
@@ -81,6 +85,7 @@ class GetSchedulePageUseCase(BaseUseCase[GetSchedulePageInputDTO, GetSchedulePag
             windows=ComfortPeriodRepository(),
             house=HouseRepository(),
             climate_settings=ClimateSettingsRepository(),
+            sources=HeatSourceRepository(),
         )
 
     def _execute(self, input_dto: GetSchedulePageInputDTO) -> GetSchedulePageOutputDTO:  # noqa: ARG002
@@ -91,9 +96,17 @@ class GetSchedulePageUseCase(BaseUseCase[GetSchedulePageInputDTO, GetSchedulePag
         for zone in sorted(self._zones.all_settings(), key=lambda zone: zone.name):
             if zone.room_slug is not None:
                 warm_ups.setdefault(zone.room_slug, []).append(_warm_up(zone, lead_cap))
+        sources: dict[str, list[str]] = {}
+        for source in self._sources.commanded_settings():
+            sources.setdefault(source.room_slug, []).append(source.name)
         return GetSchedulePageOutputDTO(
             rooms=tuple(
-                _schedule(week, floors.get(week.slug, ''), tuple(warm_ups.get(week.slug, ())))
+                _schedule(
+                    week,
+                    floors.get(week.slug, ''),
+                    tuple(warm_ups.get(week.slug, ())),
+                    tuple(sources.get(week.slug, ())),
+                )
                 for week in self._windows.weeks()
             ),
             lead_cap=lead_cap,
@@ -111,7 +124,12 @@ def _warm_up(zone: ZoneSettings, lead_cap: timedelta) -> ZoneWarmUp:
     )
 
 
-def _schedule(week: RoomWeek, floor_name: str, zones: tuple[ZoneWarmUp, ...]) -> RoomSchedule:
+def _schedule(
+    week: RoomWeek,
+    floor_name: str,
+    zones: tuple[ZoneWarmUp, ...],
+    sources: tuple[str, ...],
+) -> RoomSchedule:
     windows = tuple(stored.window for stored in week.windows)
     lead = max((zone.preheat_lead for zone in zones), default=timedelta(0))
     return RoomSchedule(
@@ -120,6 +138,7 @@ def _schedule(week: RoomWeek, floor_name: str, zones: tuple[ZoneWarmUp, ...]) ->
         floor_name=floor_name,
         preheat_lead=lead,
         zones=zones,
+        sources=sources,
         days=tuple(
             ScheduleDay(
                 weekday=weekday,

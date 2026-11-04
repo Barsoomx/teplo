@@ -41,6 +41,21 @@ def rooms_schedule_page(schedule_page: GetSchedulePageOutputDTO) -> GetScheduleP
 
 
 @pytest.fixture
+def office_schedule_page(schedule_page: GetSchedulePageOutputDTO) -> GetSchedulePageOutputDTO:
+    _, living_room = schedule_page.rooms
+    office = replace(
+        living_room,
+        slug='office',
+        name='Кабинет',
+        floor_name='2 этаж',
+        preheat_lead=timedelta(0),
+        zones=(),
+        sources=('Конвектор: кабинет',),
+    )
+    return replace(schedule_page, rooms=(office,))
+
+
+@pytest.fixture
 def m_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.schedule_page.GetSchedulePageUseCase') as use_case:
         use_case.init.return_value.execute.return_value = schedule_page
@@ -51,6 +66,13 @@ def m_schedule_use_case(schedule_page: GetSchedulePageOutputDTO) -> Iterator[Mag
 def m_rooms_schedule_use_case(rooms_schedule_page: GetSchedulePageOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.schedule_page.GetSchedulePageUseCase') as use_case:
         use_case.init.return_value.execute.return_value = rooms_schedule_page
+        yield use_case
+
+
+@pytest.fixture
+def m_office_schedule_use_case(office_schedule_page: GetSchedulePageOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.schedule_page.GetSchedulePageUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = office_schedule_page
         yield use_case
 
 
@@ -154,6 +176,20 @@ def test_schedule_page_gives_a_room_of_several_zones_the_warm_up_of_each_and_say
         'Копировать неделю в другие комнаты' in content,
         m_rooms_schedule_use_case.init.call_count,
     ) == (True, True, True, True, True, True, (False, False), True, 1)
+
+
+def test_schedule_page_says_that_a_source_teplo_commands_holds_the_windows_of_its_room(
+    f_russian_client: Client,
+    m_office_schedule_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/schedule/')
+
+    content = response.content.decode()
+    assert (
+        'Конвектор: кабинет держит комфорт с начала окна, без разогрева.' in content,
+        'teplo пока нечем греть эту комнату по расписанию.' in content,
+        m_office_schedule_use_case.init.call_count,
+    ) == (True, False, 1)
 
 
 def test_schedule_page_without_rooms_says_where_they_come_from(

@@ -5,10 +5,11 @@ import pytest
 
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
+from apps.climate.domain.heat_sources import HeatSourceKind, SourceSettings
 from apps.climate.domain.modes import ScheduleMode, ZoneKind
 from apps.climate.domain.week_plan import DayPeriod
 from apps.climate.domain.zone import AirTargets, FloorSetpoints, ZoneSettings
-from apps.climate.stubs import ClimateConfigStoreStub, ComfortWindowStoreStub, ZoneStoreStub
+from apps.climate.stubs import ClimateConfigStoreStub, ComfortWindowStoreStub, HeatSourceStoreStub, ZoneStoreStub
 from apps.house.domain.rooms import FloorRecord, RoomRecord
 from apps.house.stubs import HouseStoreStub
 from apps.panel.usecases.get_schedule_page import (
@@ -22,6 +23,30 @@ from apps.panel.usecases.get_schedule_page import (
 MONDAY_WINDOW = StoredWindow(id=1, weekday=0, start=time(6, 30), end=time(23, 30))
 TUESDAY_WINDOW = StoredWindow(id=2, weekday=1, start=time(7, 0), end=time(22, 0))
 NIGHT_ALL_DAY = (DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=1440),)
+OFFICE_WINDOW = StoredWindow(id=3, weekday=0, start=time(13, 0), end=time(23, 45))
+CONVECTOR = SourceSettings(
+    slug='convector-office',
+    name='Конвектор: кабинет',
+    room_slug='office',
+    room_name='Кабинет',
+    kind=HeatSourceKind.HEATER,
+    device_slug='heater-office',
+    priority=1,
+    live=False,
+    setpoint_bias=Decimal('0.0'),
+    max_setpoint=Decimal('24.0'),
+    min_outdoor=None,
+    write_interval=timedelta(minutes=5),
+    rated_watts=2000,
+    manual_until=None,
+    last_command_at=None,
+    last_dry_run_at=None,
+    commanded_power=None,
+    commanded_setpoint=None,
+    load='convector-office',
+    load_live=False,
+    load_management_live=False,
+)
 
 
 def _zone(
@@ -171,7 +196,13 @@ def house() -> HouseStoreStub:
 
 @pytest.fixture
 def f_use_case(zones: ZoneStoreStub, windows: ComfortWindowStoreStub, house: HouseStoreStub) -> GetSchedulePageUseCase:
-    return GetSchedulePageUseCase(zones=zones, windows=windows, house=house, climate_settings=_climate_settings(240))
+    return GetSchedulePageUseCase(
+        zones=zones,
+        windows=windows,
+        house=house,
+        climate_settings=_climate_settings(240),
+        sources=HeatSourceStoreStub(sources=[], errors={}),
+    )
 
 
 @pytest.fixture
@@ -180,7 +211,24 @@ def f_capped_use_case(
     windows: ComfortWindowStoreStub,
     house: HouseStoreStub,
 ) -> GetSchedulePageUseCase:
-    return GetSchedulePageUseCase(zones=zones, windows=windows, house=house, climate_settings=_climate_settings(90))
+    return GetSchedulePageUseCase(
+        zones=zones,
+        windows=windows,
+        house=house,
+        climate_settings=_climate_settings(90),
+        sources=HeatSourceStoreStub(sources=[], errors={}),
+    )
+
+
+@pytest.fixture
+def f_office_use_case(zones: ZoneStoreStub, house: HouseStoreStub) -> GetSchedulePageUseCase:
+    return GetSchedulePageUseCase(
+        zones=zones,
+        windows=ComfortWindowStoreStub(weeks=[RoomWeek(slug='office', name='Кабинет', windows=(OFFICE_WINDOW,))]),
+        house=house,
+        climate_settings=_climate_settings(240),
+        sources=HeatSourceStoreStub(sources=[CONVECTOR], errors={}),
+    )
 
 
 def test_schedule_lists_rooms_by_floor_with_the_warm_up_of_each_of_their_zones(
@@ -293,5 +341,27 @@ def test_room_without_zones_is_night_every_day_and_warms_up_nothing(f_use_case: 
         floor_name='2 этаж',
         preheat_lead=timedelta(0),
         zones=(),
+        sources=(),
         days=tuple(ScheduleDay(weekday=weekday, windows=(), periods=NIGHT_ALL_DAY) for weekday in range(7)),
+    )
+
+
+def test_room_heated_by_a_source_teplo_commands_names_it_and_warms_up_nothing(
+    f_office_use_case: GetSchedulePageUseCase,
+) -> None:
+    output = f_office_use_case.execute(GetSchedulePageInputDTO())
+
+    office = output.room('office')
+    assert (
+        office.sources if office else None,
+        office.zones if office else None,
+        office.days[0].periods if office else None,
+    ) == (
+        ('Конвектор: кабинет',),
+        (),
+        (
+            DayPeriod(mode=ScheduleMode.NIGHT, start=0, end=780),
+            DayPeriod(mode=ScheduleMode.COMFORT, start=780, end=1425),
+            DayPeriod(mode=ScheduleMode.NIGHT, start=1425, end=1440),
+        ),
     )

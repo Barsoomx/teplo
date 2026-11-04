@@ -1084,6 +1084,10 @@ msgstr "%(zone)s: разогрев начинается за %(lead)s до ко�
 msgid "%(zone)s: air mode starts the warm-up by what the room has learned, at most %(cap)s before comfort; until it has %(mornings)s learned mornings, %(lead)s before comfort."
 msgstr "%(zone)s: режим по воздуху начинает разогрев по выученному, не раньше чем за %(cap)s до комфорта; пока выученных утр меньше %(mornings)s — за %(lead)s."
 
+#, python-format
+msgid "%(name)s holds comfort from the start of each window, with no warm-up."
+msgstr "%(name)s держит комфорт с начала окна, без разогрева."
+
 msgid "teplo has nothing to heat this room by its schedule yet."
 msgstr "teplo пока нечем греть эту комнату по расписанию."
 

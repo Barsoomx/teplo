@@ -1,7 +1,9 @@
 {% load i18n l10n panel_format %}<article class="schedule-room" id="schedule-{{ room.slug }}">
   <header class="schedule-head">
     <h2 class="schedule-name">{{ room.name }}{% if room.floor_name %} <small class="schedule-floor">{{ room.floor_name }}</small>{% endif %}</h2>
-    {% if not room.zones %}
+    {% if room.sources %}{% for source in room.sources %}
+    <p class="schedule-lead">{% blocktranslate with name=source %}{{ name }} holds comfort from the start of each window, with no warm-up.{% endblocktranslate %}</p>
+    {% endfor %}{% elif not room.zones %}
     <p class="schedule-lead">{% translate 'teplo has nothing to heat this room by its schedule yet.' %}</p>
     {% elif room.zones|length == 1 %}{% with warm_up=room.zones.0 %}
     <p class="schedule-lead">{% if warm_up.optimal_start %}{% blocktranslate with cap=schedule.lead_cap|duration lead=warm_up.preheat_lead|duration mornings=schedule.mornings_needed %}Air control starts the warm-up by what the room has learned, at most {{ cap }} before comfort. While the room has fewer than {{ mornings }} learned mornings, the warm-up starts {{ lead }} before comfort.{% endblocktranslate %}{% else %}{% blocktranslate with lead=warm_up.preheat_lead|duration %}Warm-up starts {{ lead }} before comfort.{% endblocktranslate %}{% endif %}</p>

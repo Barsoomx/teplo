@@ -278,6 +278,7 @@ def schedule_page() -> GetSchedulePageOutputDTO:
                 floor_name='1 этаж',
                 preheat_lead=timedelta(hours=3),
                 zones=(ZoneWarmUp(slug='kitchen', name='Кухня', preheat_lead=timedelta(hours=3), optimal_start=False),),
+                sources=(),
                 days=(
                     ScheduleDay(
                         weekday=0,
@@ -300,6 +301,7 @@ def schedule_page() -> GetSchedulePageOutputDTO:
                         optimal_start=True,
                     ),
                 ),
+                sources=(),
                 days=tuple(ScheduleDay(weekday=weekday, windows=(), periods=night) for weekday in range(7)),
             ),
         ),
