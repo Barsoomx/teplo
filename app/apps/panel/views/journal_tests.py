@@ -604,7 +604,7 @@ def m_intents_timeline_use_case() -> Iterator[MagicMock]:
 
 @pytest.fixture
 def m_presence_timeline_use_case() -> Iterator[MagicMock]:
-    entries = (
+    entries: tuple[tuple[str, str, str, DeviceKind | None, dict[str, object]], ...] = (
         (
             'device_availability_changed',
             'pc-office',
