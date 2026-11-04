@@ -1,10 +1,12 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from unittest import mock
 from unittest.mock import MagicMock
 
 import pytest
 from django.test import Client
 
+from apps.climate.domain.heat_sources import HeatSourceKind, SourceGate
 from apps.panel.usecases.get_settings_page import GetSettingsPageInputDTO, GetSettingsPageOutputDTO
 
 pytestmark = pytest.mark.django_db
@@ -23,6 +25,23 @@ GATE_INPUTS = (
 def m_settings_use_case(settings_page: GetSettingsPageOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.settings_page.GetSettingsPageUseCase') as use_case:
         use_case.init.return_value.execute.return_value = settings_page
+        yield use_case
+
+
+@pytest.fixture
+def m_fireplace_settings_use_case(
+    request: pytest.FixtureRequest,
+    settings_page: GetSettingsPageOutputDTO,
+) -> Iterator[MagicMock]:
+    bathroom, bedroom = settings_page.rooms
+    open_space = replace(
+        bathroom,
+        slug='open-space',
+        name='Гостиная, кухня и прихожая',
+        sources=(SourceGate(id=7, name='Камин', kind=HeatSourceKind.FIREPLACE, live=request.param),),
+    )
+    with mock.patch('apps.panel.views.settings_page.GetSettingsPageUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(settings_page, rooms=(open_space, bedroom))
         yield use_case
 
 
@@ -161,3 +180,27 @@ def test_settings_page_marks_the_guest_rooms_and_sets_the_hour_guests_leave(
         'name="guests_until"' in content,
         m_settings_use_case.init.call_count,
     ) == (2, 2, True, True, False, 1)
+
+
+@pytest.mark.parametrize(
+    ('m_fireplace_settings_use_case', 'state'),
+    [(False, 'Наблюдение'), (True, 'Работает')],
+    ids=['watching', 'live'],
+    indirect=['m_fireplace_settings_use_case'],
+)
+def test_settings_page_shows_the_gate_of_the_fireplace_detector_on_its_room(
+    f_russian_client: Client,
+    m_fireplace_settings_use_case: MagicMock,
+    state: str,
+) -> None:
+    response = f_russian_client.get('/settings/')
+
+    content = response.content.decode()
+    card_at = content.index('id="room-settings-open-space"')
+    card = content[card_at : content.index('</article>', card_at)]
+    gate_at = card.index('Детектор камина')
+    assert (
+        state in card[gate_at : card.index('</p>', gate_at)],
+        'href="/admin/climate/heatsource/7/change/"' in card,
+        m_fireplace_settings_use_case.init.call_count,
+    ) == (True, True, 1)

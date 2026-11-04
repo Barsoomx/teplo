@@ -4,6 +4,7 @@ from datetime import datetime, time, timedelta
 from decimal import Decimal
 from enum import StrEnum
 
+from apps.climate.domain.heat_sources import FireplaceRecord
 from apps.climate.domain.modes import ScheduleMode
 from apps.climate.domain.optimal_start import NO_LEAD
 from apps.climate.domain.room_climate import RoomClimateSettings
@@ -59,14 +60,32 @@ class GuestsRecord:
 class RoomIntents:
     rooms: tuple[RoomClimateSettings, ...]
     by_room: Mapping[str, RoomIntent]
+    now: datetime
+    fireplaces: tuple[FireplaceRecord, ...] = ()
 
     def of(self, room: str) -> RoomIntent | None:
         return self.by_room.get(room)
 
-    def zone_intent(self, zone: ZoneSettings, *, backed_up: frozenset[str]) -> ZoneIntent:
+    def fireplace(self, room: str) -> FireplaceRecord | None:
+        return next((fireplace for fireplace in self.fireplaces if fireplace.room_slug == room), None)
+
+    def lit_rooms(self) -> frozenset[str]:
+        return frozenset(fireplace.room_slug for fireplace in self.fireplaces if fireplace.lit(self.now))
+
+    def zone_intent(
+        self,
+        zone: ZoneSettings,
+        *,
+        backed_up: frozenset[str],
+        heated: frozenset[str] = frozenset(),
+    ) -> ZoneIntent:
         intent = None if zone.room_slug is None else self.of(zone.room_slug)
         forced = () if intent is None else intent.forced
-        return ZoneIntent(forced=forced, backup=zone.slug in backed_up, learns=not forced)
+        return ZoneIntent(
+            forced=forced,
+            backup=zone.slug in backed_up,
+            learns=not forced and zone.room_slug not in heated,
+        )
 
 
 def resolve_room_intent(
@@ -96,6 +115,7 @@ def resolve_room_intents(
     now: datetime,
     clock_trusted: bool,
     guests_until: datetime | None,
+    fireplaces: Iterable[FireplaceRecord] = (),
 ) -> RoomIntents:
     settled = tuple(rooms)
     return RoomIntents(
@@ -104,6 +124,8 @@ def resolve_room_intents(
             room.slug: resolve_room_intent(room, now=now, clock_trusted=clock_trusted, guests_until=guests_until)
             for room in settled
         },
+        now=now,
+        fireplaces=tuple(fireplaces),
     )
 
 

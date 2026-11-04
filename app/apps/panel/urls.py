@@ -22,6 +22,7 @@ from apps.panel.views.journal import JournalView
 from apps.panel.views.journal_outage_cause import JournalOutageCauseView
 from apps.panel.views.load_settings import LoadSettingsView
 from apps.panel.views.loads_settings import LoadsSettingsView
+from apps.panel.views.mark_fireplace import MarkFireplaceView
 from apps.panel.views.mark_outage_cause import MarkOutageCauseView
 from apps.panel.views.override_room import OverrideRoomView
 from apps.panel.views.phases_partial import PhasesPartialView
@@ -43,6 +44,7 @@ urlpatterns = [
     path('guests/', SetGuestsView.as_view(), name='set-guests'),
     path('rooms/<slug:slug>/override/', OverrideRoomView.as_view(), name='override-room'),
     path('rooms/<slug:slug>/override/clear/', ClearRoomOverrideView.as_view(), name='clear-room-override'),
+    path('rooms/<slug:slug>/fireplace/', MarkFireplaceView.as_view(), name='mark-fireplace'),
     path('phases/', PhasesPartialView.as_view(), name='phases'),
     path('outages/<int:outage_id>/cause/', MarkOutageCauseView.as_view(), name='mark-outage-cause'),
     path('schedule/', SchedulePageView.as_view(), name='schedule'),

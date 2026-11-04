@@ -13,7 +13,16 @@ from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.control import ClimateControl
 from apps.climate.domain.drive import StartPermits, ZoneDrive, ZoneStart, plan_drive
 from apps.climate.domain.errors import ZoneNotFoundError
-from apps.climate.domain.events import BackupHeatDryRun, ZoneCommandFailed, ZoneCommandIssued
+from apps.climate.domain.events import (
+    BackupHeatDryRun,
+    ExternalHeatEnded,
+    ExternalHeatStarted,
+    ZoneCommandFailed,
+    ZoneCommandIssued,
+    ZoneMorningRejected,
+)
+from apps.climate.domain.external_heat import FireStep, follow_fire
+from apps.climate.domain.heat_sources import FireplaceRecord
 from apps.climate.domain.learning import (
     Morning,
     ZoneLearningRecord,
@@ -21,11 +30,13 @@ from apps.climate.domain.learning import (
     learn_early_stop_offset,
     learn_morning,
 )
-from apps.climate.domain.memory import ZoneMemory
+from apps.climate.domain.memory import ZoneMemory, fenced
 from apps.climate.domain.modes import ZoneCycleOutcome
+from apps.climate.domain.morning_cap import morning_rate_cap
 from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.ports import LoadGate, WriteGate, ZoneLearningStore, ZoneStore
 from apps.climate.domain.room_climate import RoomClimateSettings
+from apps.climate.domain.room_intent import RoomIntents
 from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_cycle import (
     MINUTE,
@@ -139,7 +150,8 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             learning = self._learning.all_records()
             intents = self._intents.read(now, clock_trusted=input_dto.clock_trusted)
         backed_up = self._run_backup(intents.rooms, zones, now)
-        zone_intents = {zone.slug: intents.zone_intent(zone, backed_up=backed_up) for zone in zones}
+        heated = self._watch_fires(intents, zones, moment=input_dto.monotonic, now=now)
+        zone_intents = {zone.slug: intents.zone_intent(zone, backed_up=backed_up, heated=heated) for zone in zones}
         cycle = CycleConditions(
             now=now,
             clock_trusted=input_dto.clock_trusted,
@@ -239,6 +251,69 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             ),
         )
 
+    def _watch_fires(
+        self,
+        intents: RoomIntents,
+        zones: list[ZoneSettings],
+        *,
+        moment: float,
+        now: datetime,
+    ) -> frozenset[str]:
+        burning: set[str] = set()
+        for fireplace in _first_fireplace_of_each_room(intents.fireplaces):
+            step = self._follow_fire(fireplace, _room_air_sensors(fireplace.room_slug, intents, zones), moment, now)
+            if step.watch.burning and fireplace.live:
+                burning.add(fireplace.room_slug)
+        return intents.lit_rooms() | burning
+
+    def _follow_fire(
+        self,
+        fireplace: FireplaceRecord,
+        sensors: list[str],
+        moment: float,
+        now: datetime,
+    ) -> FireStep:
+        room = fireplace.room_slug
+        step = follow_fire(
+            self._book.fire(room),
+            {slug: self._temperature(slug) for slug in sensors},
+            moment=moment,
+        )
+        self._book.remember_fire(room, step.watch)
+        if step.started:
+            logger.info(
+                'external_heat_started',
+                room=room,
+                rates={slug: str(rate) for slug, rate in step.rates.items()},
+                live=fireplace.live,
+            )
+            self._event_store.add_event(
+                ExternalHeatStarted(
+                    room=room,
+                    room_name=fireplace.room_name,
+                    rates=dict(step.rates),
+                    live=fireplace.live,
+                    occurred_at=now,
+                ),
+            )
+        if step.reason is not None:
+            logger.info(
+                'external_heat_ended',
+                room=room,
+                reason=step.reason.value,
+                live=fireplace.live,
+            )
+            self._event_store.add_event(
+                ExternalHeatEnded(
+                    room=room,
+                    room_name=fireplace.room_name,
+                    reason=step.reason,
+                    live=fireplace.live,
+                    occurred_at=now,
+                ),
+            )
+        return step
+
     def _plan(
         self,
         zone: ZoneSettings,
@@ -248,7 +323,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         held: bool,
         read_at: float,
     ) -> ZoneRun:
-        memory = self._book.zone(zone.slug)
+        memory = fenced(self._book.zone(zone.slug), conditions.learning.resets)
         decision = decide_zone(zone, memory, conditions, cycle)
         snapshot = self._store.snapshot(zone.thermostat_slug)
         drive = plan_drive(
@@ -299,7 +374,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         outcome = self._drive(run, permits, cycle.now, read_at=read_at)
         follow_up = follow_zone(zone, run.memory, run.decision, outcome, conditions, cycle)
         follow_up = self._journal_air_dry_run(zone, run.memory, follow_up, cycle.now)
-        self._learn(zone, follow_up, conditions.learning, cycle.control)
+        self._learn(zone, follow_up, conditions.learning, cycle)
         self._book.remember_zone(zone.slug, follow_up.memory)
         return outcome
 
@@ -398,29 +473,54 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         zone: ZoneSettings,
         follow_up: ZoneFollowUp,
         learning: ZoneLearningRecord,
-        control: ClimateControl,
+        cycle: CycleConditions,
     ) -> None:
         if follow_up.morning is not None:
-            self._learn_morning(zone, follow_up.morning, learning)
+            self._learn_morning(zone, follow_up.morning, learning, cycle.now)
         if follow_up.stop is not None:
-            offset = learning.early_stop_offset_or(control.regulation.initial_early_stop_offset)
-            self._learn_stop(zone, follow_up.stop, offset)
+            self._learn_stop(zone, follow_up.stop, learning, cycle.control)
 
-    def _learn_morning(self, zone: ZoneSettings, morning: Morning, learning: ZoneLearningRecord) -> None:
+    def _learn_morning(self, zone: ZoneSettings, morning: Morning, learning: ZoneLearningRecord, now: datetime) -> None:
         estimate = estimate_morning(morning)
         if estimate is None:
             logger.info('zone_morning_taught_nothing', zone=zone.slug, samples=len(morning.samples))
             return
 
+        cap = morning_rate_cap(learning.heat_up, estimate.outdoor_bucket)
+        if estimate.rate > cap:
+            logger.info(
+                'zone_morning_rejected',
+                zone=zone.slug,
+                rate=str(estimate.rate),
+                cap=str(cap),
+                outdoor_bucket=estimate.outdoor_bucket,
+            )
+            self._event_store.add_event(
+                ZoneMorningRejected(
+                    zone=zone.slug,
+                    name=zone.name,
+                    rate=estimate.rate,
+                    cap=cap,
+                    outdoor_bucket=estimate.outdoor_bucket,
+                    dead_time_minutes=estimate.dead_time // MINUTE,
+                    occurred_at=now,
+                ),
+            )
+            return
+
         heat_up = learn_morning(learning.heat_up, estimate)
         try:
-            self._learning.save_heat_up(zone.slug, heat_up)
+            saved = self._learning.save_heat_up(zone.slug, heat_up, resets=learning.resets)
         except OperationalError as error:
             logger.warning(
                 'zone_morning_save_failed',
                 zone=zone.slug,
                 error=str(error),
             )
+            return
+
+        if not saved:
+            logger.info('zone_learning_reset_meanwhile', zone=zone.slug)
             return
 
         logger.info(
@@ -432,16 +532,27 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             mornings=heat_up.mornings,
         )
 
-    def _learn_stop(self, zone: ZoneSettings, watch: StopWatch, offset: Decimal) -> None:
+    def _learn_stop(
+        self,
+        zone: ZoneSettings,
+        watch: StopWatch,
+        learning: ZoneLearningRecord,
+        control: ClimateControl,
+    ) -> None:
+        offset = learning.early_stop_offset_or(control.regulation.initial_early_stop_offset)
         learned = learn_early_stop_offset(offset, used=watch.offset, peak=watch.peak, target=watch.target)
         try:
-            self._learning.save_early_stop_offset(zone.slug, learned)
+            saved = self._learning.save_early_stop_offset(zone.slug, learned, resets=learning.resets)
         except OperationalError as error:
             logger.warning(
                 'zone_early_stop_offset_save_failed',
                 zone=zone.slug,
                 error=str(error),
             )
+            return
+
+        if not saved:
+            logger.info('zone_learning_reset_meanwhile', zone=zone.slug)
             return
 
         logger.info(
@@ -475,3 +586,18 @@ def _apply(thermostat: FloorThermostat, change: ThermostatChange) -> None:
 
 def _starts(runs: list[ZoneRun]) -> list[ZoneStart]:
     return [ZoneStart(zone=run.zone.slug, writes_live=run.conditions.writes_live) for run in runs if run.drive.starts]
+
+
+def _first_fireplace_of_each_room(fireplaces: tuple[FireplaceRecord, ...]) -> list[FireplaceRecord]:
+    rooms: dict[str, FireplaceRecord] = {}
+    for fireplace in fireplaces:
+        rooms.setdefault(fireplace.room_slug, fireplace)
+    return list(rooms.values())
+
+
+def _room_air_sensors(room: str, intents: RoomIntents, zones: list[ZoneSettings]) -> list[str]:
+    sensors = {zone.air_sensor_slug for zone in zones if zone.room_slug == room and zone.air_sensor_slug is not None}
+    climate = next((climate for climate in intents.rooms if climate.slug == room), None)
+    if climate is not None and climate.air_sensor_slug is not None:
+        sensors.add(climate.air_sensor_slug)
+    return sorted(sensors)

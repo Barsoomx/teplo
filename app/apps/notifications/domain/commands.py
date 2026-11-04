@@ -18,6 +18,7 @@ STATUS_WORD = 'статус'
 GUESTS_WORD = 'гост'
 LIVING_ROOM_WORD = 'гостин'
 AUTO_WORD = 'авто'
+FIREPLACE_WORD = 'камин'
 
 
 class CommandKind(StrEnum):
@@ -29,12 +30,21 @@ class CommandKind(StrEnum):
     SET = 'set'
     AUTO = 'auto'
     BOOST = 'boost'
+    FIREPLACE_LIT = 'fireplace_lit'
+    FIREPLACE_OUT = 'fireplace_out'
     HELP = 'help'
     UNKNOWN_ROOM = 'unknown_room'
     AMBIGUOUS = 'ambiguous'
 
 
 ROOM_WORDS = (('холодн', CommandKind.WARMER), ('жарк', CommandKind.COOLER), ('буст', CommandKind.BOOST))
+FIREPLACE_WORDS = (
+    ('топл', CommandKind.FIREPLACE_LIT),
+    ('разж', CommandKind.FIREPLACE_LIT),
+    ('погас', CommandKind.FIREPLACE_OUT),
+    ('потух', CommandKind.FIREPLACE_OUT),
+    ('прогор', CommandKind.FIREPLACE_OUT),
+)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -69,6 +79,10 @@ def parse_command(text: str, rooms: Sequence[CommandRoom]) -> OwnerCommand:
     if first.startswith(STATUS_WORD):
         return OwnerCommand(kind=CommandKind.STATUS)
 
+    fireplace = _fireplace(words)
+    if fireplace is not None:
+        return OwnerCommand(kind=fireplace)
+
     if first.startswith(GUESTS_WORD) and not first.startswith(LIVING_ROOM_WORD):
         return _guests(words[1:])
 
@@ -94,6 +108,24 @@ def room_mention(words: Sequence[str]) -> RoomMention:
         elif word not in PREPOSITIONS and not word.startswith(FLOOR_WORD):
             named.append(word)
     return RoomMention(words=tuple(named), levels=frozenset(levels))
+
+
+def _fireplace(words: Sequence[str]) -> CommandKind | None:
+    if len(words) != 2:
+        return None
+
+    first, second = words
+    if first.startswith(FIREPLACE_WORD):
+        return _fireplace_change(second)
+
+    if second.startswith(FIREPLACE_WORD):
+        return _fireplace_change(first)
+
+    return None
+
+
+def _fireplace_change(word: str) -> CommandKind | None:
+    return next((kind for prefix, kind in FIREPLACE_WORDS if word.startswith(prefix)), None)
 
 
 def _guests(words: Sequence[str]) -> OwnerCommand:

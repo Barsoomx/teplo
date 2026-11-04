@@ -7,13 +7,15 @@ import pytest
 from django.db import OperationalError
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
-from apps.climate.domain.errors import ClockUntrustedError, RoomNotAdjustableError
+from apps.climate.domain.errors import ClockUntrustedError, FireplaceNotFoundError, RoomNotAdjustableError
+from apps.climate.domain.heat_sources import FireplaceRecord
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import IntentReason, OverrideChange, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
 from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.usecases.boost_zones import BoostZonesInputDTO, BoostZonesOutputDTO
 from apps.climate.usecases.clear_room_override import ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO
+from apps.climate.usecases.mark_fireplace import MarkFireplaceInputDTO, MarkFireplaceOutputDTO
 from apps.climate.usecases.override_room import OverrideRoomInputDTO, OverrideRoomOutputDTO
 from apps.climate.usecases.set_guests import SetGuestsInputDTO, SetGuestsOutputDTO
 from apps.core.domain.errors import SettingsRejectedError
@@ -139,10 +141,24 @@ HELP = (
     'холодно в <комната>, жарко в <комната> — на 1° теплее или холоднее на 2 часа\n'
     '<комната> 22 — держать 22° 2 часа; <комната> авто — вернуть расписание\n'
     'буст <комната> — тёплый пол на 2 часа\n'
+    'топлю камин, камин погас — отметить камин на 4 часа\n'
     'статус — комнаты, цели и фазы'
 )
 ROOM_NAMES = 'Гостиная, кухня и прихожая; Санузел 2 этаж; Спальня; Кабинет'
 LOCKED = OperationalError('database is locked')
+FIREPLACE = FireplaceRecord(
+    slug='fireplace',
+    name='Камин',
+    room_slug='open-space',
+    room_name='Гостиная, кухня и прихожая',
+    live=False,
+    lit_until=None,
+)
+FIREPLACE_LIT = MarkFireplaceOutputDTO(
+    fireplaces=(replace(FIREPLACE, lit_until=NOW + timedelta(hours=4)),),
+    until=NOW + timedelta(hours=4),
+    changed=True,
+)
 
 
 def _runner(
@@ -152,12 +168,14 @@ def _runner(
     boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
     rooms: RoomStatusSourceStub,
     language: str = 'ru',
+    fireplace: ExecutableStub[MarkFireplaceInputDTO, MarkFireplaceOutputDTO] | None = None,
 ) -> ClimateCommandRunner:
     return ClimateCommandRunner(
         guests=guests,
         override=override,
         clear=clear,
         boost=boost,
+        fireplace=ExecutableStub(outcomes=(FIREPLACE_LIT,)) if fireplace is None else fireplace,
         rooms=rooms,
         phases=PhaseReadoutStub(phases=PHASES),
         language=language,
@@ -601,4 +619,58 @@ def test_a_change_whose_floors_cannot_be_read_back_is_answered_with_what_it_did(
 def test_replies_follow_the_configured_language(f_english_runner: ClimateCommandRunner) -> None:
     assert f_english_runner.run(OwnerCommand(kind=CommandKind.GUESTS_OFF), NOW, clock_trusted=True) == (
         'Guests mode is off.'
+    )
+
+
+@pytest.fixture
+def f_fireplace(request: pytest.FixtureRequest) -> ExecutableStub[MarkFireplaceInputDTO, MarkFireplaceOutputDTO]:
+    return ExecutableStub(outcomes=(request.param,))
+
+
+@pytest.fixture
+def f_fireplace_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+    f_rooms: RoomStatusSourceStub,
+    f_fireplace: ExecutableStub[MarkFireplaceInputDTO, MarkFireplaceOutputDTO],
+) -> ClimateCommandRunner:
+    return _runner(f_guests, f_override, f_clear, f_boost, f_rooms, fireplace=f_fireplace)
+
+
+@pytest.mark.parametrize(
+    ('f_fireplace', 'command', 'lit', 'expected'),
+    [
+        (FIREPLACE_LIT, CommandKind.FIREPLACE_LIT, True, 'Камин топится до 20:40.'),
+        (
+            MarkFireplaceOutputDTO(fireplaces=(FIREPLACE,), until=None, changed=True),
+            CommandKind.FIREPLACE_OUT,
+            False,
+            'Камин погас.',
+        ),
+        (
+            MarkFireplaceOutputDTO(fireplaces=(FIREPLACE,), until=None, changed=False),
+            CommandKind.FIREPLACE_OUT,
+            False,
+            'Камин и так не отмечен.',
+        ),
+        (FireplaceNotFoundError(None), CommandKind.FIREPLACE_LIT, True, 'В доме нет камина.'),
+        (LOCKED, CommandKind.FIREPLACE_OUT, False, 'База данных занята: повторите через минуту.'),
+    ],
+    ids=['lit', 'out', 'out_without_a_mark', 'no_fireplace', 'database_busy'],
+    indirect=['f_fireplace'],
+)
+def test_fireplace_commands_mark_every_fireplace_of_the_house_and_say_what_they_did(
+    f_fireplace_runner: ClimateCommandRunner,
+    f_fireplace: ExecutableStub[MarkFireplaceInputDTO, MarkFireplaceOutputDTO],
+    command: CommandKind,
+    lit: bool,
+    expected: str,
+) -> None:
+    reply = f_fireplace_runner.run(OwnerCommand(kind=command), NOW, clock_trusted=False)
+
+    assert (f_fireplace.inputs, reply) == (
+        [MarkFireplaceInputDTO(room=None, lit=lit, now=NOW, source=CommandSource.TELEGRAM)],
+        expected,
     )

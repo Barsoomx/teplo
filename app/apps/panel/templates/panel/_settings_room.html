@@ -1,10 +1,16 @@
 {% load i18n panel_format %}<article class="settings-card settings-room" id="room-settings-{{ room.slug }}">
   <form class="settings-form" hx-post="{% url 'panel:room-settings' room.slug %}" hx-target="closest .settings-card" hx-swap="outerHTML" hx-disabled-elt="find button">
     <h3 class="settings-name">{{ room.name }} <small class="settings-floor">{{ room.floor_name }}</small></h3>
-    {% if room.backup_zone_slug %}
+    {% if room.backup_zone_slug or room.sources %}
     <div class="gates">
+      {% if room.backup_zone_slug %}
       {% url 'admin:climate_roomclimate_change' room.id as admin_url %}
       {% translate 'Backup heat' as label %}{% include 'panel/_gate.html' with live=room.backup_live url=admin_url %}
+      {% endif %}
+      {% for source in room.sources %}{% if source.kind == 'fireplace' %}
+      {% url 'admin:climate_heatsource_change' source.id as source_url %}
+      {% translate 'Fireplace detector' as source_label %}{% include 'panel/_gate.html' with label=source_label live=source.live url=source_url %}
+      {% endif %}{% endfor %}
     </div>
     {% endif %}
     {% include 'panel/_form_errors.html' with form=room_form %}

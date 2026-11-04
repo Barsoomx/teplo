@@ -2,8 +2,9 @@ from datetime import time
 
 import factory
 
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.modes import ZoneKind
-from apps.climate.models import ClimateSettings, ComfortPeriod, RoomClimate, Zone, ZoneLearning
+from apps.climate.models import ClimateSettings, ComfortPeriod, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.devices.factories import DeviceFactory
 from apps.house.factories import RoomFactory
 
@@ -45,3 +46,13 @@ class ZoneLearningFactory(factory.django.DjangoModelFactory):
 
     class Meta:
         model = ZoneLearning
+
+
+class HeatSourceFactory(factory.django.DjangoModelFactory):
+    slug = factory.Sequence(lambda n: f'source-{n}')
+    name = factory.Sequence(lambda n: f'Source {n}')
+    room = factory.SubFactory(RoomFactory)
+    kind = HeatSourceKind.FIREPLACE
+
+    class Meta:
+        model = HeatSource

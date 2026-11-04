@@ -1,13 +1,21 @@
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from apps.climate.domain.heat_sources import FireplaceRecord
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.zone_intent import ForcedTarget
-from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
+from apps.climate.factories import (
+    ClimateSettingsFactory,
+    ComfortPeriodFactory,
+    HeatSourceFactory,
+    RoomClimateFactory,
+    ZoneFactory,
+)
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
@@ -19,6 +27,7 @@ MOSCOW = ZoneInfo('Europe/Moscow')
 NIGHT = datetime(2026, 11, 3, 22, 0, tzinfo=UTC)
 LOCAL_MIDNIGHT = datetime(2026, 11, 4, 21, 0, tzinfo=UTC)
 GUESTS_LEAVE = datetime(2026, 11, 4, 14, 0, tzinfo=MOSCOW)
+FIREPLACE_OUT = NIGHT + timedelta(hours=3)
 
 
 @pytest.fixture
@@ -30,7 +39,10 @@ def book() -> ControlBook:
 def f_reader(book: ControlBook) -> RoomIntentReader:
     ground = FloorFactory.create(level=1)
     upstairs = FloorFactory.create(level=2)
-    open_space = RoomClimateFactory.create(room=RoomFactory.create(slug='open-space', floor=ground), guest_room=True)
+    open_space = RoomClimateFactory.create(
+        room=RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая', floor=ground),
+        guest_room=True,
+    )
     ComfortPeriodFactory.create_batch(7, zone=None, room_climate=open_space, start=time(6, 30), end=time(23, 30))
     RoomClimateFactory.create(
         room=RoomFactory.create(slug='bedroom', floor=upstairs, position=1),
@@ -45,7 +57,18 @@ def f_reader(book: ControlBook) -> RoomIntentReader:
         backup_below=Decimal('18.0'),
     )
     ClimateSettingsFactory.create(guests_until=GUESTS_LEAVE)
-    return RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=book)
+    HeatSourceFactory.create(
+        slug='fireplace',
+        name='Камин',
+        room=open_space.room,
+        lit_until=FIREPLACE_OUT,
+    )
+    return RoomIntentReader(
+        rooms=RoomClimateRepository(),
+        guests=ClimateSettingsRepository(),
+        fireplaces=HeatSourceRepository(),
+        book=book,
+    )
 
 
 @pytest.fixture
@@ -126,4 +149,22 @@ def test_backed_up_names_the_backup_zones_of_live_and_active_backup_heat_only(
     assert (f_reader.backed_up(f_reader.read(NIGHT, clock_trusted=True)), f_backups.backup_active('bedroom')) == (
         backed_up,
         'bathroom-2f' in backed_up,
+    )
+
+
+def test_read_gives_the_fireplaces_with_their_marks(f_reader: RoomIntentReader) -> None:
+    intents = f_reader.read(NIGHT, clock_trusted=False)
+
+    assert (intents.fireplaces, intents.lit_rooms()) == (
+        (
+            FireplaceRecord(
+                slug='fireplace',
+                name='Камин',
+                room_slug='open-space',
+                room_name='Гостиная, кухня и прихожая',
+                live=False,
+                lit_until=FIREPLACE_OUT,
+            ),
+        ),
+        frozenset({'open-space'}),
     )

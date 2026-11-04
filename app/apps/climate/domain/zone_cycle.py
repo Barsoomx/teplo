@@ -142,6 +142,7 @@ def _kept_memory(
         would_be_target=_would_be_target(zone, memory, decision, outcome),
         preheat=memory.preheat if decision.plan is None else decision.plan.preheat,
         preheated_for=None if reading is None else note_preheat(reading),
+        resets=memory.resets,
     )
 
 

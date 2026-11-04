@@ -12,6 +12,11 @@ from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
 from apps.notifications.domain.alerts import PhaseReading
 from apps.notifications.services.command_replies import (
+    FIREPLACE_LIT,
+    FIREPLACE_NOT_MARKED,
+    FIREPLACE_OUT,
+    HELP,
+    NO_FIREPLACE,
     degrees,
     either_of,
     moment_text,
@@ -209,4 +214,21 @@ def test_replies_follow_the_active_language() -> None:
         '00:10 tomorrow',
         'Кухня: floor 30° no sooner than 16:52',
         'Гостиная, кухня и прихожая: target 22.0°, comfort until 23:30',
+    )
+
+
+@pytest.mark.usefixtures('russian')
+def test_fireplace_replies_and_the_command_list_name_the_fireplace() -> None:
+    assert (
+        str(FIREPLACE_LIT) % {'until': '22:10'},
+        str(FIREPLACE_OUT),
+        str(FIREPLACE_NOT_MARKED),
+        str(NO_FIREPLACE),
+        str(HELP).splitlines()[-2],
+    ) == (
+        'Камин топится до 22:10.',
+        'Камин погас.',
+        'Камин и так не отмечен.',
+        'В доме нет камина.',
+        'топлю камин, камин погас — отметить камин на 4 часа',
     )

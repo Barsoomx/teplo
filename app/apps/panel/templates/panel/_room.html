@@ -18,6 +18,13 @@
     {% if intent.reason == 'override' %}<button class="button button-quiet" type="button" hx-post="{% url 'panel:clear-room-override' room.slug %}" hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% translate 'Back to the schedule' %}</button>{% endif %}
   </div>
   {% endwith %}{% endif %}
+  {% for source in room.sources %}{% if source.kind == 'fireplace' %}
+  <div class="room-source">
+    {% if source.lit_until %}<span class="chip intent">{% icon 'flame' %}{% with time=source.lit_until|time:'H:i' day=source.lit_until|day_word %}{% blocktranslate %}Fireplace lit until {{ time }}{% endblocktranslate %}{% if day %} {{ day }}{% endif %}{% endwith %}</span>{% endif %}
+    {% if source.burning %}<span class="chip backup">{% icon 'flame' %}{% translate 'Looks like the fireplace is lit' %}</span>{% if not source.live %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}{% endif %}
+    {% if source.lit_until %}<button class="button button-quiet" type="button" hx-post="{% url 'panel:mark-fireplace' room.slug %}" hx-vals='{"lit": "0"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% translate 'The fireplace is out' %}</button>{% else %}<button class="button" type="button" hx-post="{% url 'panel:mark-fireplace' room.slug %}" hx-vals='{"lit": "1"}' hx-target="#zones" hx-swap="innerHTML" hx-disabled-elt="this">{% icon 'flame' %}{% translate 'Lighting the fireplace' %}</button>{% endif %}
+  </div>
+  {% endif %}{% endfor %}
   {% if room.zones %}
   <div class="tiles">
     {% for zone in room.zones %}{% include 'panel/_zone_tile.html' with heading_level=4 %}{% endfor %}

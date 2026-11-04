@@ -25,3 +25,27 @@ msgstr "Это датчик воздуха зоны"
 
 msgid "This sensor is placed in another room"
 msgstr "Этот датчик стоит в другой комнате"
+
+msgid "A fireplace has no device, and any other heat source needs its device"
+msgstr "У камина нет устройства, а любому другому источнику тепла нужно его устройство"
+
+msgid "Empty for a fireplace, which teplo only observes; a heater or an air conditioner needs its climate unit"
+msgstr "Пусто у камина: teplo его только наблюдает. Обогревателю и кондиционеру нужно их устройство"
+
+msgid "The source’s own gate: for a fireplace, a fire the detector sees withholds learning as a mark does"
+msgstr "Гейт источника: у камина огонь, который видит детектор, останавливает обучение, как метка «Топлю камин»"
+
+msgid "Reset learning"
+msgstr "Сбросить обучение"
+
+#, python-format
+msgid "Learning reset: %(zones)s"
+msgstr "Обучение сброшено: %(zones)s"
+
+#, python-format
+msgid "Nothing to reset: %(zones)s learned nothing yet"
+msgstr "Сбрасывать нечего: %(zones)s ещё ничего не выучили"
+
+#, python-format
+msgid "The database did not take the reset of %(zones)s: try again"
+msgstr "База данных не приняла сброс (%(zones)s): попробуйте ещё раз"

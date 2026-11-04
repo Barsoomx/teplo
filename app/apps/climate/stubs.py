@@ -8,7 +8,8 @@ from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecor
 from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
-from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
+from apps.climate.domain.heat_sources import FireplaceRecord
+from apps.climate.domain.learning import HeatUpModel, ZoneLearningEntry, ZoneLearningRecord
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
     RoomClimateConfigRecord,
@@ -76,21 +77,79 @@ class ZoneLearningStoreStub:
 
         return dict(self._records)
 
-    def save_heat_up(self, slug: str, heat_up: HeatUpModel) -> None:
-        self._save(slug, replace(self._record(slug), heat_up=heat_up))
+    def save_heat_up(self, slug: str, heat_up: HeatUpModel, *, resets: int) -> bool:
+        return self._save(slug, replace(self._record(slug), heat_up=heat_up), resets=resets)
 
-    def save_early_stop_offset(self, slug: str, offset: Decimal) -> None:
-        self._save(slug, replace(self._record(slug), early_stop_offset=offset))
+    def save_early_stop_offset(self, slug: str, offset: Decimal, *, resets: int) -> bool:
+        return self._save(slug, replace(self._record(slug), early_stop_offset=offset), resets=resets)
 
     def _record(self, slug: str) -> ZoneLearningRecord:
         return self._records.get(slug, ZoneLearningRecord.unlearned())
 
-    def _save(self, slug: str, record: ZoneLearningRecord) -> None:
+    def _save(self, slug: str, record: ZoneLearningRecord, *, resets: int) -> bool:
         error = self._errors.get(slug)
         if error is not None:
             raise error
 
+        if record.resets != resets:
+            return False
+
         self._records[slug] = record
+        return True
+
+
+class ZoneLearningResetStoreStub:
+    def __init__(self, zones: dict[str, ZoneLearningEntry | None]) -> None:
+        self._zones = zones
+        self._reset: list[str] = []
+
+    @property
+    def reset_zones(self) -> list[str]:
+        return self._reset
+
+    def record_for_update(self, slug: str) -> ZoneLearningEntry | None:
+        if slug not in self._zones:
+            raise ZoneNotFoundError(slug)
+
+        return self._zones[slug]
+
+    def reset(self, slug: str) -> None:
+        self._reset.append(slug)
+        entry = self._zones.get(slug)
+        if entry is not None:
+            self._zones[slug] = replace(
+                entry,
+                record=replace(ZoneLearningRecord.unlearned(), resets=entry.record.resets + 1),
+            )
+
+
+class FireplaceStoreStub:
+    def __init__(self, fireplaces: list[FireplaceRecord]) -> None:
+        self._fireplaces = fireplaces
+        self._locked: list[str | None] = []
+        self._saved: list[tuple[str, datetime | None]] = []
+
+    @property
+    def locked(self) -> list[str | None]:
+        return self._locked
+
+    @property
+    def saved(self) -> list[tuple[str, datetime | None]]:
+        return self._saved
+
+    def fireplaces(self) -> list[FireplaceRecord]:
+        return list(self._fireplaces)
+
+    def fireplaces_for_update(self, room: str | None) -> list[FireplaceRecord]:
+        self._locked.append(room)
+        return [fireplace for fireplace in self._fireplaces if room is None or fireplace.room_slug == room]
+
+    def save_lit_until(self, slug: str, until: datetime | None) -> None:
+        self._saved.append((slug, until))
+        self._fireplaces = [
+            replace(fireplace, lit_until=until) if fireplace.slug == slug else fireplace
+            for fireplace in self._fireplaces
+        ]
 
 
 class LoadGateStub:

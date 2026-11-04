@@ -16,12 +16,15 @@ from apps.climate.domain.drive import ZoneStart
 from apps.climate.domain.events import (
     AirControlDryRun,
     BackupHeatDryRun,
+    ExternalHeatEnded,
+    ExternalHeatStarted,
     OptimalStartDryRun,
     ZoneCommandFailed,
     ZoneCommandIssued,
+    ZoneMorningRejected,
 )
 from apps.climate.domain.floor_policy import ThermostatTarget
-from apps.climate.domain.learning import AirSample, Morning
+from apps.climate.domain.learning import AirSample, HeatUpModel, Morning, ZoneLearningRecord
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneCycleOutcome, ZoneKind
 from apps.climate.domain.observation import StopWatch
@@ -31,12 +34,14 @@ from apps.climate.domain.zone import ZoneSettings
 from apps.climate.factories import (
     ClimateSettingsFactory,
     ComfortPeriodFactory,
+    HeatSourceFactory,
     RoomClimateFactory,
     ZoneFactory,
     ZoneLearningFactory,
 )
-from apps.climate.models import RoomClimate, Zone, ZoneLearning
+from apps.climate.models import HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
@@ -128,6 +133,15 @@ AIR_MODE_MORNING_AIR = (
     (OPTIMAL_START + timedelta(hours=1, minutes=40), '21.5', '30.0'),
 )
 AIR_MODE_STOP = OPTIMAL_START + timedelta(hours=1, minutes=52)
+FAST_MORNING_AIR = (
+    (FIXED_START - MINUTE, '20.0'),
+    (FIXED_START, '20.0'),
+    (FIXED_START + timedelta(minutes=10), '20.1'),
+    (FIXED_START + timedelta(minutes=40), '21.2'),
+    (FIXED_START + timedelta(hours=1), '22.0'),
+)
+FIRE_MINUTES = 15
+FIRE_RISE_PER_MINUTE = Decimal('0.03')
 STOP_AIR = (
     (MORNING, '21.9', '30.0'),
     (MORNING + timedelta(hours=1), '22.3', '18.0'),
@@ -324,6 +338,19 @@ class InterleavedZoneStoreStub:
         ZoneRepository.mark_air_dry_run(slug, at)
 
 
+class ResetBeforeSaveLearningStub:
+    def all_records(self) -> dict[str, ZoneLearningRecord]:
+        return ZoneLearningRepository.all_records()
+
+    def save_heat_up(self, slug: str, heat_up: HeatUpModel, *, resets: int) -> bool:
+        ZoneLearningRepository.reset(slug)
+        return ZoneLearningRepository.save_heat_up(slug, heat_up, resets=resets)
+
+    def save_early_stop_offset(self, slug: str, offset: Decimal, *, resets: int) -> bool:
+        ZoneLearningRepository.reset(slug)
+        return ZoneLearningRepository.save_early_stop_offset(slug, offset, resets=resets)
+
+
 class DeferredBoostStoreStub:
     def __init__(self) -> None:
         self._pending: list[tuple[str, datetime, bool]] = []
@@ -382,7 +409,12 @@ def _use_case(
 ) -> RunHeatingCycleUseCase:
     return RunHeatingCycleUseCase(
         zones=ZoneRepository() if zones is None else zones,
-        intents=RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=book),
+        intents=RoomIntentReader(
+            rooms=RoomClimateRepository(),
+            guests=ClimateSettingsRepository(),
+            fireplaces=HeatSourceRepository(),
+            book=book,
+        ),
         climate_settings=ClimateSettingsRepository(),
         learning=ZoneLearningRepository() if learning is None else learning,
         store=store,
@@ -525,6 +557,35 @@ def _learned(zone: Zone, *, mornings: int = 3, rate: str = '0.800') -> ZoneLearn
         heat_up_rates={'-5': rate},
         mornings=mornings,
     )
+
+
+def _run_morning(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    thermostats: dict[str, FloorThermostat],
+    book: ControlBook,
+    readings: tuple[tuple[datetime, str], ...],
+) -> None:
+    for at, air in readings:
+        temperatures.record_state('air-kitchen', _reading(air))
+        _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(at))
+
+
+def _run_stop(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    thermostats: dict[str, FloorThermostat],
+    book: ControlBook,
+    readings: tuple[tuple[datetime, str, str], ...],
+) -> None:
+    for at, air, setpoint in readings:
+        store.record_state(KITCHEN, _state(setpoint))
+        temperatures.record_state('air-kitchen', _reading(air))
+        _use_case(store, temperatures, thermostats, book, EventDispatcher()).execute(_at(at))
+
+
+def _fire_air(minute: int) -> str:
+    return str(Decimal('22.1') + FIRE_RISE_PER_MINUTE * minute)
 
 
 def _read(temperatures: TemperatureStateStore, readings: dict[str, str]) -> None:
@@ -690,6 +751,9 @@ def dispatcher(f_events: list[DomainEvent]) -> EventDispatcher:
         OptimalStartDryRun,
         BackupHeatDryRun,
         StartWouldWaitDryRun,
+        ZoneMorningRejected,
+        ExternalHeatStarted,
+        ExternalHeatEnded,
     ):
         event_dispatcher.register(event_type, f_events.append)
     return event_dispatcher
@@ -4711,3 +4775,229 @@ def test_floor_handed_back_before_a_restart_waits_thirty_minutes_after_its_shed_
         {'kitchen': ZoneCycleOutcome.APPLIED},
         [('power', True), ('setpoint', Decimal('28.0'))],
     )
+
+
+@pytest.fixture
+def morning_house(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    f_thermostat: FloorThermostatStub,
+) -> dict[str, FloorThermostat]:
+    Zone.objects.filter(pk=_air_zone().pk).update(name='Кухня')
+    ClimateSettingsFactory.create(outdoor_sensor=_sensor('outdoor'))
+    store.record_state(KITCHEN, _state('28.0'))
+    temperatures.record_state('outdoor', _reading('-3.4'))
+    return {KITCHEN: f_thermostat}
+
+
+@pytest.fixture
+def fireplace() -> HeatSource:
+    return HeatSourceFactory.create(slug='fireplace', name='Камин', room=_open_space().room)
+
+
+@pytest.fixture
+def f_fast_morning_cycle(
+    morning_house: dict[str, FloorThermostat],
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _run_morning(store, temperatures, morning_house, book, FAST_MORNING_AIR)
+    return _use_case(store, temperatures, morning_house, book, dispatcher)
+
+
+@pytest.fixture
+def f_marked_morning_cycle(
+    morning_house: dict[str, FloorThermostat],
+    fireplace: HeatSource,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(slug='kitchen').update(room=fireplace.room)
+    _run_morning(store, temperatures, morning_house, book, MORNING_AIR[:3])
+    HeatSource.objects.filter(pk=fireplace.pk).update(lit_until=MORNING_AIR[3][0] + timedelta(hours=1))
+    _run_morning(store, temperatures, morning_house, book, MORNING_AIR[3:])
+    return _use_case(store, temperatures, morning_house, book, dispatcher)
+
+
+@pytest.fixture
+def f_marked_stop_cycle(
+    stop_thermostats: dict[str, FloorThermostat],
+    fireplace: HeatSource,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(slug='kitchen').update(room=fireplace.room)
+    _run_stop(store, temperatures, stop_thermostats, book, STOP_AIR[:2])
+    HeatSource.objects.filter(pk=fireplace.pk).update(lit_until=STOP_AIR[2][0] + timedelta(hours=1))
+    _run_stop(store, temperatures, stop_thermostats, book, STOP_AIR[2:])
+    return _use_case(store, temperatures, stop_thermostats, book, dispatcher)
+
+
+@pytest.fixture
+def f_fire_cycle(
+    request: pytest.FixtureRequest,
+    stop_thermostats: dict[str, FloorThermostat],
+    fireplace: HeatSource,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    Zone.objects.filter(slug='kitchen').update(room=fireplace.room)
+    HeatSource.objects.filter(pk=fireplace.pk).update(live=request.param)
+    book.remember_zone(
+        'kitchen',
+        ZoneMemory(
+            path=ControlPath.AIR,
+            mode=ScheduleMode.COMFORT,
+            air_state=AirState.IDLE,
+            heat_target=Decimal('22.0'),
+            stop=StopWatch(
+                stopped_at=MORNING - timedelta(minutes=10),
+                target=Decimal('22.0'),
+                offset=Decimal('0.10'),
+                peak=Decimal('22.1'),
+            ),
+        ),
+    )
+    store.record_state(KITCHEN, _state('18.0'))
+    for minute in range(FIRE_MINUTES - 1):
+        temperatures.record_state('air-kitchen', _reading(_fire_air(minute)))
+        _use_case(store, temperatures, stop_thermostats, book, EventDispatcher()).execute(
+            _at(MORNING + minute * MINUTE, monotonic=minute * 60.0),
+        )
+    temperatures.record_state('air-kitchen', _reading(_fire_air(FIRE_MINUTES - 1)))
+    return _use_case(store, temperatures, stop_thermostats, book, dispatcher)
+
+
+@pytest.fixture
+def f_reset_meanwhile_cycle(
+    morning_thermostats: dict[str, FloorThermostat],
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _learned(Zone.objects.get(slug='kitchen'))
+    learning = ResetBeforeSaveLearningStub()
+    return _use_case(store, temperatures, morning_thermostats, book, dispatcher, learning=learning)
+
+
+@pytest.fixture
+def f_fenced_morning_cycle(
+    morning_house: dict[str, FloorThermostat],
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+) -> RunHeatingCycleUseCase:
+    _learned(Zone.objects.get(slug='kitchen'))
+    _run_morning(store, temperatures, morning_house, book, MORNING_AIR[:3])
+    ZoneLearningRepository.reset('kitchen')
+    temperatures.record_state('air-kitchen', _reading(MORNING_AIR[3][1]))
+    return _use_case(store, temperatures, morning_house, book, EventDispatcher())
+
+
+def test_morning_faster_than_its_cap_teaches_nothing_and_is_journaled(
+    f_fast_morning_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_fast_morning_cycle.execute(_at(COMFORT_AT))
+
+    assert (ZoneLearning.objects.exists(), [event for event in f_events if isinstance(event, ZoneMorningRejected)]) == (
+        False,
+        [
+            ZoneMorningRejected(
+                zone='kitchen',
+                name='Кухня',
+                rate=Decimal('2.280'),
+                cap=Decimal('1.5'),
+                outdoor_bucket=-5,
+                dead_time_minutes=10,
+                occurred_at=COMFORT_AT,
+            ),
+        ],
+    )
+
+
+def test_fireplace_marked_during_a_morning_drops_it(
+    f_marked_morning_cycle: RunHeatingCycleUseCase,
+    book: ControlBook,
+) -> None:
+    f_marked_morning_cycle.execute(_at(COMFORT_AT))
+
+    assert (ZoneLearning.objects.exists(), book.zone('kitchen').morning) == (False, None)
+
+
+def test_fireplace_marked_during_an_early_stop_watch_drops_it(
+    f_marked_stop_cycle: RunHeatingCycleUseCase,
+    book: ControlBook,
+) -> None:
+    f_marked_stop_cycle.execute(_at(MORNING + timedelta(hours=2, minutes=1)))
+
+    assert (ZoneLearning.objects.exists(), book.zone('kitchen').stop) == (False, None)
+
+
+@pytest.mark.parametrize(
+    ('f_fire_cycle', 'watching'),
+    [(False, True), (True, False)],
+    ids=['watching', 'live'],
+    indirect=['f_fire_cycle'],
+)
+def test_detected_fire_is_journaled_and_withholds_learning_only_once_the_fireplace_is_live(
+    f_fire_cycle: RunHeatingCycleUseCase,
+    f_events: list[DomainEvent],
+    book: ControlBook,
+    watching: bool,
+) -> None:
+    now = MORNING + (FIRE_MINUTES - 1) * MINUTE
+
+    f_fire_cycle.execute(_at(now, monotonic=(FIRE_MINUTES - 1) * 60.0))
+
+    assert (
+        [event for event in f_events if isinstance(event, ExternalHeatStarted | ExternalHeatEnded)],
+        book.burning_rooms(),
+        book.zone('kitchen').stop is not None,
+    ) == (
+        [
+            ExternalHeatStarted(
+                room='open-space',
+                room_name='Гостиная, кухня и прихожая',
+                rates={'air-kitchen': Decimal('1.80')},
+                live=not watching,
+                occurred_at=now,
+            ),
+        ],
+        frozenset({'open-space'}),
+        watching,
+    )
+
+
+def test_morning_whose_learning_was_reset_meanwhile_is_not_saved_back(
+    f_reset_meanwhile_cycle: RunHeatingCycleUseCase,
+) -> None:
+    with capture_logs() as logs:
+        f_reset_meanwhile_cycle.execute(_at(COMFORT_AT))
+
+    learning = ZoneLearning.objects.get(zone__slug='kitchen')
+    assert (
+        (learning.dead_time, learning.heat_up_rates, learning.mornings, learning.resets),
+        [log['event'] for log in logs if log['event'] in ('zone_learning_reset_meanwhile', 'zone_morning_learned')],
+    ) == ((None, {}, 0, 1), ['zone_learning_reset_meanwhile'])
+
+
+def test_reset_drops_the_morning_in_progress_at_the_next_cycle(
+    f_fenced_morning_cycle: RunHeatingCycleUseCase,
+    book: ControlBook,
+) -> None:
+    morning_before = book.zone('kitchen').morning
+
+    f_fenced_morning_cycle.execute(_at(MORNING_AIR[3][0]))
+
+    memory = book.zone('kitchen')
+    assert (morning_before is not None, memory.morning, memory.resets) == (True, None, 1)

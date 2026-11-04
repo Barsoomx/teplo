@@ -7,7 +7,8 @@ from typing import Protocol
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.comfort_windows import RoomWeek
 from apps.climate.domain.drive import StartAnswer, ZoneStart
-from apps.climate.domain.learning import HeatUpModel, ZoneLearningRecord
+from apps.climate.domain.heat_sources import FireplaceRecord
+from apps.climate.domain.learning import HeatUpModel, ZoneLearningEntry, ZoneLearningRecord
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
     RoomClimateConfigRecord,
@@ -37,9 +38,25 @@ class ZoneBoostStore(Protocol):
 class ZoneLearningStore(Protocol):
     def all_records(self) -> dict[str, ZoneLearningRecord]: ...
 
-    def save_heat_up(self, slug: str, heat_up: HeatUpModel) -> None: ...
+    def save_heat_up(self, slug: str, heat_up: HeatUpModel, *, resets: int) -> bool: ...
 
-    def save_early_stop_offset(self, slug: str, offset: Decimal) -> None: ...
+    def save_early_stop_offset(self, slug: str, offset: Decimal, *, resets: int) -> bool: ...
+
+
+class ZoneLearningResetStore(Protocol):
+    def record_for_update(self, slug: str) -> ZoneLearningEntry | None: ...
+
+    def reset(self, slug: str) -> None: ...
+
+
+class FireplaceStore(Protocol):
+    def fireplaces(self) -> list[FireplaceRecord]: ...
+
+
+class FireplaceMarkStore(Protocol):
+    def fireplaces_for_update(self, room: str | None) -> list[FireplaceRecord]: ...
+
+    def save_lit_until(self, slug: str, until: datetime | None) -> None: ...
 
 
 class LoadGate(Protocol):

@@ -6,7 +6,12 @@ from django.db import OperationalError
 from django.utils import translation
 from django.utils.functional import Promise
 
-from apps.climate.domain.errors import ClockUntrustedError, RoomNotAdjustableError, ZoneNotFoundError
+from apps.climate.domain.errors import (
+    ClockUntrustedError,
+    FireplaceNotFoundError,
+    RoomNotAdjustableError,
+    ZoneNotFoundError,
+)
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import (
     MAX_GUEST_NIGHTS,
@@ -22,6 +27,11 @@ from apps.climate.usecases.clear_room_override import (
     ClearRoomOverrideInputDTO,
     ClearRoomOverrideOutputDTO,
     ClearRoomOverrideUseCase,
+)
+from apps.climate.usecases.mark_fireplace import (
+    MarkFireplaceInputDTO,
+    MarkFireplaceOutputDTO,
+    MarkFireplaceUseCase,
 )
 from apps.climate.usecases.override_room import OverrideRoomInputDTO, OverrideRoomOutputDTO, OverrideRoomUseCase
 from apps.climate.usecases.set_guests import SetGuestsInputDTO, SetGuestsOutputDTO, SetGuestsUseCase
@@ -39,12 +49,16 @@ from apps.notifications.services.command_replies import (
     BOOST,
     BOOST_FOR_COLD,
     BUSY,
+    FIREPLACE_LIT,
+    FIREPLACE_NOT_MARKED,
+    FIREPLACE_OUT,
     GUESTS_CLOCK,
     GUESTS_OFF,
     GUESTS_SET,
     HELP,
     NIGHTS,
     NO_AIR,
+    NO_FIREPLACE,
     NO_FLOOR,
     NO_GUEST_ROOMS,
     NO_ROOMS,
@@ -69,6 +83,7 @@ CHANGES = {
     CommandKind.COOLER: OverrideChange.COOLER,
     CommandKind.SET: OverrideChange.SET,
 }
+FIREPLACE_MARKS = {CommandKind.FIREPLACE_LIT: True, CommandKind.FIREPLACE_OUT: False}
 
 
 class ClimateCommandRunner:
@@ -78,6 +93,7 @@ class ClimateCommandRunner:
         override: Executable[OverrideRoomInputDTO, OverrideRoomOutputDTO],
         clear: Executable[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
         boost: Executable[BoostZonesInputDTO, BoostZonesOutputDTO],
+        fireplace: Executable[MarkFireplaceInputDTO, MarkFireplaceOutputDTO],
         rooms: RoomStatusSource,
         phases: PhaseReadout,
         language: str,
@@ -86,6 +102,7 @@ class ClimateCommandRunner:
         self._override_room = override
         self._clear_override = clear
         self._boost_zones = boost
+        self._mark_fireplace = fireplace
         self._rooms = rooms
         self._phases = phases
         self._language = language
@@ -97,6 +114,7 @@ class ClimateCommandRunner:
             override=OverrideRoomUseCase.init(),
             clear=ClearRoomOverrideUseCase.init(),
             boost=BoostZonesUseCase.init(),
+            fireplace=MarkFireplaceUseCase.init(),
             rooms=RoomStatusReader.init(),
             phases=PhaseMeterReadout.init(),
             language=settings.TEPLO_ALERT_LANGUAGE,
@@ -115,6 +133,9 @@ class ClimateCommandRunner:
 
         if command.kind is CommandKind.GUESTS:
             return self._guests(command.nights or 0, now, clock_trusted=clock_trusted)
+
+        if command.kind in FIREPLACE_MARKS:
+            return self._fireplace(FIREPLACE_MARKS[command.kind], now)
 
         if command.kind is CommandKind.GUESTS_OFF:
             self._set_guests.execute(
@@ -149,6 +170,19 @@ class ClimateCommandRunner:
         if phases is not None:
             lines.append(phases_line(phases))
         return '\n'.join(lines) if lines else str(NO_ROOMS)
+
+    def _fireplace(self, lit: bool, now: datetime) -> str:
+        try:
+            output = self._mark_fireplace.execute(
+                MarkFireplaceInputDTO(room=None, lit=lit, now=now, source=CommandSource.TELEGRAM),
+            )
+        except FireplaceNotFoundError:
+            return str(NO_FIREPLACE)
+
+        if output.until is not None:
+            return str(FIREPLACE_LIT) % {'until': moment_text(output.until, now)}
+
+        return str(FIREPLACE_OUT if output.changed else FIREPLACE_NOT_MARKED)
 
     def _guests(self, nights: int, now: datetime, *, clock_trusted: bool) -> str:
         if not 1 <= nights <= MAX_GUEST_NIGHTS:

@@ -15,6 +15,7 @@ class ZoneLearning(models.Model):
     dead_time = models.DurationField(null=True, blank=True)
     heat_up_rates = models.JSONField(default=dict, blank=True)
     mornings = models.PositiveIntegerField(default=0)
+    resets = models.PositiveIntegerField(default=0, db_default=0, editable=False)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

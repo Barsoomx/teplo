@@ -11,6 +11,7 @@ from django.test import Client
 from freezegun import freeze_time
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.modes import ControlPath, ScheduleMode
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
@@ -20,6 +21,7 @@ from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
     RoomComfortOverview,
     SensorOverview,
+    SourceOverview,
     ZoneRegime,
 )
 from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO
@@ -274,6 +276,28 @@ def m_intent_overview_use_case(
         replace(ground, rooms=(replace(open_space, intent=intent, adjustable=adjustable, guest_room=True),)),
         replace(upstairs, rooms=(replace(bedroom, intent=bedroom_intent), office)),
     )
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(house_overview, floors=floors)
+        yield use_case
+
+
+@pytest.fixture
+def m_fireplace_overview_use_case(
+    request: pytest.FixtureRequest,
+    house_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    lit_until, burning, live = request.param
+    fireplace = SourceOverview(
+        slug='fireplace',
+        name='Камин',
+        kind=HeatSourceKind.FIREPLACE,
+        live=live,
+        lit_until=lit_until,
+        burning=burning,
+    )
+    ground, upstairs = house_overview.floors
+    [open_space] = ground.rooms
+    floors = (replace(ground, rooms=(replace(open_space, sources=(fireplace,)),)), upstairs)
     with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
         use_case.init.return_value.execute.return_value = replace(house_overview, floors=floors)
         yield use_case
@@ -823,3 +847,54 @@ def test_dashboard_says_when_a_floor_gets_its_target(
         m_pending_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == (True, 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_fireplace_overview_use_case', 'lit_chip', 'detected', 'watching', 'button'),
+    [
+        ((None, False, False), None, False, False, ('Топлю камин', '{"lit": "1"}')),
+        (
+            (PANEL_NOW + timedelta(hours=4), False, False),
+            'Камин топится до 20:40',
+            False,
+            False,
+            ('Камин погас', '{"lit": "0"}'),
+        ),
+        (
+            (PANEL_NOW + timedelta(hours=8), False, False),
+            'Камин топится до 00:40 завтра',
+            False,
+            False,
+            ('Камин погас', '{"lit": "0"}'),
+        ),
+        ((None, True, False), None, True, True, ('Топлю камин', '{"lit": "1"}')),
+        ((None, True, True), None, True, False, ('Топлю камин', '{"lit": "1"}')),
+    ],
+    ids=['unmarked', 'marked', 'marked_past_midnight', 'detected_while_watching', 'detected_live'],
+    indirect=['m_fireplace_overview_use_case'],
+)
+def test_dashboard_marks_the_fireplace_and_shows_what_the_detector_sees(
+    f_russian_client: Client,
+    m_fireplace_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    lit_chip: str | None,
+    detected: bool,
+    watching: bool,
+    button: tuple[str, str],
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    row_at = content.index('class="room-source"')
+    row = content[row_at : content.index('</div>', row_at)]
+    label, posted = button
+    assert (
+        lit_chip is None or lit_chip in row,
+        'Камин топится до' in row,
+        'Похоже, топится камин' in row,
+        'Наблюдение' in row,
+        (label in row, f"hx-vals='{posted}'" in row, 'hx-post="/rooms/open-space/fireplace/"' in row),
+        m_fireplace_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (True, lit_chip is not None, detected, watching, (True, True, True), 1, 1)

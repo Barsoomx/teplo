@@ -3,6 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from apps.climate.domain.change import ThermostatChange
+from apps.climate.domain.external_heat import FireEnd
 from apps.climate.domain.modes import AirState, CommandSource, ScheduleMode
 from apps.core.domain.events import DomainEvent
 
@@ -87,3 +88,58 @@ class RoomOverrideCleared(DomainEvent):
     room: str
     name: str
     source: CommandSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class FireplaceMarked(DomainEvent):
+    fireplace: str
+    name: str
+    room: str
+    room_name: str
+    until: datetime
+    source: CommandSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class FireplaceMarkCleared(DomainEvent):
+    fireplace: str
+    name: str
+    room: str
+    room_name: str
+    source: CommandSource
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExternalHeatStarted(DomainEvent):
+    room: str
+    room_name: str
+    rates: dict[str, Decimal]
+    live: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class ExternalHeatEnded(DomainEvent):
+    room: str
+    room_name: str
+    reason: FireEnd
+    live: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZoneMorningRejected(DomainEvent):
+    zone: str
+    name: str
+    rate: Decimal
+    cap: Decimal
+    outdoor_bucket: int
+    dead_time_minutes: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZoneLearningReset(DomainEvent):
+    zone: str
+    name: str
+    early_stop_offset: Decimal | None
+    dead_time_minutes: int | None
+    rates: dict[str, str]
+    mornings: int

@@ -18,6 +18,7 @@ HELP = gettext_lazy(
     'холодно в <room>, жарко в <room> — 1° warmer or cooler for 2 hours\n'
     '<room> 22 — hold 22° for 2 hours; <room> авто — back to the schedule\n'
     'буст <room> — warm floor for 2 hours\n'
+    'топлю камин, камин погас — mark the fireplace for 4 hours\n'
     'статус — rooms, targets and phases',
 )
 UNKNOWN_ROOM = gettext_lazy('I do not know this room. Rooms: %(rooms)s')
@@ -39,6 +40,10 @@ NO_AIR = gettext_lazy('%(room)s has no air sensor: only буст works there.')
 NOTHING = gettext_lazy('%(room)s: teplo has nothing to heat here yet.')
 RANGE = gettext_lazy('A target from %(low)s° to %(high)s°.')
 BUSY = gettext_lazy('The database is busy: try again in a minute.')
+FIREPLACE_LIT = gettext_lazy('The fireplace is lit until %(until)s.')
+FIREPLACE_OUT = gettext_lazy('The fireplace is out.')
+FIREPLACE_NOT_MARKED = gettext_lazy('The fireplace is not marked anyway.')
+NO_FIREPLACE = gettext_lazy('The house has no fireplace.')
 NO_ROOMS = gettext_lazy('No rooms yet.')
 BY_AIR = gettext_lazy('%(zone)s: by air')
 FLOOR_HOLDS = gettext_lazy('%(zone)s: floor already at %(setpoint)s°')

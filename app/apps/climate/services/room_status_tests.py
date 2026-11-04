@@ -11,6 +11,7 @@ from apps.climate.domain.room_status import RoomStatus, ZoneStatus
 from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.control_book import ControlBook
@@ -47,7 +48,12 @@ def _reader(
 ) -> RoomStatusReader:
     return RoomStatusReader(
         zones=ZoneRepository(),
-        intents=RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=ControlBook()),
+        intents=RoomIntentReader(
+            rooms=RoomClimateRepository(),
+            guests=ClimateSettingsRepository(),
+            fireplaces=HeatSourceRepository(),
+            book=ControlBook(),
+        ),
         temperatures=temperatures,
         thermostats=thermostats,
         gate=LoadGateStub(held=frozenset({'hallway'}), gated=frozenset(), answers={}),

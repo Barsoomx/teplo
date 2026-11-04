@@ -8,6 +8,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.climate.domain.drive import PendingWrite, pending_write
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.learning import ZoneLearningRecord
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.room_climate import RoomClimateSettings
@@ -151,6 +152,16 @@ class RoomComfortOverview:
 
 
 @dataclass(frozen=True, kw_only=True)
+class SourceOverview:
+    slug: str
+    name: str
+    kind: HeatSourceKind
+    live: bool
+    lit_until: datetime | None
+    burning: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class RoomOverview:
     slug: str
     name: str
@@ -163,10 +174,11 @@ class RoomOverview:
     intent: RoomIntent | None = None
     adjustable: bool = False
     guest_room: bool = False
+    sources: tuple[SourceOverview, ...] = ()
 
     @property
     def shown(self) -> bool:
-        return bool(self.zones or self.sensors or self.plugs)
+        return bool(self.zones or self.sensors or self.plugs or self.sources)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -329,13 +341,22 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         comforts: dict[str, RoomComfortOverview],
     ) -> tuple[FloorOverview, ...]:
         climates = {room.slug: room for room in intents.rooms}
+        burning = self._book.burning_rooms()
         return tuple(
             FloorOverview(
                 slug=floor.slug,
                 name=floor.name,
                 rooms=tuple(
                     _with_climate(
-                        _room(room, zones, sensors, plugs, devices, comforts.get(room.slug)),
+                        _room(
+                            room,
+                            zones,
+                            sensors,
+                            plugs,
+                            devices,
+                            comforts.get(room.slug),
+                            _sources(intents, room.slug, burning),
+                        ),
                         climates.get(room.slug),
                         intents.of(room.slug),
                     )
@@ -519,6 +540,7 @@ def _room(
     plugs: tuple[PlugOverview, ...],
     devices: list[DeviceSettings],
     comfort: RoomComfortOverview | None,
+    sources: tuple[SourceOverview, ...],
 ) -> RoomOverview:
     return RoomOverview(
         slug=room.slug,
@@ -529,6 +551,22 @@ def _room(
         plugs=tuple(plug for plug in plugs if plug.room == room.slug),
         devices=tuple(sorted(device.slug for device in devices if device.room_slug == room.slug)),
         comfort=comfort,
+        sources=sources,
+    )
+
+
+def _sources(intents: RoomIntents, room: str, burning: frozenset[str]) -> tuple[SourceOverview, ...]:
+    return tuple(
+        SourceOverview(
+            slug=fireplace.slug,
+            name=fireplace.name,
+            kind=HeatSourceKind.FIREPLACE,
+            live=fireplace.live,
+            lit_until=fireplace.lit_until if fireplace.lit(intents.now) else None,
+            burning=room in burning,
+        )
+        for fireplace in intents.fireplaces
+        if fireplace.room_slug == room
     )
 
 

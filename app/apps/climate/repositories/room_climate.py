@@ -4,6 +4,7 @@ from dataclasses import asdict
 from django.db.models import Exists, OuterRef, QuerySet
 
 from apps.climate.domain.backup_heat import BackupHeat
+from apps.climate.domain.heat_sources import HeatSourceKind, SourceGate
 from apps.climate.domain.modes import CommandSource, ZoneKind
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
@@ -49,14 +50,14 @@ class RoomClimateRepository:
 
     @staticmethod
     def config_records() -> list[RoomClimateConfigRecord]:
-        return [_to_record(climate) for climate in _climates()]
+        return [_to_record(climate) for climate in _config_climates()]
 
     @staticmethod
     def config_for_update(slug: str) -> RoomClimateConfigRecord:
         if lock_for_update(RoomClimate.objects.filter(room__slug=slug)) == 0:
             raise RoomNotFoundError(slug)
 
-        return _to_record(_climates().get(room__slug=slug))
+        return _to_record(_config_climates().get(room__slug=slug))
 
     @staticmethod
     def save_config(slug: str, config: RoomClimateConfig, fields: Collection[str]) -> None:
@@ -75,6 +76,10 @@ def _climates() -> QuerySet[RoomClimate]:
 
 def _settings_climates() -> QuerySet[RoomClimate]:
     return _climates().prefetch_related('comfort_periods')
+
+
+def _config_climates() -> QuerySet[RoomClimate]:
+    return _climates().prefetch_related('room__heat_sources')
 
 
 def _reads_the_air() -> Exists:
@@ -132,4 +137,8 @@ def _to_record(climate: RoomClimate) -> RoomClimateConfigRecord:
         backup_zone_slug=None if climate.backup_zone is None else climate.backup_zone.slug,
         backup_zone_name=None if climate.backup_zone is None else climate.backup_zone.name,
         backup_live=climate.backup_live,
+        sources=tuple(
+            SourceGate(id=source.pk, name=source.name, kind=HeatSourceKind(source.kind), live=source.live)
+            for source in climate.room.heat_sources.all()
+        ),
     )

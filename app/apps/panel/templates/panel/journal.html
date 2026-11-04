@@ -67,6 +67,27 @@
           <p class="event-text">{{ entry|room_override_text }}</p>
           {% with note=entry|command_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
         </div>
+        {% elif entry.kind == 'fireplace_marked' or entry.kind == 'fireplace_mark_cleared' %}
+        <span class="event-mark">{% icon 'flame' %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|fireplace_mark_text }}</p>
+          {% with note=entry|command_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
+        </div>
+        {% elif entry.kind == 'external_heat_started' or entry.kind == 'external_heat_ended' %}
+        <span class="event-mark">{% if entry.kind == 'external_heat_started' %}{% icon 'flame' %}{% else %}{% icon 'eye' %}{% endif %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|external_heat_text }}</p>
+          {% with note=entry|external_heat_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
+        </div>
+        {% elif entry.kind == 'zone_morning_rejected' %}
+        <span class="event-mark">{% icon 'sunrise' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|morning_rejected_text }}</p></div>
+        {% elif entry.kind == 'zone_learning_reset' %}
+        <span class="event-mark">{% icon 'settings-2' %}</span>
+        <div class="event-body">
+          <p class="event-text">{{ entry|learning_reset_text }}</p>
+          {% with note=entry|learning_reset_note %}{% if note %}<p class="event-note">{{ note }}</p>{% endif %}{% endwith %}
+        </div>
         {% elif entry.kind == 'owner_command' %}
         <span class="event-mark">{% icon 'scroll-text' %}</span>
         <div class="event-body"><p class="event-text">{{ entry|owner_command_text }}</p></div>

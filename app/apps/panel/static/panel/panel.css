@@ -395,6 +395,22 @@ body {
   opacity: 0.4;
 }
 
+/* A room's fireplace, in ink only: its mark, what the detector sees, and a button to mark it */
+
+.room-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.room-source .button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .room .air-sensors {
   margin-top: 0.75rem;
 }

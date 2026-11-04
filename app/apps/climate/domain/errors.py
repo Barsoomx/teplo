@@ -22,3 +22,9 @@ class ClockUntrustedError(DomainError):
             'the clock is not synchronised, so guests would end at the wrong hour',
             error_code='clock_untrusted',
         )
+
+
+class FireplaceNotFoundError(DomainError):
+    def __init__(self, room: str | None) -> None:
+        detail = 'no fireplace in the house' if room is None else f'no fireplace in the room: {room}'
+        super().__init__(detail, error_code='fireplace_not_found')

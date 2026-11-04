@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 from django import template
 from django.template.defaultfilters import floatformat
@@ -14,6 +15,7 @@ from django.utils.translation import gettext, gettext_lazy
 
 from apps.climate.domain.comfort_windows import WEEKDAY_FIELDS
 from apps.climate.domain.drive import PendingKind
+from apps.climate.domain.external_heat import FireEnd
 from apps.climate.domain.modes import CommandSource, ScheduleMode
 from apps.climate.domain.room_climate import ROOM
 from apps.climate.domain.room_intent import (
@@ -115,6 +117,18 @@ GUEST_NIGHTS = {1: gettext_lazy('1 night'), 2: gettext_lazy('2 nights'), 3: gett
 ROOM_OVERRIDDEN = gettext_lazy('%(name)s: manual %(target)s° until %(time)s')
 ROOM_OVERRIDE_CLEARED = gettext_lazy('%(name)s: back to the schedule')
 FROM_TELEGRAM = gettext_lazy('From Telegram')
+FIREPLACE_MARKED = gettext_lazy('%(name)s: lit until %(time)s')
+FIREPLACE_MARK_CLEARED = gettext_lazy('%(name)s: out')
+EXTERNAL_HEAT_STARTED = gettext_lazy('%(name)s: looks like the fireplace is lit (+%(rate)s°/h)')
+EXTERNAL_HEAT_ENDED = gettext_lazy('%(name)s: looks like the fireplace has burnt out')
+EXTERNAL_HEAT_WATCHED = gettext_lazy('Watching: learning goes on')
+EXTERNAL_HEAT_TIMED_OUT = gettext_lazy('Six hours have passed')
+MORNING_REJECTED = gettext_lazy('%(name)s: morning not learned: %(rate)s°/h is faster than the cap of %(cap)s°/h')
+LEARNING_RESET = gettext_lazy('%(name)s: learning reset')
+LEARNED_BEFORE = gettext_lazy('Was: %(values)s')
+LEARNED_MORNINGS = gettext_lazy('mornings %(count)s')
+LEARNED_DEAD_TIME = gettext_lazy('delay %(minutes)s min')
+LEARNED_EARLY_STOP = gettext_lazy('early stop %(offset)s°')
 OWNER_COMMAND = gettext_lazy('Telegram: “%(text)s”')
 PHASE_LABELS = {phase.value: phase.value.upper() for phase in MEASURED_PHASES}
 LOAD_PHASES = {
@@ -435,6 +449,75 @@ def room_override_text(entry: TimelineEntry) -> str:
 @register.filter
 def command_note(entry: TimelineEntry) -> str:
     return str(FROM_TELEGRAM) if entry.payload.get('source') == CommandSource.TELEGRAM else ''
+
+
+@register.filter
+def fireplace_mark_text(entry: TimelineEntry) -> str:
+    name = entry.payload.get('name')
+    if not isinstance(name, str) or not name:
+        return _unknown_event(entry)
+
+    if entry.kind == 'fireplace_mark_cleared':
+        return str(FIREPLACE_MARK_CLEARED) % {'name': name}
+
+    moment = _journaled_moment(entry.payload.get('until'))
+    if moment is None:
+        return _unknown_event(entry)
+
+    return str(FIREPLACE_MARKED) % {'name': name, 'time': moment}
+
+
+@register.filter
+def external_heat_text(entry: TimelineEntry) -> str:
+    name = entry.payload.get('room_name')
+    if not isinstance(name, str) or not name:
+        return _unknown_event(entry)
+
+    if entry.kind == 'external_heat_ended':
+        return str(EXTERNAL_HEAT_ENDED) % {'name': name}
+
+    rate = _highest_rate(entry.payload.get('rates'))
+    if rate is None:
+        return _unknown_event(entry)
+
+    return str(EXTERNAL_HEAT_STARTED) % {'name': name, 'rate': floatformat(rate, 1)}
+
+
+@register.filter
+def external_heat_note(entry: TimelineEntry) -> str:
+    if entry.kind == 'external_heat_ended':
+        return str(EXTERNAL_HEAT_TIMED_OUT) if entry.payload.get('reason') == FireEnd.TIMEOUT else ''
+
+    return '' if entry.payload.get('live') is True else str(EXTERNAL_HEAT_WATCHED)
+
+
+@register.filter
+def morning_rejected_text(entry: TimelineEntry) -> str:
+    rate = floatformat(entry.payload.get('rate'), 1)
+    cap = floatformat(entry.payload.get('cap'), 1)
+    if not rate or not cap:
+        return _unknown_event(entry)
+
+    return str(MORNING_REJECTED) % {'name': _zone_name(entry), 'rate': rate, 'cap': cap}
+
+
+@register.filter
+def learning_reset_text(entry: TimelineEntry) -> str:
+    return str(LEARNING_RESET) % {'name': _zone_name(entry)}
+
+
+@register.filter
+def learning_reset_note(entry: TimelineEntry) -> str:
+    payload = entry.payload
+    values: list[str] = []
+    if isinstance(payload.get('mornings'), int):
+        values.append(str(LEARNED_MORNINGS) % {'count': payload['mornings']})
+    if isinstance(payload.get('dead_time_minutes'), int):
+        values.append(str(LEARNED_DEAD_TIME) % {'minutes': payload['dead_time_minutes']})
+    offset = floatformat(payload.get('early_stop_offset'), -2)
+    if offset:
+        values.append(str(LEARNED_EARLY_STOP) % {'offset': offset})
+    return str(LEARNED_BEFORE) % {'values': ', '.join(values)} if values else ''
 
 
 @register.filter
@@ -823,6 +906,21 @@ def _air_control_thermostat_text(entry: TimelineEntry) -> str:
         return _unknown_event(entry)
 
     return str(AIR_CONTROL_SETPOINT) % {'name': entry.subject_name, 'setpoint': setpoint}
+
+
+def _zone_name(entry: TimelineEntry) -> str:
+    name = entry.payload.get('name')
+    return name if isinstance(name, str) and name else entry.subject_name
+
+
+def _highest_rate(rates: object) -> Decimal | None:
+    if not isinstance(rates, dict) or not rates:
+        return None
+
+    try:
+        return max(Decimal(str(rate)) for rate in rates.values())
+    except InvalidOperation:
+        return None
 
 
 def _unknown_event(entry: TimelineEntry) -> str:

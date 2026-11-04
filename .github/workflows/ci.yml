@@ -54,6 +54,8 @@ jobs:
           TEPLO_SITE=example TEPLO_DB_PATH=/tmp/teplo-example.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.models import Zone; from apps.devices.models import Device; from apps.house.repositories.house import HouseRepository; assert ([(floor.slug, [room.slug for room in floor.rooms]) for floor in HouseRepository.floors()], sorted(Zone.objects.values_list('slug', 'room__slug')), sorted(Device.objects.values_list('slug', 'room__slug')), Device.objects.get(slug='air-second-floor').name) == ([('floor-1', ['living-room', 'bathroom']), ('floor-2', ['bedroom'])], [('bathroom', 'bathroom'), ('living-room', 'living-room')], [('air-living-room', 'living-room'), ('air-second-floor', 'bedroom'), ('outdoor', None), ('phase-meter', None), ('plug-water-heater', 'bathroom'), ('thermostat-bathroom', 'bathroom'), ('thermostat-living-room', 'living-room')], 'Bedroom air sensor')"
           TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom.sqlite3 poetry run python app/manage.py shell -c "from apps.house.repositories.house import HouseRepository; bathroom = ('санузел', 'санузл', 'ванн', 'туалет'); assert [(room.slug, room.aliases) for room in HouseRepository.rooms()] == [('open-space', ('гостин', 'кухн', 'прихож', 'зал')), ('bathroom-1f', bathroom), ('bedroom', ('спальн',)), ('office', ('кабинет', 'офис')), ('bathroom-2f', bathroom)]"
           TEPLO_SITE=example TEPLO_DB_PATH=/tmp/teplo-example.sqlite3 poetry run python app/manage.py shell -c "from apps.house.repositories.house import HouseRepository; assert [(room.slug, room.aliases) for room in HouseRepository.rooms()] == [('living-room', ('living', 'гостин')), ('bathroom', ('bath', 'ванн', 'санузел', 'санузл')), ('bedroom', ('bed', 'спальн'))]"
+          TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.models import HeatSource, ZoneLearning; assert (list(HeatSource.objects.values_list('slug', 'room__slug', 'kind', 'live')), list(HeatSource.objects.values_list('device', 'priority', 'lit_until')), ZoneLearning.objects.exclude(resets=0).exists()) == ([('fireplace', 'open-space', 'fireplace', False)], [(None, 1, None)], False)"
+          TEPLO_SITE=example TEPLO_DB_PATH=/tmp/teplo-example.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.models import HeatSource; assert not HeatSource.objects.exists()"
       - name: Site migrations stop before a room loses its comfort or the bedroom its backup heat
         env:
           DJANGO_SETTINGS_MODULE: settings.settings
@@ -123,3 +125,16 @@ jobs:
             poetry run python app/manage.py migrate --noinput
           done
           TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom-estimate.sqlite3 poetry run python app/manage.py shell -c "from decimal import Decimal; from apps.power.domain.control import EstimateSettings; from apps.power.domain.loads import LoadPhase; from apps.power.repositories.load_settings import LoadSettingsRepository; assert LoadSettingsRepository.control().estimate == EstimateSettings(phase=LoadPhase.L2, base_amps=Decimal('2.0'))"
+      - name: Site migrations roll back past the heat sources
+        env:
+          DJANGO_SETTINGS_MODULE: settings.settings
+          DJANGO_SECRET_KEY: ci-site-migrations-only
+        run: |
+          for site in example barsoom; do
+            cp /tmp/teplo-$site.sqlite3 /tmp/teplo-$site-heat-sources.sqlite3
+            export TEPLO_SITE=$site TEPLO_DB_PATH=/tmp/teplo-$site-heat-sources.sqlite3
+            poetry run python app/manage.py migrate climate 0011 --noinput
+            poetry run python app/manage.py shell -c "from django.db import connection; cursor = connection.cursor(); assert ('climate_heatsource' in connection.introspection.table_names(), 'resets' in [column.name for column in connection.introspection.get_table_description(cursor, 'climate_zonelearning')]) == (False, False)"
+            poetry run python app/manage.py migrate --noinput
+          done
+          TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom-heat-sources.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.repositories.heat_source import HeatSourceRepository; assert [(fireplace.slug, fireplace.room_slug, fireplace.live, fireplace.lit_until) for fireplace in HeatSourceRepository.fireplaces()] == [('fireplace', 'open-space', False, None)]"

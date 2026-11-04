@@ -37,10 +37,15 @@ from apps.panel.templatetags.panel_format import (
     day_word,
     duration,
     estimate_parts_text,
+    external_heat_note,
+    external_heat_text,
     failure_note,
+    fireplace_mark_text,
     guest_nights,
     guests_text,
     icon,
+    learning_reset_note,
+    learning_reset_text,
     load_amps,
     load_command_text,
     load_name,
@@ -49,6 +54,7 @@ from apps.panel.templatetags.panel_format import (
     load_shed_note,
     load_shed_text,
     local_time,
+    morning_rejected_text,
     next_write_text,
     optimal_start_text,
     outage_overload_note,
@@ -188,6 +194,13 @@ KITCHEN = ZoneOverview(
     air=None,
 )
 OPEN_SPACE = {'room': 'open-space', 'name': 'Гостиная, кухня и прихожая'}
+FIREPLACE: dict[str, object] = {
+    'fireplace': 'fireplace',
+    'name': 'Камин',
+    'room': 'open-space',
+    'room_name': 'Гостиная, кухня и прихожая',
+}
+OPEN_SPACE_HEAT: dict[str, object] = {'room': 'open-space', 'room_name': 'Гостиная, кухня и прихожая'}
 
 
 def _intent(target: str) -> RoomIntent:
@@ -1328,4 +1341,149 @@ def test_intent_texts_follow_the_active_language() -> None:
         'Гостиная, кухня и прихожая: back to the schedule',
         'Guests mode is off',
         'From Telegram',
+    )
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        (
+            'fireplace_marked',
+            {**FIREPLACE, 'until': '2026-11-04T19:10:00Z', 'source': 'panel'},
+            'Камин: топится до 22:10',
+        ),
+        (
+            'fireplace_marked',
+            {**FIREPLACE, 'until': '2026-11-04T21:30:00Z', 'source': 'telegram'},
+            'Камин: топится до 00:30 завтра',
+        ),
+        ('fireplace_mark_cleared', {**FIREPLACE, 'source': 'panel'}, 'Камин: погас'),
+        ('fireplace_marked', {'fireplace': 'fireplace', 'until': '2026-11-04T19:10:00Z'}, 'Кухня: неизвестное событие'),
+    ],
+    ids=['lit', 'lit_past_midnight', 'out', 'without_a_name'],
+)
+def test_fireplace_mark_text_names_the_fireplace_and_the_end_of_its_mark(
+    kind: str,
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    assert fireplace_mark_text(_entry(kind, payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('kind', 'payload', 'expected'),
+    [
+        (
+            'external_heat_started',
+            {**OPEN_SPACE_HEAT, 'rates': {'air-kitchen': '1.62', 'air-living-room': '2.13'}, 'live': False},
+            (
+                'Гостиная, кухня и прихожая: похоже, топится камин (+2,1°/ч)',
+                'Наблюдение: обучение не останавливается',
+            ),
+        ),
+        (
+            'external_heat_started',
+            {**OPEN_SPACE_HEAT, 'rates': {'air-office': '1.70'}, 'live': True},
+            ('Гостиная, кухня и прихожая: похоже, топится камин (+1,7°/ч)', ''),
+        ),
+        (
+            'external_heat_ended',
+            {**OPEN_SPACE_HEAT, 'reason': 'calm', 'live': False},
+            ('Гостиная, кухня и прихожая: похоже, камин прогорел', ''),
+        ),
+        (
+            'external_heat_ended',
+            {**OPEN_SPACE_HEAT, 'reason': 'timeout', 'live': True},
+            ('Гостиная, кухня и прихожая: похоже, камин прогорел', 'Прошло 6 часов'),
+        ),
+        (
+            'external_heat_started',
+            {**OPEN_SPACE_HEAT, 'rates': {}, 'live': True},
+            ('Кухня: неизвестное событие', ''),
+        ),
+    ],
+    ids=['started_while_watching', 'started_live', 'ended_calm', 'ended_after_six_hours', 'without_rates'],
+)
+def test_external_heat_text_names_the_room_and_the_fastest_rise(
+    kind: str,
+    payload: dict[str, object],
+    expected: tuple[str, str],
+) -> None:
+    entry = _entry(kind, payload)
+
+    assert (external_heat_text(entry), external_heat_note(entry)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (
+            {'zone': 'living-room', 'name': 'Гостиная', 'rate': '3.412', 'cap': '1.5', 'outdoor_bucket': -5},
+            'Гостиная: утро не выучено: 3,4°/ч быстрее предела 1,5°/ч',
+        ),
+        (
+            {'zone': 'living-room', 'rate': '2.912', 'cap': '2.400'},
+            'Кухня: утро не выучено: 2,9°/ч быстрее предела 2,4°/ч',
+        ),
+        ({'zone': 'living-room', 'name': 'Гостиная'}, 'Кухня: неизвестное событие'),
+    ],
+    ids=['named', 'named_by_the_zone', 'without_rates'],
+)
+def test_morning_rejected_text_compares_the_rate_with_the_cap(payload: dict[str, object], expected: str) -> None:
+    assert morning_rejected_text(_entry('zone_morning_rejected', payload)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (
+            {
+                'zone': 'living-room',
+                'name': 'Гостиная',
+                'early_stop_offset': '0.25',
+                'dead_time_minutes': 35,
+                'rates': {'-5': '0.290'},
+                'mornings': 4,
+            },
+            ('Гостиная: обучение сброшено', 'Было: утр 4, задержка 35 мин, раннее отключение 0,25°'),
+        ),
+        (
+            {
+                'zone': 'living-room',
+                'name': 'Гостиная',
+                'early_stop_offset': '0.30',
+                'dead_time_minutes': None,
+                'rates': {},
+                'mornings': 0,
+            },
+            ('Гостиная: обучение сброшено', 'Было: утр 0, раннее отключение 0,30°'),
+        ),
+        ({'zone': 'living-room'}, ('Кухня: обучение сброшено', '')),
+    ],
+    ids=['everything_learned', 'only_the_early_stop', 'unreadable'],
+)
+def test_learning_reset_text_names_the_zone_and_what_it_had_learned(
+    payload: dict[str, object],
+    expected: tuple[str, str],
+) -> None:
+    entry = _entry('zone_learning_reset', payload)
+
+    assert (learning_reset_text(entry), learning_reset_note(entry)) == expected
+
+
+@pytest.mark.usefixtures('english')
+def test_fireplace_and_learning_texts_follow_the_active_language() -> None:
+    assert (
+        fireplace_mark_text(_entry('fireplace_mark_cleared', FIREPLACE)),
+        external_heat_text(_entry('external_heat_ended', OPEN_SPACE_HEAT)),
+        learning_reset_note(_entry('zone_learning_reset', {'mornings': 2, 'dead_time_minutes': 40})),
+    ) == (
+        'Камин: out',
+        'Гостиная, кухня и прихожая: looks like the fireplace has burnt out',
+        'Was: mornings 2, delay 40 min',
     )

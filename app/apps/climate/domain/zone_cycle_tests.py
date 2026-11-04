@@ -1164,3 +1164,22 @@ def test_shed_zone_in_air_dry_run_journals_nothing_and_keeps_its_would_be_target
         morning=None,
         stop=None,
     )
+
+
+@pytest.fixture
+def f_reset_memory(f_heating_memory: ZoneMemory) -> ZoneMemory:
+    return replace(f_heating_memory, resets=2)
+
+
+@pytest.mark.parametrize(
+    'outcome',
+    [ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.APPLIED, ZoneCycleOutcome.SHED],
+)
+def test_zone_keeps_the_reset_count_of_its_learning_through_a_cycle(
+    f_live_zone: ZoneSettings,
+    f_reset_memory: ZoneMemory,
+    outcome: ZoneCycleOutcome,
+) -> None:
+    follow_up = _follow(f_live_zone, f_reset_memory, _conditions('21.5'), _cycle(MORNING), outcome)
+
+    assert follow_up.memory.resets == 2

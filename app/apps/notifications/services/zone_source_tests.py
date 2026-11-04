@@ -5,6 +5,7 @@ import pytest
 
 from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.services.control_book import ControlBook
@@ -43,7 +44,12 @@ def _source() -> ZoneHeatingSource:
         store.record_state(slug, _state(EVENING - timedelta(minutes=1)))
     return ZoneHeatingSource(
         zones=ZoneRepository(),
-        intents=RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=ControlBook()),
+        intents=RoomIntentReader(
+            rooms=RoomClimateRepository(),
+            guests=ClimateSettingsRepository(),
+            fireplaces=HeatSourceRepository(),
+            book=ControlBook(),
+        ),
         store=store,
     )
 

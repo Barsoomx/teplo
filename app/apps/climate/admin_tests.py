@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -7,24 +7,28 @@ from django import forms
 from django.contrib import admin
 from django.contrib.auth.models import User
 from django.http import HttpRequest
-from django.test import RequestFactory
+from django.test import Client, RequestFactory
 from django.utils import translation
 
 from apps.climate.admin import (
     GUARD_FIELDS,
     ClimateSettingsAdmin,
     ComfortPeriodInline,
+    HeatSourceAdmin,
     RoomClimateAdmin,
     ZoneAdmin,
     ZoneLearningAdmin,
 )
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.factories import ClimateSettingsFactory, RoomClimateFactory, ZoneFactory, ZoneLearningFactory
-from apps.climate.models import ClimateSettings, RoomClimate, Zone, ZoneLearning
+from apps.climate.models import ClimateSettings, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
 from apps.devices.models import Device
 from apps.house.factories import RoomFactory
+from apps.house.models import Room
 from apps.power.factories import ZoneLoadFactory
+from apps.telemetry.models import JournalEntry
 
 pytestmark = pytest.mark.django_db
 
@@ -54,6 +58,8 @@ BELOW_MIN_BAND = 'Must not be below the air min band, or heating stops above the
 IDLE_NOT_BELOW_LIMIT = (
     'The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats'
 )
+DEVICE_UNLESS_FIREPLACE = 'A fireplace has no device, and any other heat source needs its device'
+LEARNING_URL = '/admin/climate/zonelearning/'
 
 
 @pytest.fixture
@@ -500,4 +506,127 @@ def test_room_climate_page_explains_its_refusals_in_the_page_language(
         {'air_sensor': ['Этот датчик стоит в другой комнате']},
         {'__all__': ['Резервный обогрев должен включаться хотя бы на 0,5° ниже ночной цели, иначе он спорит с ней']},
         {'__all__': ['Ночная цель не может быть выше комфортной']},
+    )
+
+
+@pytest.fixture
+def f_heat_source_admin() -> HeatSourceAdmin:
+    return HeatSourceAdmin(HeatSource, admin.site)
+
+
+@pytest.fixture
+def f_open_space() -> Room:
+    return RoomFactory.create(slug='open-space', name='Гостиная, кухня и прихожая')
+
+
+@pytest.fixture
+def f_climate_unit() -> Device:
+    return DeviceFactory.create(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.UNSUPPORTED)
+
+
+@pytest.fixture
+def f_heat_source_posted(request: pytest.FixtureRequest, f_open_space: Room, f_climate_unit: Device) -> dict[str, str]:
+    kind, with_device = request.param
+    return {
+        'slug': 'fireplace',
+        'name': 'Камин',
+        'room': str(f_open_space.pk),
+        'kind': kind,
+        'device': str(f_climate_unit.pk) if with_device else '',
+        'priority': '1',
+    }
+
+
+@pytest.fixture
+def f_admin_client() -> Client:
+    client = Client(headers={'accept-language': 'ru'})
+    client.force_login(User.objects.create_superuser(username='owner', password='owner-password'))  # noqa: S106
+    return client
+
+
+@pytest.fixture
+def f_learned_zones() -> list[ZoneLearning]:
+    return [
+        ZoneLearningFactory.create(
+            zone__slug='living-room',
+            zone__name='Гостиная',
+            dead_time=timedelta(minutes=35),
+            heat_up_rates={'-5': '0.290'},
+            mornings=4,
+        ),
+        ZoneLearningFactory.create(zone__slug='kitchen', zone__name='Кухня', early_stop_offset=Decimal('0.25')),
+        ZoneLearningFactory.create(zone__slug='hallway', zone__name='Прихожая'),
+    ]
+
+
+def test_heat_source_admin_lists_the_sources_with_their_gate_and_shows_the_mark_read_only(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_request: HttpRequest,
+) -> None:
+    form = f_heat_source_admin.get_form(f_request)
+
+    assert (
+        f_heat_source_admin.list_display,
+        f_heat_source_admin.list_editable,
+        f_heat_source_admin.get_readonly_fields(f_request),
+        'lit_until' in form.base_fields,
+    ) == (('name', 'room', 'kind', 'device', 'priority', 'live', 'lit_until'), ('live',), ('lit_until',), False)
+
+
+@pytest.mark.parametrize(
+    ('f_heat_source_posted', 'errors'),
+    [
+        ((HeatSourceKind.FIREPLACE, False), {}),
+        ((HeatSourceKind.FIREPLACE, True), {'__all__': [DEVICE_UNLESS_FIREPLACE]}),
+        ((HeatSourceKind.HEATER, False), {'__all__': [DEVICE_UNLESS_FIREPLACE]}),
+        ((HeatSourceKind.HEATER, True), {}),
+    ],
+    ids=['fireplace', 'fireplace_with_a_device', 'heater_without_a_device', 'heater'],
+    indirect=['f_heat_source_posted'],
+)
+def test_heat_source_page_refuses_a_device_on_a_fireplace_and_a_source_without_one(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_request: HttpRequest,
+    f_heat_source_posted: dict[str, str],
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_heat_source_admin.get_form(f_request)(f_heat_source_posted)
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize('f_heat_source_posted', [(HeatSourceKind.FIREPLACE, True)], indirect=True)
+def test_heat_source_page_explains_its_refusal_in_the_page_language(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_request: HttpRequest,
+    f_heat_source_posted: dict[str, str],
+) -> None:
+    form = f_heat_source_admin.get_form(f_request)(f_heat_source_posted)
+
+    assert form.errors == {
+        '__all__': ['У камина нет устройства, а любому другому источнику тепла нужно его устройство'],
+    }
+
+
+def test_reset_learning_action_resets_the_zones_that_learned_and_names_them(
+    f_admin_client: Client,
+    f_learned_zones: list[ZoneLearning],
+) -> None:
+    response = f_admin_client.post(
+        LEARNING_URL,
+        {'action': 'reset_learning', 'index': '0', '_selected_action': [learning.pk for learning in f_learned_zones]},
+        follow=True,
+    )
+
+    assert (
+        response.status_code,
+        [str(message) for message in response.context['messages']],
+        sorted(ZoneLearning.objects.values_list('zone__slug', 'early_stop_offset', 'mornings', 'resets')),
+        sorted(JournalEntry.objects.values_list('kind', 'subject')),
+    ) == (
+        200,
+        ['Обучение сброшено: Гостиная, Кухня', 'Сбрасывать нечего: Прихожая ещё ничего не выучили'],
+        [('hallway', None, 0, 0), ('kitchen', None, 0, 1), ('living-room', None, 0, 1)],
+        [('zone_learning_reset', 'kitchen'), ('zone_learning_reset', 'living-room')],
     )

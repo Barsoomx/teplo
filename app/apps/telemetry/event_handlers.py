@@ -3,6 +3,10 @@ from dataclasses import asdict
 from apps.climate.domain.events import (
     AirControlDryRun,
     BackupHeatDryRun,
+    ExternalHeatEnded,
+    ExternalHeatStarted,
+    FireplaceMarkCleared,
+    FireplaceMarked,
     GuestsCleared,
     GuestsSet,
     OptimalStartDryRun,
@@ -11,6 +15,8 @@ from apps.climate.domain.events import (
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
+    ZoneLearningReset,
+    ZoneMorningRejected,
 )
 from apps.core.domain.events import DomainEvent, domain_event_handler
 from apps.devices.domain.events import DeviceAvailabilityChanged
@@ -130,6 +136,36 @@ def journal_room_overridden(event: RoomOverridden) -> None:
 @domain_event_handler(RoomOverrideCleared)
 def journal_room_override_cleared(event: RoomOverrideCleared) -> None:
     _journal('room_override_cleared', event.room, event)
+
+
+@domain_event_handler(FireplaceMarked)
+def journal_fireplace_marked(event: FireplaceMarked) -> None:
+    _journal('fireplace_marked', event.fireplace, event)
+
+
+@domain_event_handler(FireplaceMarkCleared)
+def journal_fireplace_mark_cleared(event: FireplaceMarkCleared) -> None:
+    _journal('fireplace_mark_cleared', event.fireplace, event)
+
+
+@domain_event_handler(ExternalHeatStarted)
+def journal_external_heat_started(event: ExternalHeatStarted) -> None:
+    _journal('external_heat_started', event.room, event)
+
+
+@domain_event_handler(ExternalHeatEnded)
+def journal_external_heat_ended(event: ExternalHeatEnded) -> None:
+    _journal('external_heat_ended', event.room, event)
+
+
+@domain_event_handler(ZoneMorningRejected)
+def journal_zone_morning_rejected(event: ZoneMorningRejected) -> None:
+    _journal('zone_morning_rejected', event.zone, event)
+
+
+@domain_event_handler(ZoneLearningReset)
+def journal_zone_learning_reset(event: ZoneLearningReset) -> None:
+    _journal('zone_learning_reset', event.zone, event)
 
 
 @domain_event_handler(AlertRaised)

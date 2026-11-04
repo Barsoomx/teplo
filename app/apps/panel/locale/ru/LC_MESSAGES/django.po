@@ -1184,3 +1184,65 @@ msgstr "%(name)s: больше не гостевая комната"
 
 msgid "guests until"
 msgstr "гости до"
+
+#, python-format
+msgid "Fireplace lit until %(time)s"
+msgstr "Камин топится до %(time)s"
+
+msgid "Looks like the fireplace is lit"
+msgstr "Похоже, топится камин"
+
+msgid "The fireplace is out"
+msgstr "Камин погас"
+
+msgid "Lighting the fireplace"
+msgstr "Топлю камин"
+
+msgid "Fireplace detector"
+msgstr "Детектор камина"
+
+#, python-format
+msgid "%(name)s: lit until %(time)s"
+msgstr "%(name)s: топится до %(time)s"
+
+#, python-format
+msgid "%(name)s: out"
+msgstr "%(name)s: погас"
+
+#, python-format
+msgid "%(name)s: looks like the fireplace is lit (+%(rate)s°/h)"
+msgstr "%(name)s: похоже, топится камин (+%(rate)s°/ч)"
+
+#, python-format
+msgid "%(name)s: looks like the fireplace has burnt out"
+msgstr "%(name)s: похоже, камин прогорел"
+
+msgid "Watching: learning goes on"
+msgstr "Наблюдение: обучение не останавливается"
+
+msgid "Six hours have passed"
+msgstr "Прошло 6 часов"
+
+#, python-format
+msgid "%(name)s: morning not learned: %(rate)s°/h is faster than the cap of %(cap)s°/h"
+msgstr "%(name)s: утро не выучено: %(rate)s°/ч быстрее предела %(cap)s°/ч"
+
+#, python-format
+msgid "%(name)s: learning reset"
+msgstr "%(name)s: обучение сброшено"
+
+#, python-format
+msgid "Was: %(values)s"
+msgstr "Было: %(values)s"
+
+#, python-format
+msgid "mornings %(count)s"
+msgstr "утр %(count)s"
+
+#, python-format
+msgid "delay %(minutes)s min"
+msgstr "задержка %(minutes)s мин"
+
+#, python-format
+msgid "early stop %(offset)s°"
+msgstr "раннее отключение %(offset)s°"

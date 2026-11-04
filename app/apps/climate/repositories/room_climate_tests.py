@@ -7,6 +7,7 @@ from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.backup_heat import BackupHeat
+from apps.climate.domain.heat_sources import HeatSourceKind, SourceGate
 from apps.climate.domain.modes import CommandSource, ZoneKind
 from apps.climate.domain.room_climate import (
     RoomClimateConfig,
@@ -15,8 +16,8 @@ from apps.climate.domain.room_climate import (
     RoomOverride,
 )
 from apps.climate.domain.zone import AirTargets, ComfortWindow
-from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
-from apps.climate.models import RoomClimate
+from apps.climate.factories import ComfortPeriodFactory, HeatSourceFactory, RoomClimateFactory, ZoneFactory
+from apps.climate.models import HeatSource, RoomClimate
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
 from apps.devices.factories import DeviceFactory
@@ -209,6 +210,19 @@ def test_config_records_name_the_room_its_floor_and_its_backup_zone(f_bedroom: R
     ]
 
 
+@pytest.fixture
+def f_fireplace(f_open_space: RoomClimate) -> HeatSource:
+    return HeatSourceFactory.create(slug='fireplace', name='Камин', room=f_open_space.room, live=True)
+
+
+@pytest.mark.usefixtures('f_bedroom')
+def test_config_records_give_each_room_the_gates_of_its_heat_sources(f_fireplace: HeatSource) -> None:
+    assert [(record.slug, record.sources) for record in RoomClimateRepository.config_records()] == [
+        ('open-space', (SourceGate(id=f_fireplace.pk, name='Камин', kind=HeatSourceKind.FIREPLACE, live=True),)),
+        ('bedroom', ()),
+    ]
+
+
 @pytest.mark.usefixtures('f_bedroom')
 def test_config_for_update_takes_the_write_lock_on_the_room_climate_before_it_reads_it() -> None:
     with CaptureQueriesContext(connection) as queries:
@@ -216,7 +230,7 @@ def test_config_for_update_takes_the_write_lock_on_the_room_climate_before_it_re
 
     assert (record.config, [query['sql'].split(' ', 1)[0] for query in queries.captured_queries]) == (
         BEDROOM_CONFIG,
-        ['UPDATE', 'SELECT'],
+        ['UPDATE', 'SELECT', 'SELECT'],
     )
 
 

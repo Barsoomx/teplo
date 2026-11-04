@@ -4,6 +4,7 @@ from decimal import Decimal
 
 from apps.climate.domain.backup_heat import BackupHeat
 from apps.climate.domain.climate_config import OFFSET_MAX, OFFSET_MIN, hundredths
+from apps.climate.domain.heat_sources import SourceGate
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.zone import AirTargets, ComfortWindow
 from apps.climate.domain.zone_config import SETPOINT_MAX, SETPOINT_MIN, tenths
@@ -62,6 +63,7 @@ class RoomClimateConfigRecord:
     backup_zone_slug: str | None
     backup_zone_name: str | None
     backup_live: bool
+    sources: tuple[SourceGate, ...] = ()
 
 
 def room_climate_problems(config: RoomClimateConfig, *, has_backup: bool) -> tuple[SettingProblem, ...]:

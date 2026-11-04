@@ -8,6 +8,10 @@ from apps.climate.domain.change import ThermostatChange
 from apps.climate.domain.events import (
     AirControlDryRun,
     BackupHeatDryRun,
+    ExternalHeatEnded,
+    ExternalHeatStarted,
+    FireplaceMarkCleared,
+    FireplaceMarked,
     GuestsCleared,
     GuestsSet,
     OptimalStartDryRun,
@@ -16,7 +20,10 @@ from apps.climate.domain.events import (
     ZoneBoosted,
     ZoneCommandFailed,
     ZoneCommandIssued,
+    ZoneLearningReset,
+    ZoneMorningRejected,
 )
+from apps.climate.domain.external_heat import FireEnd
 from apps.climate.domain.modes import AirState, CommandSource, ScheduleMode
 from apps.core.domain.events import DomainEvent
 from apps.devices.domain.events import DeviceAvailabilityChanged
@@ -50,6 +57,10 @@ from apps.telemetry.event_handlers import (
     journal_device_availability,
     journal_ev_charging_started,
     journal_ev_charging_stopped,
+    journal_external_heat_ended,
+    journal_external_heat_started,
+    journal_fireplace_mark_cleared,
+    journal_fireplace_marked,
     journal_guests_cleared,
     journal_guests_set,
     journal_load_command_failure,
@@ -68,6 +79,8 @@ from apps.telemetry.event_handlers import (
     journal_zone_boost,
     journal_zone_command,
     journal_zone_command_failure,
+    journal_zone_learning_reset,
+    journal_zone_morning_rejected,
 )
 from apps.telemetry.models import JournalEntry
 
@@ -604,6 +617,164 @@ def test_guard_decision_is_journaled_at_once_with_its_raw_values(
     ids=['guests_set', 'guests_cleared', 'room_overridden', 'room_override_cleared'],
 )
 def test_owner_intents_are_journaled_with_their_room_as_the_subject(
+    handler: Callable[..., None],
+    event: DomainEvent,
+    expected: tuple[str, str, object, datetime],
+) -> None:
+    handler(event)
+
+    assert _entry() == expected
+
+
+@pytest.mark.parametrize(
+    ('handler', 'event', 'expected'),
+    [
+        (
+            journal_fireplace_marked,
+            FireplaceMarked(
+                fireplace='fireplace',
+                name='Камин',
+                room='open-space',
+                room_name='Гостиная, кухня и прихожая',
+                until=NOW + timedelta(hours=4),
+                source=CommandSource.TELEGRAM,
+                occurred_at=NOW,
+            ),
+            (
+                'fireplace_marked',
+                'fireplace',
+                {
+                    'fireplace': 'fireplace',
+                    'name': 'Камин',
+                    'room': 'open-space',
+                    'room_name': 'Гостиная, кухня и прихожая',
+                    'until': '2026-10-29T10:00:00Z',
+                    'source': 'telegram',
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_fireplace_mark_cleared,
+            FireplaceMarkCleared(
+                fireplace='fireplace',
+                name='Камин',
+                room='open-space',
+                room_name='Гостиная, кухня и прихожая',
+                source=CommandSource.PANEL,
+                occurred_at=NOW,
+            ),
+            (
+                'fireplace_mark_cleared',
+                'fireplace',
+                {
+                    'fireplace': 'fireplace',
+                    'name': 'Камин',
+                    'room': 'open-space',
+                    'room_name': 'Гостиная, кухня и прихожая',
+                    'source': 'panel',
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_external_heat_started,
+            ExternalHeatStarted(
+                room='open-space',
+                room_name='Гостиная, кухня и прихожая',
+                rates={'air-kitchen': Decimal('2.10'), 'air-living-room': Decimal('1.62')},
+                live=False,
+                occurred_at=NOW,
+            ),
+            (
+                'external_heat_started',
+                'open-space',
+                {
+                    'room': 'open-space',
+                    'room_name': 'Гостиная, кухня и прихожая',
+                    'rates': {'air-kitchen': '2.10', 'air-living-room': '1.62'},
+                    'live': False,
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_external_heat_ended,
+            ExternalHeatEnded(
+                room='open-space',
+                room_name='Гостиная, кухня и прихожая',
+                reason=FireEnd.CALM,
+                live=True,
+                occurred_at=NOW,
+            ),
+            (
+                'external_heat_ended',
+                'open-space',
+                {'room': 'open-space', 'room_name': 'Гостиная, кухня и прихожая', 'reason': 'calm', 'live': True},
+                NOW,
+            ),
+        ),
+        (
+            journal_zone_morning_rejected,
+            ZoneMorningRejected(
+                zone='living-room',
+                name='Гостиная',
+                rate=Decimal('3.412'),
+                cap=Decimal('1.5'),
+                outdoor_bucket=-5,
+                dead_time_minutes=12,
+                occurred_at=NOW,
+            ),
+            (
+                'zone_morning_rejected',
+                'living-room',
+                {
+                    'zone': 'living-room',
+                    'name': 'Гостиная',
+                    'rate': '3.412',
+                    'cap': '1.5',
+                    'outdoor_bucket': -5,
+                    'dead_time_minutes': 12,
+                },
+                NOW,
+            ),
+        ),
+        (
+            journal_zone_learning_reset,
+            ZoneLearningReset(
+                zone='living-room',
+                name='Гостиная',
+                early_stop_offset=Decimal('0.25'),
+                dead_time_minutes=35,
+                rates={'-5': '0.290'},
+                mornings=4,
+                occurred_at=NOW,
+            ),
+            (
+                'zone_learning_reset',
+                'living-room',
+                {
+                    'zone': 'living-room',
+                    'name': 'Гостиная',
+                    'early_stop_offset': '0.25',
+                    'dead_time_minutes': 35,
+                    'rates': {'-5': '0.290'},
+                    'mornings': 4,
+                },
+                NOW,
+            ),
+        ),
+    ],
+    ids=[
+        'fireplace_marked',
+        'fireplace_mark_cleared',
+        'external_heat_started',
+        'external_heat_ended',
+        'zone_morning_rejected',
+        'zone_learning_reset',
+    ],
+)
+def test_fireplace_and_learning_entries_are_journaled_with_their_subjects(
     handler: Callable[..., None],
     event: DomainEvent,
     expected: tuple[str, str, object, datetime],

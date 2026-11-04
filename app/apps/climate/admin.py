@@ -1,15 +1,21 @@
+from datetime import datetime
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db import OperationalError
+from django.db.models import QuerySet
 from django.http import HttpRequest
+from django.utils import timezone
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.climate_config import start_offset_keeps_band
-from apps.climate.models import ClimateSettings, ComfortPeriod, RoomClimate, Zone, ZoneLearning
+from apps.climate.models import ClimateSettings, ComfortPeriod, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.climate.models.climate_settings import START_OFFSET_BELOW_MIN_BAND
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.usecases.reset_zone_learning import ResetZoneLearningInputDTO, ResetZoneLearningUseCase
 from apps.devices.models import Device
 from apps.power.models import Load
 
@@ -24,6 +30,24 @@ GUARD_FIELDS = (
 )
 AIR_SENSOR_OF_A_ZONE = gettext_lazy('This sensor is the air sensor of a zone')
 AIR_SENSOR_IN_ANOTHER_ROOM = gettext_lazy('This sensor is placed in another room')
+NAMES_SEPARATOR = ', '
+
+
+class ResetOutcome(StrEnum):
+    RESET = 'reset'
+    UNLEARNED = 'unlearned'
+    REFUSED = 'refused'
+
+
+RESET_MESSAGES = (
+    (ResetOutcome.RESET, gettext_lazy('Learning reset: %(zones)s'), messages.SUCCESS),
+    (ResetOutcome.UNLEARNED, gettext_lazy('Nothing to reset: %(zones)s learned nothing yet'), messages.WARNING),
+    (
+        ResetOutcome.REFUSED,
+        gettext_lazy('The database did not take the reset of %(zones)s: try again'),
+        messages.ERROR,
+    ),
+)
 
 
 class ComfortPeriodInline(admin.TabularInline):
@@ -150,10 +174,30 @@ class ZoneLearningAdmin(admin.ModelAdmin):
         'mornings',
         'updated_at',
     )
+    actions = ('reset_learning',)
 
     @admin.display(description='early-stop offset in effect')
     def early_stop_offset_in_effect(self, obj: ZoneLearning) -> Decimal:
         return ClimateSettingsRepository.control().regulation.early_stop_offset(obj.early_stop_offset)
+
+    @admin.action(description=gettext_lazy('Reset learning'), permissions=('view',))
+    def reset_learning(self, request: HttpRequest, queryset: QuerySet[ZoneLearning]) -> None:
+        now = timezone.now()
+        zones: dict[ResetOutcome, list[str]] = {outcome: [] for outcome in ResetOutcome}
+        for learning in queryset.select_related('zone').order_by('zone__name'):
+            zones[self._reset(learning.zone.slug, now)].append(learning.zone.name)
+        for outcome, template, level in RESET_MESSAGES:
+            if zones[outcome]:
+                self.message_user(request, str(template) % {'zones': NAMES_SEPARATOR.join(zones[outcome])}, level)
+
+    @staticmethod
+    def _reset(zone: str, now: datetime) -> ResetOutcome:
+        try:
+            output = ResetZoneLearningUseCase.init().execute(ResetZoneLearningInputDTO(zone=zone, now=now))
+        except OperationalError:
+            return ResetOutcome.REFUSED
+
+        return ResetOutcome.RESET if output.reset else ResetOutcome.UNLEARNED
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
         return False
@@ -163,3 +207,10 @@ class ZoneLearningAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request: HttpRequest, obj: ZoneLearning | None = None) -> bool:  # noqa: ARG002
         return False
+
+
+@admin.register(HeatSource)
+class HeatSourceAdmin(admin.ModelAdmin):
+    list_display = ('name', 'room', 'kind', 'device', 'priority', 'live', 'lit_until')
+    list_editable = ('live',)
+    readonly_fields = ('lit_until',)

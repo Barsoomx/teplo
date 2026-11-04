@@ -27,13 +27,31 @@ class HeatUpModel:
 class ZoneLearningRecord:
     early_stop_offset: Decimal | None
     heat_up: HeatUpModel
+    resets: int = 0
 
     @classmethod
     def unlearned(cls) -> 'ZoneLearningRecord':
         return cls(early_stop_offset=None, heat_up=HeatUpModel(dead_time=None, rates={}, mornings=0))
 
+    @property
+    def learned(self) -> bool:
+        heat_up = self.heat_up
+        return (
+            self.early_stop_offset is not None
+            or heat_up.dead_time is not None
+            or bool(heat_up.rates)
+            or heat_up.mornings > 0
+        )
+
     def early_stop_offset_or(self, initial: Decimal) -> Decimal:
         return initial if self.early_stop_offset is None else self.early_stop_offset
+
+
+@dataclass(frozen=True, kw_only=True)
+class ZoneLearningEntry:
+    zone: str
+    name: str
+    record: ZoneLearningRecord
 
 
 @dataclass(frozen=True, kw_only=True)

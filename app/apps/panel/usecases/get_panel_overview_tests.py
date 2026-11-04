@@ -6,6 +6,8 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
+from apps.climate.domain.external_heat import FireWatch
+from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.optimal_start import PreheatStart
@@ -15,12 +17,14 @@ from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.factories import (
     ClimateSettingsFactory,
     ComfortPeriodFactory,
+    HeatSourceFactory,
     RoomClimateFactory,
     ZoneFactory,
     ZoneLearningFactory,
 )
 from apps.climate.models import Zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
+from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
 from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
@@ -43,6 +47,7 @@ from apps.panel.usecases.get_panel_overview import (
     PlugOverview,
     RoomComfortOverview,
     SensorOverview,
+    SourceOverview,
     ZoneOverview,
     ZoneRegime,
 )
@@ -128,7 +133,12 @@ def _learned_house(air: str) -> TemperatureStateStore:
 
 
 def _intents(book: ControlBook) -> RoomIntentReader:
-    return RoomIntentReader(rooms=RoomClimateRepository(), guests=ClimateSettingsRepository(), book=book)
+    return RoomIntentReader(
+        rooms=RoomClimateRepository(),
+        guests=ClimateSettingsRepository(),
+        fireplaces=HeatSourceRepository(),
+        book=book,
+    )
 
 
 def _use_case(temperatures: TemperatureStateStore, book: ControlBook) -> GetPanelOverviewUseCase:
@@ -736,6 +746,20 @@ def f_intent_use_case() -> GetPanelOverviewUseCase:
     )
     ClimateSettingsFactory.create(guests_until=GUESTS_LEAVE)
     return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), ControlBook())
+
+
+@pytest.fixture
+def f_fireplace_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
+    lit_until, burning, live = request.param
+    open_space = RoomFactory.create(
+        slug='open-space',
+        name='Гостиная, кухня и прихожая',
+        floor=FloorFactory.create(slug='floor-1', name='1 этаж', level=1),
+    )
+    HeatSourceFactory.create(slug='fireplace', name='Камин', room=open_space, live=live, lit_until=lit_until)
+    book = ControlBook()
+    book.remember_fire('open-space', FireWatch(fire_since=GUARD_AT if burning else None))
+    return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), book)
 
 
 @pytest.fixture
@@ -1451,4 +1475,37 @@ def test_overview_lists_the_loads_by_priority_with_their_phase_current_and_state
             state=LoadState.DRAWING,
             live=False,
         ),
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_fireplace_use_case', 'lit_until', 'burning', 'live'),
+    [
+        ((MORNING + timedelta(hours=2), False, False), MORNING + timedelta(hours=2), False, False),
+        ((MORNING - timedelta(minutes=1), True, True), None, True, True),
+        ((MORNING + timedelta(hours=5), True, False), None, True, False),
+    ],
+    ids=['marked', 'mark_ended_while_the_detector_sees_a_fire', 'mark_beyond_four_hours_of_a_clock_set_back'],
+    indirect=['f_fireplace_use_case'],
+)
+def test_overview_shows_the_fireplace_of_a_room_with_its_mark_and_what_the_detector_sees(
+    f_fireplace_use_case: GetPanelOverviewUseCase,
+    lit_until: datetime | None,
+    burning: bool,
+    live: bool,
+) -> None:
+    [open_space] = f_fireplace_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).floors[0].rooms
+
+    assert (open_space.sources, open_space.shown) == (
+        (
+            SourceOverview(
+                slug='fireplace',
+                name='Камин',
+                kind=HeatSourceKind.FIREPLACE,
+                live=live,
+                lit_until=lit_until,
+                burning=burning,
+            ),
+        ),
+        True,
     )

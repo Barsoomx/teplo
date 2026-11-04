@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.backup_heat import BackupHeat
+from apps.climate.domain.heat_sources import FireplaceRecord
 from apps.climate.domain.modes import CommandSource, ZoneKind
 from apps.climate.domain.room_climate import RoomClimateSettings, RoomOverride
 from apps.climate.domain.room_intent import (
@@ -66,7 +67,17 @@ INTENTS = RoomIntents(
             forced=(),
         ),
     },
+    now=NIGHT,
 )
+FIREPLACE = FireplaceRecord(
+    slug='fireplace',
+    name='Камин',
+    room_slug='open-space',
+    room_name='Гостиная, кухня и прихожая',
+    live=False,
+    lit_until=NIGHT + timedelta(hours=3),
+)
+STOVE = replace(FIREPLACE, slug='stove', name='Печь', room_slug='bedroom', room_name='Спальня', lit_until=None)
 KITCHEN = ZoneSettings(
     slug='kitchen',
     name='Кухня',
@@ -264,6 +275,53 @@ def test_zone_intent_forces_only_override_and_guests(
     expected: ZoneIntent,
 ) -> None:
     assert INTENTS.zone_intent(zone, backed_up=backed_up) == expected
+
+
+@pytest.mark.parametrize(
+    ('zone', 'heated', 'learns'),
+    [
+        (replace(KITCHEN, room_slug='bedroom'), frozenset({'bedroom'}), False),
+        (replace(KITCHEN, room_slug='bedroom'), frozenset({'open-space'}), True),
+        (replace(KITCHEN, room_slug=None), frozenset({'open-space'}), True),
+    ],
+    ids=['room_with_external_heat', 'another_room_heated', 'zone_without_a_room'],
+)
+def test_zone_of_a_room_with_external_heat_learns_nothing(
+    zone: ZoneSettings,
+    heated: frozenset[str],
+    learns: bool,
+) -> None:
+    assert INTENTS.zone_intent(zone, backed_up=frozenset(), heated=heated) == ZoneIntent(
+        forced=(),
+        backup=False,
+        learns=learns,
+    )
+
+
+@pytest.mark.parametrize(
+    ('now', 'lit_rooms'),
+    [
+        (NIGHT, frozenset({'open-space'})),
+        (NIGHT + timedelta(hours=3), frozenset()),
+        (NIGHT - timedelta(hours=2), frozenset()),
+    ],
+    ids=['mark_counts', 'mark_ended', 'mark_beyond_four_hours_of_a_clock_set_back'],
+)
+def test_room_intents_name_the_rooms_whose_fireplace_mark_counts(now: datetime, lit_rooms: frozenset[str]) -> None:
+    intents = resolve_room_intents(
+        (OPEN_SPACE, BEDROOM),
+        now=now,
+        clock_trusted=False,
+        guests_until=None,
+        fireplaces=(FIREPLACE, STOVE),
+    )
+
+    assert (
+        intents.fireplace('open-space'),
+        intents.fireplace('bedroom'),
+        intents.fireplace('office'),
+        intents.lit_rooms(),
+    ) == (FIREPLACE, STOVE, None, lit_rooms)
 
 
 @pytest.mark.parametrize(

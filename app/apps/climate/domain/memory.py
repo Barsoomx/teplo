@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
 
@@ -20,9 +20,17 @@ class ZoneMemory:
     morning: Morning | None = None
     preheated_for: datetime | None = None
     stop: StopWatch | None = None
+    resets: int = 0
 
     def air_state_on(self, path: ControlPath) -> AirState | None:
         return self.air_state if path is self.path else None
 
     def heat_target_on(self, path: ControlPath) -> Decimal | None:
         return self.heat_target if path is self.path else None
+
+
+def fenced(memory: ZoneMemory, resets: int) -> ZoneMemory:
+    if memory.resets == resets:
+        return memory
+
+    return replace(memory, morning=None, stop=None, resets=resets)
