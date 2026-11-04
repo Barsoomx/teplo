@@ -1,7 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
+from django.test.utils import CaptureQueriesContext
 
 from apps.power.domain.errors import OutageNotFoundError
 from apps.power.domain.outage import OutageCause, OutageRecord, PowerCut
@@ -57,6 +58,13 @@ def _record(outage: Outage) -> OutageRecord:
         cause=OutageCause(stored.cause),
         cause_marked_at=stored.cause_marked_at,
     )
+
+
+def test_add_takes_the_write_lock_before_it_reads() -> None:
+    with CaptureQueriesContext(connection) as queries:
+        OutageRepository.add(EVENING_CUT)
+
+    assert [query['sql'].split(' ', 1)[0] for query in queries.captured_queries][:2] == ['UPDATE', 'SELECT']
 
 
 def test_added_outage_starts_unmarked_with_the_boot_of_its_power_cut() -> None:

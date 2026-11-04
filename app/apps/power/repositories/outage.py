@@ -1,6 +1,7 @@
 from collections.abc import Collection
 from datetime import datetime
 
+from apps.core.repositories.write_lock import lock_for_update
 from apps.power.domain.errors import OutageNotFoundError
 from apps.power.domain.outage import OutageCause, OutageRecord, PowerCut
 from apps.power.models import Outage
@@ -9,7 +10,9 @@ from apps.power.models import Outage
 class OutageRepository:
     @staticmethod
     def add(power_cut: PowerCut) -> OutageRecord | None:
-        if power_cut.boot_id is not None and Outage.objects.filter(boot_id=power_cut.boot_id).exists():
+        same_boot = Outage.objects.filter(boot_id=power_cut.boot_id)
+        lock_for_update(same_boot)
+        if power_cut.boot_id is not None and same_boot.exists():
             return None
 
         outage = Outage.objects.create(
