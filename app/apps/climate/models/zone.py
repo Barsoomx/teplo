@@ -91,6 +91,7 @@ class Zone(models.Model):
     last_command_at = models.DateTimeField(null=True, blank=True)
     last_dry_run_at = models.DateTimeField(null=True, blank=True)
     last_air_dry_run_at = models.DateTimeField(null=True, blank=True)
+    manual_until = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

@@ -48,6 +48,7 @@ def _source() -> ZoneHeatingSource:
             rooms=RoomClimateRepository(),
             guests=ClimateSettingsRepository(),
             fireplaces=HeatSourceRepository(),
+            gates=ClimateSettingsRepository(),
             book=ControlBook(),
         ),
         store=store,
@@ -87,6 +88,19 @@ def f_intent_source(request: pytest.FixtureRequest) -> ZoneHeatingSource:
     return _source()
 
 
+@pytest.fixture
+def f_held_by_hand_source(request: pytest.FixtureRequest) -> ZoneHeatingSource:
+    ClimateSettingsFactory.create(manual_hold_live=request.param)
+    kitchen = ZoneFactory.create(
+        slug='kitchen',
+        name='Кухня',
+        thermostat__slug='thermostat-kitchen',
+        manual_until=EVENING + timedelta(hours=1),
+    )
+    ComfortPeriodFactory.create_batch(7, zone=kitchen)
+    return _source()
+
+
 @pytest.mark.parametrize(
     ('now', 'clock_trusted'),
     [
@@ -123,3 +137,18 @@ def test_overrides_and_guests_never_switch_a_floor_off_and_a_disabled_zone_stays
     zones = f_intent_source.zones(NIGHT, clock_trusted=clock_trusted)
 
     assert zones == ZONES
+
+
+@pytest.mark.parametrize(
+    ('f_held_by_hand_source', 'hands_off'),
+    [(True, True), (False, False)],
+    ids=['gate_on', 'gate_off'],
+    indirect=['f_held_by_hand_source'],
+)
+def test_zone_changed_on_its_thermostat_is_left_alone_only_while_the_gate_is_on(
+    f_held_by_hand_source: ZoneHeatingSource,
+    hands_off: bool,
+) -> None:
+    zones = f_held_by_hand_source.zones(EVENING, clock_trusted=True)
+
+    assert zones == [ZoneHeating(slug='kitchen', name='Кухня', should_heat=True, power=False, hands_off=hands_off)]

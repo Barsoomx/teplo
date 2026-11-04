@@ -9,7 +9,7 @@ from apps.climate.domain.write_guard import WriteReservation, WriteSlot
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO, BoostZoneUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
@@ -27,24 +27,24 @@ def f_zone() -> Zone:
 
 
 @pytest.fixture
-def f_writes() -> ZoneWriteGate:
-    writes = ZoneWriteGate(clock=MonotonicClockStub(now=0.0), zone_lock=threading.Lock)
+def f_writes() -> KeyedWriteGate:
+    writes = KeyedWriteGate(clock=MonotonicClockStub(now=0.0), key_lock=threading.Lock)
     writes.reserve('bathroom-1f', WRITTEN_AT, stamped_at=None, read_at=0.0)
     return writes
 
 
 @pytest.fixture
-def f_writes_of_a_zone_shed_live(request: pytest.FixtureRequest) -> ZoneWriteGate:
+def f_writes_of_a_zone_shed_live(request: pytest.FixtureRequest) -> KeyedWriteGate:
     since_shed: timedelta = request.param
     clock = MonotonicClockStub(now=0.0)
-    writes = ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
+    writes = KeyedWriteGate(clock=clock, key_lock=threading.Lock)
     writes.override('bathroom-1f', WRITTEN_AT)
     clock.advance(since_shed.total_seconds())
     return writes
 
 
 @pytest.fixture
-def f_use_case_of_a_zone_shed_live(f_writes_of_a_zone_shed_live: ZoneWriteGate) -> BoostZoneUseCase:
+def f_use_case_of_a_zone_shed_live(f_writes_of_a_zone_shed_live: KeyedWriteGate) -> BoostZoneUseCase:
     return BoostZoneUseCase(zones=ZoneRepository(), writes=f_writes_of_a_zone_shed_live, dispatcher=EventDispatcher())
 
 
@@ -54,7 +54,7 @@ def f_events() -> list[DomainEvent]:
 
 
 @pytest.fixture
-def f_use_case(f_events: list[DomainEvent], f_writes: ZoneWriteGate) -> BoostZoneUseCase:
+def f_use_case(f_events: list[DomainEvent], f_writes: KeyedWriteGate) -> BoostZoneUseCase:
     dispatcher = EventDispatcher()
     dispatcher.register(ZoneBoosted, f_events.append)
     return BoostZoneUseCase(zones=ZoneRepository(), writes=f_writes, dispatcher=dispatcher)
@@ -79,12 +79,12 @@ def test_boost_sets_two_hours_and_clears_write_budget(
 @pytest.mark.usefixtures('f_zone')
 def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
     f_use_case: BoostZoneUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
 ) -> None:
     f_use_case.execute(BoostZoneInputDTO(zone='bathroom-1f', now=NOW))
 
     assert f_writes.reserve('bathroom-1f', NOW, stamped_at=None, read_at=0.0) == WriteReservation(
-        zone='bathroom-1f',
+        key='bathroom-1f',
         slot=WriteSlot(generation=2, at=NOW, moment=0.0),
         previous=None,
     )
@@ -100,7 +100,7 @@ def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
             (
                 None,
                 WriteReservation(
-                    zone='bathroom-1f',
+                    key='bathroom-1f',
                     slot=WriteSlot(generation=2, at=SHED_HELD_UNTIL, moment=1800.0),
                     previous=None,
                 ),
@@ -113,7 +113,7 @@ def test_boost_frees_the_zones_write_slot_so_the_boost_goes_out_at_once(
 @pytest.mark.usefixtures('f_zone')
 def test_boost_keeps_the_write_budget_a_live_shed_spent_until_thirty_minutes_after_it(
     f_use_case_of_a_zone_shed_live: BoostZoneUseCase,
-    f_writes_of_a_zone_shed_live: ZoneWriteGate,
+    f_writes_of_a_zone_shed_live: KeyedWriteGate,
     now: datetime,
     expected: tuple[datetime | None, WriteReservation | None],
 ) -> None:
@@ -134,7 +134,7 @@ def test_boost_unknown_zone_raises(f_use_case: BoostZoneUseCase, f_events: list[
 
 def test_boost_the_database_does_not_store_keeps_the_zones_write_slot(
     f_use_case: BoostZoneUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
 ) -> None:
     with pytest.raises(ZoneNotFoundError):
         f_use_case.execute(BoostZoneInputDTO(zone='bathroom-1f', now=NOW))

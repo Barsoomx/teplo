@@ -35,10 +35,19 @@ class ZoneRepository:
         Zone.objects.filter(slug=slug).update(last_air_dry_run_at=at)
 
     @staticmethod
+    def mark_shed(slug: str, at: datetime) -> None:
+        Zone.objects.filter(slug=slug).update(last_command_at=at, manual_until=None)
+
+    @staticmethod
     def boost(slug: str, until: datetime, *, clear_stamps: bool) -> None:
         cleared = dict.fromkeys(STAMPS) if clear_stamps else {}
-        updated = Zone.objects.filter(slug=slug).update(boost_until=until, **cleared)
+        updated = Zone.objects.filter(slug=slug).update(boost_until=until, manual_until=None, **cleared)
         if updated == 0:
+            raise ZoneNotFoundError(slug)
+
+    @staticmethod
+    def hold_by_hand(slug: str, until: datetime) -> None:
+        if Zone.objects.filter(slug=slug).update(manual_until=until) == 0:
             raise ZoneNotFoundError(slug)
 
     @staticmethod
@@ -144,4 +153,5 @@ def _to_settings(zone: Zone) -> ZoneSettings:
         last_dry_run_at=zone.last_dry_run_at,
         last_air_dry_run_at=zone.last_air_dry_run_at,
         room_slug=None if zone.room is None else zone.room.slug,
+        manual_until=zone.manual_until,
     )

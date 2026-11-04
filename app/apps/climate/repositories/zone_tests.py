@@ -183,6 +183,12 @@ def f_commanded_zone(f_zone: Zone) -> Zone:
     return f_zone
 
 
+@pytest.fixture
+def f_held_zone(f_commanded_zone: Zone) -> Zone:
+    Zone.objects.filter(pk=f_commanded_zone.pk).update(manual_until=NOW + timedelta(hours=1))
+    return f_commanded_zone
+
+
 def test_all_settings_maps_zone(f_zone: Zone) -> None:
     assert ZoneRepository.all_settings() == [
         ZoneSettings(
@@ -353,6 +359,37 @@ def test_boost_asked_to_keep_the_stamps_sets_until_only(f_commanded_zone: Zone) 
         NOW - timedelta(minutes=5),
         NOW - timedelta(minutes=5),
     )
+
+
+@pytest.mark.usefixtures('f_held_zone')
+def test_all_settings_read_the_end_of_a_hold_by_hand() -> None:
+    assert [zone.manual_until for zone in ZoneRepository.all_settings()] == [NOW + timedelta(hours=1)]
+
+
+def test_hold_by_hand_stores_its_end_and_leaves_the_stamps(f_commanded_zone: Zone) -> None:
+    ZoneRepository.hold_by_hand(f_commanded_zone.slug, NOW + timedelta(hours=2))
+
+    zone = Zone.objects.get(pk=f_commanded_zone.pk)
+    assert (zone.manual_until, zone.last_command_at) == (NOW + timedelta(hours=2), NOW - timedelta(minutes=5))
+
+
+def test_hold_by_hand_of_an_unknown_zone_raises() -> None:
+    with pytest.raises(ZoneNotFoundError):
+        ZoneRepository.hold_by_hand('attic', NOW)
+
+
+def test_mark_shed_stamps_the_write_and_ends_a_hold_by_hand(f_held_zone: Zone) -> None:
+    ZoneRepository.mark_shed(f_held_zone.slug, NOW)
+
+    zone = Zone.objects.get(pk=f_held_zone.pk)
+    assert (zone.last_command_at, zone.manual_until) == (NOW, None)
+
+
+@pytest.mark.parametrize('clear_stamps', [True, False], ids=['clearing_the_stamps', 'keeping_the_stamps'])
+def test_boost_ends_a_hold_by_hand(f_held_zone: Zone, clear_stamps: bool) -> None:
+    ZoneRepository.boost(f_held_zone.slug, NOW + timedelta(hours=2), clear_stamps=clear_stamps)
+
+    assert Zone.objects.get(pk=f_held_zone.pk).manual_until is None
 
 
 def test_boost_unknown_zone_raises() -> None:

@@ -27,6 +27,7 @@ class ZoneIntent:
     forced: tuple[ForcedTarget, ...]
     backup: bool
     learns: bool
+    hands_off: bool = False
 
 
 NO_INTENT = ZoneIntent(forced=(), backup=False, learns=True)

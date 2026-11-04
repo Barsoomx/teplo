@@ -10,7 +10,7 @@ from apps.climate.domain.ports import ZoneBoostStore
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.climate.usecases.boost_zones import BoostZonesInputDTO, BoostZonesOutputDTO, BoostZonesUseCase
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.services.database_transaction import DatabaseTransaction
@@ -36,7 +36,7 @@ class LockedZoneBoostStoreStub:
         ZoneRepository.boost(slug, until, clear_stamps=clear_stamps)
 
 
-def _use_case(zones: ZoneBoostStore, writes: ZoneWriteGate, events: list[DomainEvent]) -> BoostZonesUseCase:
+def _use_case(zones: ZoneBoostStore, writes: KeyedWriteGate, events: list[DomainEvent]) -> BoostZonesUseCase:
     dispatcher = EventDispatcher()
     dispatcher.register(ZoneBoosted, events.append)
     return BoostZonesUseCase(zones=zones, writes=writes, transaction=DatabaseTransaction(), dispatcher=dispatcher)
@@ -46,7 +46,7 @@ def _boosts() -> list[tuple[str, datetime | None, datetime | None]]:
     return sorted(Zone.objects.values_list('slug', 'boost_until', 'last_command_at'))
 
 
-def _held(writes: ZoneWriteGate) -> list[bool]:
+def _held(writes: KeyedWriteGate) -> list[bool]:
     return [not writes.allows(slug, NOW, stamped_at=None, read_at=0.0) for slug in FLOORS]
 
 
@@ -61,16 +61,16 @@ def clock() -> MonotonicClockStub:
 
 
 @pytest.fixture
-def f_writes(clock: MonotonicClockStub) -> ZoneWriteGate:
-    writes = ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
+def f_writes(clock: MonotonicClockStub) -> KeyedWriteGate:
+    writes = KeyedWriteGate(clock=clock, key_lock=threading.Lock)
     for slug in FLOORS:
         writes.reserve(slug, WRITTEN_AT, stamped_at=None, read_at=0.0)
     return writes
 
 
 @pytest.fixture
-def f_writes_with_the_kitchen_shed_live(clock: MonotonicClockStub) -> ZoneWriteGate:
-    writes = ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
+def f_writes_with_the_kitchen_shed_live(clock: MonotonicClockStub) -> KeyedWriteGate:
+    writes = KeyedWriteGate(clock=clock, key_lock=threading.Lock)
     writes.override('kitchen', WRITTEN_AT)
     clock.advance(timedelta(minutes=5).total_seconds())
     return writes
@@ -82,18 +82,18 @@ def f_events() -> list[DomainEvent]:
 
 
 @pytest.fixture
-def f_use_case(f_writes: ZoneWriteGate, f_events: list[DomainEvent]) -> BoostZonesUseCase:
+def f_use_case(f_writes: KeyedWriteGate, f_events: list[DomainEvent]) -> BoostZonesUseCase:
     return _use_case(ZoneRepository(), f_writes, f_events)
 
 
 @pytest.fixture
-def f_locked_use_case(f_writes: ZoneWriteGate, f_events: list[DomainEvent]) -> BoostZonesUseCase:
+def f_locked_use_case(f_writes: KeyedWriteGate, f_events: list[DomainEvent]) -> BoostZonesUseCase:
     return _use_case(LockedZoneBoostStoreStub(locked='kitchen'), f_writes, f_events)
 
 
 @pytest.fixture
 def f_use_case_of_a_room_with_a_floor_shed_live(
-    f_writes_with_the_kitchen_shed_live: ZoneWriteGate,
+    f_writes_with_the_kitchen_shed_live: KeyedWriteGate,
 ) -> BoostZonesUseCase:
     return _use_case(ZoneRepository(), f_writes_with_the_kitchen_shed_live, [])
 
@@ -101,7 +101,7 @@ def f_use_case_of_a_room_with_a_floor_shed_live(
 @pytest.mark.usefixtures('floors')
 def test_boost_of_a_room_boosts_every_floor_for_two_hours_and_frees_their_write_budget(
     f_use_case: BoostZonesUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_events: list[DomainEvent],
 ) -> None:
     output = f_use_case.execute(BoostZonesInputDTO(zones=FLOORS, now=NOW))
@@ -117,7 +117,7 @@ def test_boost_of_a_room_boosts_every_floor_for_two_hours_and_frees_their_write_
 @pytest.mark.usefixtures('floors')
 def test_boost_of_a_room_the_database_refuses_for_one_floor_boosts_none_and_keeps_their_write_budget(
     f_locked_use_case: BoostZonesUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_events: list[DomainEvent],
 ) -> None:
     with pytest.raises(OperationalError):
@@ -129,7 +129,7 @@ def test_boost_of_a_room_the_database_refuses_for_one_floor_boosts_none_and_keep
 @pytest.mark.usefixtures('floors')
 def test_boost_of_a_room_with_a_floor_gone_boosts_none_and_keeps_their_write_budget(
     f_use_case: BoostZonesUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_events: list[DomainEvent],
 ) -> None:
     with pytest.raises(ZoneNotFoundError):
@@ -141,7 +141,7 @@ def test_boost_of_a_room_with_a_floor_gone_boosts_none_and_keeps_their_write_bud
 @pytest.mark.usefixtures('floors')
 def test_boost_of_a_room_keeps_the_write_budget_of_a_floor_shed_live_and_frees_the_others(
     f_use_case_of_a_room_with_a_floor_shed_live: BoostZonesUseCase,
-    f_writes_with_the_kitchen_shed_live: ZoneWriteGate,
+    f_writes_with_the_kitchen_shed_live: KeyedWriteGate,
 ) -> None:
     f_use_case_of_a_room_with_a_floor_shed_live.execute(BoostZonesInputDTO(zones=FLOORS, now=NOW))
 

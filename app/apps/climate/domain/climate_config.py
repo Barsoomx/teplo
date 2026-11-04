@@ -49,6 +49,7 @@ class ClimateConfig:
 class ClimateConfigRecord:
     id: int | None
     config: ClimateConfig
+    manual_hold_live: bool = False
 
 
 def hundredths(value: Decimal) -> Decimal:

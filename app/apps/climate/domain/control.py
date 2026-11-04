@@ -10,3 +10,8 @@ class ClimateControl:
     sensors: ClimateSensors
     regulation: AirRegulationSettings
     optimal_start: OptimalStartSettings
+
+
+@dataclass(frozen=True, kw_only=True)
+class ClimateGates:
+    manual_hold_live: bool

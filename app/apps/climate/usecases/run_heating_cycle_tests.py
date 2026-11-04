@@ -12,7 +12,7 @@ from django.db import OperationalError
 from structlog.testing import capture_logs
 
 from apps.climate.domain.change import ThermostatChange
-from apps.climate.domain.drive import ZoneStart
+from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.events import (
     AirControlDryRun,
     BackupHeatDryRun,
@@ -39,7 +39,7 @@ from apps.climate.factories import (
     ZoneFactory,
     ZoneLearningFactory,
 )
-from apps.climate.models import HeatSource, RoomClimate, Zone, ZoneLearning
+from apps.climate.models import ClimateSettings, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
@@ -47,7 +47,7 @@ from apps.climate.repositories.zone import ZoneRepository
 from apps.climate.repositories.zone_learning import ZoneLearningRepository
 from apps.climate.services.control_book import ControlBook
 from apps.climate.services.room_intents import RoomIntentReader
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.climate.stubs import ContendedLockStub, LoadGateStub, ZoneLearningStoreStub, ZoneStoreStub
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneUseCase
 from apps.climate.usecases.run_heating_cycle import (
@@ -141,6 +141,7 @@ FAST_MORNING_AIR = (
     (FIXED_START + timedelta(hours=1), '22.0'),
 )
 FIRE_MINUTES = 15
+HELD_UNTIL = MORNING + timedelta(hours=1)
 FIRE_RISE_PER_MINUTE = Decimal('0.03')
 STOP_AIR = (
     (MORNING, '21.9', '30.0'),
@@ -413,6 +414,7 @@ def _use_case(
             rooms=RoomClimateRepository(),
             guests=ClimateSettingsRepository(),
             fireplaces=HeatSourceRepository(),
+            gates=ClimateSettingsRepository(),
             book=book,
         ),
         climate_settings=ClimateSettingsRepository(),
@@ -429,13 +431,13 @@ def _use_case(
     )
 
 
-def _write_gate(clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
+def _write_gate(clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=clock, key_lock=threading.Lock)
 
 
 def _gated_house(
     clock: MonotonicClockStub,
-    writes: ZoneWriteGate,
+    writes: KeyedWriteGate,
     cycle: Callable[[ZoneStore | None], RunHeatingCycleUseCase],
 ) -> GatedHouse:
     return GatedHouse(
@@ -3958,7 +3960,7 @@ def test_zone_shed_while_the_cycle_writes_another_is_held_from_its_turn(
 
 
 @pytest.fixture
-def write_gate(clock: MonotonicClockStub) -> ZoneWriteGate:
+def write_gate(clock: MonotonicClockStub) -> KeyedWriteGate:
     return _write_gate(clock)
 
 
@@ -3970,7 +3972,7 @@ def f_gated_house(
     temperatures: TemperatureStateStore,
     book: ControlBook,
     f_thermostat: FloorThermostatStub,
-    write_gate: ZoneWriteGate,
+    write_gate: KeyedWriteGate,
     dispatcher: EventDispatcher,
 ) -> GatedHouse:
     one_gate: bool = request.param
@@ -4026,7 +4028,7 @@ def living_room_shed_forty_minutes_ago(
     store: ThermostatStateStore,
     f_living_room_thermostat: FloorThermostatStub,
     f_guard_book: GuardBook,
-    write_gate: ZoneWriteGate,
+    write_gate: KeyedWriteGate,
 ) -> Callable[[], None]:
     ZoneLoadFactory.create(
         slug='living-room',
@@ -4087,7 +4089,7 @@ def f_living_room_released_while_the_cycle_writes_the_kitchen(
     book: ControlBook,
     f_living_room_thermostat: FloorThermostatStub,
     f_guard_book: GuardBook,
-    write_gate: ZoneWriteGate,
+    write_gate: KeyedWriteGate,
     living_room_shed_forty_minutes_ago: Callable[[], None],
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
@@ -4127,8 +4129,8 @@ def guard_thread() -> Iterator[ThreadPoolExecutor]:
 
 
 @pytest.fixture
-def uncontended_write_gate(clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=clock, zone_lock=partial(ContendedLockStub, contended=_never_contended))
+def uncontended_write_gate(clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=clock, key_lock=partial(ContendedLockStub, contended=_never_contended))
 
 
 @pytest.fixture
@@ -4137,7 +4139,7 @@ def f_kitchen_shed_while_the_cycle_stamps_its_write(
     temperatures: TemperatureStateStore,
     book: ControlBook,
     f_thermostat: FloorThermostatStub,
-    uncontended_write_gate: ZoneWriteGate,
+    uncontended_write_gate: KeyedWriteGate,
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
     _floor_zone('kitchen', KITCHEN)
@@ -4168,7 +4170,7 @@ def f_living_room_shed_while_the_cycle_writes_the_kitchen(
     temperatures: TemperatureStateStore,
     book: ControlBook,
     f_living_room_thermostat: FloorThermostatStub,
-    uncontended_write_gate: ZoneWriteGate,
+    uncontended_write_gate: KeyedWriteGate,
     dispatcher: EventDispatcher,
 ) -> ShedRace:
     _floor_zone('kitchen', KITCHEN)
@@ -4203,7 +4205,7 @@ def f_kitchen_shed_after_the_cycle_checked_its_slot(
 ) -> ShedRace:
     _floor_zone('kitchen', KITCHEN)
     store.record_state(KITCHEN, _state('22.0', power=False))
-    writes = ZoneWriteGate(clock=clock, zone_lock=partial(ContendedLockStub, contended=lock_contended.set))
+    writes = KeyedWriteGate(clock=clock, key_lock=partial(ContendedLockStub, contended=lock_contended.set))
     sheds: list[Future[bool]] = []
 
     def shed_in_the_guard() -> None:
@@ -4237,7 +4239,7 @@ def f_kitchen_shed_in_flight_when_the_cycle_reaches_its_zone(
     shed_started = threading.Event()
     shed_may_finish = threading.Event()
     thermostat = InFlightPowerOffThermostatStub(started=shed_started, finish=shed_may_finish)
-    writes = ZoneWriteGate(clock=clock, zone_lock=partial(ContendedLockStub, contended=shed_may_finish.set))
+    writes = KeyedWriteGate(clock=clock, key_lock=partial(ContendedLockStub, contended=shed_may_finish.set))
     switch = ThermostatZoneSwitch(
         stamps=ZoneWriteStampsStub(error=None),
         thermostats=ThermostatProviderStub(thermostats={KITCHEN: thermostat}),
@@ -4525,7 +4527,7 @@ def f_boost_race(
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
     book: ControlBook,
-    write_gate: ZoneWriteGate,
+    write_gate: KeyedWriteGate,
     dispatcher: EventDispatcher,
 ) -> BoostRace:
     one_gate, steps = request.param
@@ -4576,7 +4578,7 @@ def f_living_room_released_after_the_cycle_took_its_time(
     book: ControlBook,
     f_living_room_thermostat: FloorThermostatStub,
     f_guard_book: GuardBook,
-    write_gate: ZoneWriteGate,
+    write_gate: KeyedWriteGate,
     living_room_shed_forty_minutes_ago: Callable[[], None],
     dispatcher: EventDispatcher,
 ) -> RunHeatingCycleUseCase:
@@ -5001,3 +5003,136 @@ def test_reset_drops_the_morning_in_progress_at_the_next_cycle(
 
     memory = book.zone('kitchen')
     assert (morning_before is not None, memory.morning, memory.resets) == (True, None, 1)
+
+
+@pytest.fixture
+def f_permits() -> LoadGateStub:
+    return LoadGateStub(
+        held=frozenset(),
+        gated=frozenset({'kitchen'}),
+        answers={'kitchen': StartAnswer(granted=True, note=None)},
+    )
+
+
+@pytest.fixture
+def f_held_by_hand_cycle(
+    request: pytest.FixtureRequest,
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_permits: LoadGateStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _floor_zone('kitchen', KITCHEN, manual_until=HELD_UNTIL)
+    ClimateSettingsFactory.create(manual_hold_live=request.param)
+    store.record_state(KITCHEN, _state('22.0', heating=False))
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, gate=f_permits)
+
+
+@pytest.fixture
+def f_shed_held_by_hand_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _floor_zone('kitchen', KITCHEN, manual_until=HELD_UNTIL, last_command_at=MORNING - HALF_HOUR)
+    ClimateSettingsFactory.create(manual_hold_live=True)
+    store.record_state(KITCHEN, _state('22.0', power=False))
+    gate = LoadGateStub(held=frozenset({'kitchen'}), gated=frozenset({'kitchen'}), answers={})
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, gate=gate)
+
+
+@pytest.fixture
+def f_held_backup_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_backup_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _house_settings(backup_live=True)
+    ClimateSettings.objects.update(manual_hold_live=True)
+    Zone.objects.filter(slug='bathroom-2f').update(manual_until=NIGHT + timedelta(hours=1))
+    store.record_state(BATHROOM, _state('22.0'))
+    temperatures.record_state('air-second-floor', _reading('18.5'))
+    return _use_case(store, temperatures, {BATHROOM: f_backup_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
+def f_held_overridden_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    climate = _overridden_open_space('22.5', MORNING + timedelta(hours=1))
+    _open_space_zone(climate, kind=ZoneKind.FLOOR, manual_until=HELD_UNTIL)
+    ClimateSettingsFactory.create(manual_hold_live=True)
+    store.record_state(LIVING_ROOM, _state('28.0'))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.mark.parametrize(
+    ('f_held_by_hand_cycle', 'outcome', 'commands', 'asked', 'events'),
+    [
+        (True, ZoneCycleOutcome.HANDS_OFF, [], [()], []),
+        (
+            False,
+            ZoneCycleOutcome.APPLIED,
+            [('setpoint', Decimal('28.0'))],
+            [(ZoneStart(zone='kitchen', writes_live=True),)],
+            [_issued('kitchen', '28.0', MORNING)],
+        ),
+    ],
+    ids=['gate_on', 'gate_off_reverts_the_change_at_the_next_allowed_write'],
+    indirect=['f_held_by_hand_cycle'],
+)
+def test_floor_changed_on_its_thermostat_takes_no_write_and_asks_no_permit_while_its_hold_counts(
+    f_held_by_hand_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_permits: LoadGateStub,
+    f_events: list[DomainEvent],
+    outcome: ZoneCycleOutcome,
+    commands: list[tuple[str, Decimal]],
+    asked: list[tuple[ZoneStart, ...]],
+    events: list[DomainEvent],
+) -> None:
+    output = f_held_by_hand_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_thermostat.commands, f_permits.asked, f_events) == (
+        {'kitchen': outcome},
+        commands,
+        asked,
+        events,
+    )
+
+
+def test_floor_shed_under_a_hold_by_hand_stays_shed(
+    f_shed_held_by_hand_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_shed_held_by_hand_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_thermostat.commands) == ({'kitchen': ZoneCycleOutcome.SHED}, [])
+
+
+def test_hold_by_hand_wins_over_backup_heat(
+    f_held_backup_cycle: RunHeatingCycleUseCase,
+    f_backup_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_held_backup_cycle.execute(_at(NIGHT))
+
+    assert (output.outcomes, f_backup_thermostat.commands) == ({'bathroom-2f': ZoneCycleOutcome.HANDS_OFF}, [])
+
+
+def test_hold_by_hand_wins_over_a_room_target_the_owner_forced(
+    f_held_overridden_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_held_overridden_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_living_room_thermostat.commands) == ({'living-room': ZoneCycleOutcome.HANDS_OFF}, [])

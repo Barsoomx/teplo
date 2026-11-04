@@ -1,14 +1,24 @@
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from django.utils import timezone
 
 from apps.climate.usecases.run_heating_cycle import RunHeatingCycleInputDTO, RunHeatingCycleUseCase
+from apps.climate.usecases.watch_thermostat_changes import (
+    WatchThermostatChangesInputDTO,
+    WatchThermostatChangesOutputDTO,
+    WatchThermostatChangesUseCase,
+)
+from apps.core.domain.ports import Executable
 from apps.core.runtime.periodic import PeriodicJob
 from apps.devices.services.mqtt_listener import mqtt_listener
 from apps.devices.usecases.check_sensors import CheckSensorsInputDTO, CheckSensorsUseCase
 from apps.devices.usecases.poll_plugs import PollPlugsInputDTO, PollPlugsUseCase
-from apps.devices.usecases.poll_thermostats import PollThermostatsInputDTO, PollThermostatsUseCase
+from apps.devices.usecases.poll_thermostats import (
+    PollThermostatsInputDTO,
+    PollThermostatsOutputDTO,
+    PollThermostatsUseCase,
+)
 from apps.notifications.services.command_listener import command_listener
 from apps.notifications.usecases.deliver_alerts import DeliverAlertsInputDTO, DeliverAlertsUseCase
 from apps.notifications.usecases.evaluate_alerts import EvaluateAlertsInputDTO, EvaluateAlertsUseCase
@@ -85,7 +95,16 @@ def recover_write_holds() -> object:
 
 
 def poll_thermostats() -> object:
-    return PollThermostatsUseCase.init().execute(PollThermostatsInputDTO(now=timezone.now()))
+    return watch_thermostats(PollThermostatsUseCase.init(), WatchThermostatChangesUseCase.init(), timezone.now())
+
+
+def watch_thermostats(
+    poll: Executable[PollThermostatsInputDTO, PollThermostatsOutputDTO],
+    watch: Executable[WatchThermostatChangesInputDTO, WatchThermostatChangesOutputDTO],
+    now: datetime,
+) -> WatchThermostatChangesOutputDTO:
+    polled = poll.execute(PollThermostatsInputDTO(now=now))
+    return watch.execute(WatchThermostatChangesInputDTO(pairs=polled.pairs, now=now))
 
 
 def poll_plugs() -> object:

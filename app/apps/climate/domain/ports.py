@@ -6,6 +6,7 @@ from typing import Protocol
 
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.comfort_windows import RoomWeek
+from apps.climate.domain.control import ClimateGates
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.heat_sources import FireplaceRecord
 from apps.climate.domain.learning import HeatUpModel, ZoneLearningEntry, ZoneLearningRecord
@@ -33,6 +34,14 @@ class ZoneStore(Protocol):
 
 class ZoneBoostStore(Protocol):
     def boost(self, slug: str, until: datetime, *, clear_stamps: bool) -> None: ...
+
+
+class ZoneHoldStore(Protocol):
+    def hold_by_hand(self, slug: str, until: datetime) -> None: ...
+
+
+class ClimateGatesStore(Protocol):
+    def gates(self) -> ClimateGates: ...
 
 
 class ZoneLearningStore(Protocol):
@@ -68,18 +77,20 @@ class LoadGate(Protocol):
 
 
 class WriteGate(Protocol):
-    def allows(self, zone: str, at: datetime, *, stamped_at: datetime | None, read_at: float) -> bool: ...
+    def allows(self, key: str, at: datetime, *, stamped_at: datetime | None, read_at: float) -> bool: ...
 
     def reserve(
         self,
-        zone: str,
+        key: str,
         at: datetime,
         *,
         stamped_at: datetime | None,
         read_at: float,
     ) -> WriteReservation | None: ...
 
-    def override(self, zone: str, at: datetime) -> WriteReservation: ...
+    def override(self, key: str, at: datetime) -> WriteReservation: ...
+
+    def written_between(self, key: str, since: float, until: float) -> bool: ...
 
     def stamping(self, reservation: WriteReservation) -> AbstractContextManager[None]: ...
 
@@ -89,9 +100,9 @@ class WriteGate(Protocol):
 
     def send(self, reservation: WriteReservation, command: Callable[[], None]) -> None: ...
 
-    def resume(self, zone: str, at: datetime, *, elapsed: timedelta) -> None: ...
+    def resume(self, key: str, at: datetime, *, elapsed: timedelta) -> None: ...
 
-    def clearing(self, zones: Collection[str]) -> AbstractContextManager[frozenset[str]]: ...
+    def clearing(self, keys: Collection[str]) -> AbstractContextManager[frozenset[str]]: ...
 
 
 class ZoneConfigStore(Protocol):

@@ -54,6 +54,7 @@ from apps.panel.templatetags.panel_format import (
     load_shed_note,
     load_shed_text,
     local_time,
+    manual_change_text,
     morning_rejected_text,
     next_write_text,
     optimal_start_text,
@@ -170,6 +171,16 @@ BOILER_LOAD = LoadOverview(
 
 
 PANEL_NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
+HOLD_ENDS = PANEL_NOW + timedelta(hours=2)
+KITCHEN_CHANGE: dict[str, object] = {
+    'zone': 'kitchen',
+    'name': 'Кухня',
+    'power': None,
+    'mode': None,
+    'setpoint': ['28.0', '25.0'],
+    'until': '2026-11-04T15:40:00Z',
+    'dry_run': False,
+}
 KITCHEN = ZoneOverview(
     slug='kitchen',
     name='Кухня',
@@ -1238,8 +1249,25 @@ def test_settings_change_text_words_what_changed(entry: TimelineEntry, expected:
         (replace(KITCHEN, pending=PendingWrite(kind=PendingKind.WATCHING, at=None)), ''),
         (replace(KITCHEN, pending=PendingWrite(kind=PendingKind.HOLDS, at=None)), ''),
         (KITCHEN, ''),
+        (
+            replace(KITCHEN, setpoint=Decimal('25.0'), pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
+            'На термостате 25°: teplo вернёт расписание после 18:40',
+        ),
+        (
+            replace(KITCHEN, power=False, pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
+            'Термостат выключен: teplo вернёт расписание после 18:40',
+        ),
     ],
-    ids=['later_today', 'after_midnight', 'now', 'watching', 'holds', 'unknown'],
+    ids=[
+        'later_today',
+        'after_midnight',
+        'now',
+        'watching',
+        'holds',
+        'unknown',
+        'changed_on_the_thermostat',
+        'switched_off_on_the_thermostat',
+    ],
 )
 def test_next_write_text_names_the_setpoint_and_the_earliest_write(zone: ZoneOverview, expected: str) -> None:
     assert next_write_text(zone) == expected
@@ -1486,4 +1514,57 @@ def test_fireplace_and_learning_texts_follow_the_active_language() -> None:
         'Камин: out',
         'Гостиная, кухня и прихожая: looks like the fireplace has burnt out',
         'Was: mornings 2, delay 40 min',
+    )
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('payload', 'expected'),
+    [
+        (KITCHEN_CHANGE, 'Кухня: изменили на термостате: 28° → 25°, teplo не трогает до 18:40'),
+        ({**KITCHEN_CHANGE, 'dry_run': True}, 'Кухня: изменили на термостате: 28° → 25°, teplo не трогал бы до 18:40'),
+        (
+            {**KITCHEN_CHANGE, 'power': [True, False], 'setpoint': None},
+            'Кухня: изменили на термостате: выключили, teplo не трогает до 18:40',
+        ),
+        (
+            {**KITCHEN_CHANGE, 'power': [False, True], 'mode': ['hold', 'smart'], 'setpoint': ['22.0', '22.5']},
+            'Кухня: изменили на термостате: включили, режим hold → smart, 22° → 22,5°, teplo не трогает до 18:40',
+        ),
+        (
+            {**KITCHEN_CHANGE, 'name': 'Прихожая', 'until': '2026-11-04T21:30:00Z'},
+            'Прихожая: изменили на термостате: 28° → 25°, teplo не трогает до 00:30 завтра',
+        ),
+        ({**KITCHEN_CHANGE, 'setpoint': None}, 'Кухня: неизвестное событие'),
+        ({**KITCHEN_CHANGE, 'until': None}, 'Кухня: неизвестное событие'),
+    ],
+    ids=[
+        'setpoint',
+        'setpoint_while_watching',
+        'switched_off',
+        'switched_on_in_another_mode_at_another_setpoint',
+        'held_past_midnight',
+        'nothing_changed',
+        'without_an_end',
+    ],
+)
+def test_manual_change_text_says_what_was_changed_on_the_thermostat_and_until_when_teplo_leaves_it(
+    payload: dict[str, object],
+    expected: str,
+) -> None:
+    assert manual_change_text(_entry('zone_manual_change', payload)) == expected
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.usefixtures('english')
+def test_manual_change_texts_follow_the_active_language() -> None:
+    held = replace(KITCHEN, setpoint=Decimal('25.0'), pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS))
+
+    assert (
+        manual_change_text(_entry('zone_manual_change', {**KITCHEN_CHANGE, 'power': [True, False], 'dry_run': True})),
+        next_write_text(held),
+    ) == (
+        'Кухня: changed on the thermostat: switched off, 28° → 25°, teplo would leave it alone until 18:40',
+        'Thermostat set to 25°: teplo returns to the schedule after 18:40',
     )

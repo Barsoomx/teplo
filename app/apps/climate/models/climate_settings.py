@@ -23,6 +23,10 @@ OFFSET_VALIDATORS = [MinValueValidator(OFFSET_MIN), MaxValueValidator(OFFSET_MAX
 EARLY_STOP_OFFSET_VALIDATORS = [MinValueValidator(EARLY_STOP_OFFSET_MIN), MaxValueValidator(EARLY_STOP_OFFSET_MAX)]
 MIN_BAND_VALIDATORS = [MinValueValidator(MIN_BAND_MIN), MaxValueValidator(MIN_BAND_MAX)]
 START_OFFSET_BELOW_MIN_BAND = gettext_lazy('Must not be below the air min band, or heating stops above the target')
+MANUAL_HOLD_HELP = gettext_lazy(
+    'While on, a change made on a wall thermostat or in its app holds that floor for 2 hours; while off, it is '
+    'only journaled and teplo reverts it at the zone’s next allowed write',
+)
 
 
 class ClimateSettings(models.Model):
@@ -94,6 +98,7 @@ class ClimateSettings(models.Model):
         db_default=GUESTS_END_HOUR,
         validators=[MaxValueValidator(GUESTS_END_HOUR_MAX)],
     )
+    manual_hold_live = models.BooleanField(default=False, db_default=False, help_text=MANUAL_HOLD_HELP)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

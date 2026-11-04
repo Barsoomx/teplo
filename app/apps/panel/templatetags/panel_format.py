@@ -111,6 +111,16 @@ BACKUP_OFF = gettext_lazy('%(name)s: backup heat would return the zone to its sc
 BACKUP_OFF_UNREAD = gettext_lazy('%(name)s: backup heat would return the zone to its schedule (no reading in %(room)s)')
 NEXT_WRITE_AT = gettext_lazy('Thermostat set to %(setpoint)s°, %(target)s° no sooner than %(time)s')
 NEXT_WRITE_SOON = gettext_lazy('Thermostat set to %(setpoint)s°, %(target)s° within the next minute')
+HANDS_OFF_SETPOINT = gettext_lazy('Thermostat set to %(setpoint)s°: teplo returns to the schedule after %(time)s')
+HANDS_OFF_POWER_OFF = gettext_lazy('Thermostat is off: teplo returns to the schedule after %(time)s')
+MANUAL_CHANGE = gettext_lazy('%(name)s: changed on the thermostat: %(changes)s, teplo leaves it alone until %(time)s')
+MANUAL_CHANGE_DRY_RUN = gettext_lazy(
+    '%(name)s: changed on the thermostat: %(changes)s, teplo would leave it alone until %(time)s',
+)
+MANUAL_POWER = {True: gettext_lazy('switched on'), False: gettext_lazy('switched off')}
+MANUAL_MODE = gettext_lazy('mode %(old)s → %(new)s')
+MANUAL_SETPOINT = '%(old)s → %(new)s'
+MANUAL_CHANGES_SEPARATOR = ', '
 GUESTS_UNTIL = gettext_lazy('Guests until %(time)s')
 GUESTS_OFF = gettext_lazy('Guests mode is off')
 GUEST_NIGHTS = {1: gettext_lazy('1 night'), 2: gettext_lazy('2 nights'), 3: gettext_lazy('3 nights')}
@@ -392,6 +402,9 @@ def day_word(value: datetime) -> str:
 @register.filter
 def next_write_text(zone: ZoneOverview) -> str:
     pending = zone.pending
+    if pending is not None and pending.kind is PendingKind.HANDS_OFF and pending.at is not None:
+        return _hands_off_text(zone, pending.at)
+
     if pending is None or pending.kind is not PendingKind.NEXT_WRITE or pending.at is None:
         return ''
 
@@ -518,6 +531,21 @@ def learning_reset_note(entry: TimelineEntry) -> str:
     if offset:
         values.append(str(LEARNED_EARLY_STOP) % {'offset': offset})
     return str(LEARNED_BEFORE) % {'values': ', '.join(values)} if values else ''
+
+
+@register.filter
+def manual_change_text(entry: TimelineEntry) -> str:
+    changes = _manual_changes(entry.payload)
+    moment = _journaled_moment(entry.payload.get('until'))
+    if not changes or moment is None:
+        return _unknown_event(entry)
+
+    template = MANUAL_CHANGE_DRY_RUN if entry.payload.get('dry_run') is True else MANUAL_CHANGE
+    return str(template) % {
+        'name': _zone_name(entry),
+        'changes': MANUAL_CHANGES_SEPARATOR.join(changes),
+        'time': moment,
+    }
 
 
 @register.filter
@@ -846,6 +874,34 @@ def _moment_text(at: datetime) -> str:
     day = day_word(at)
     time = timezone.localtime(at).strftime('%H:%M')
     return f'{time} {day}' if day else time
+
+
+def _hands_off_text(zone: ZoneOverview, until: datetime) -> str:
+    if zone.power is False:
+        return str(HANDS_OFF_POWER_OFF) % {'time': _moment_text(until)}
+
+    return str(HANDS_OFF_SETPOINT) % {'setpoint': floatformat(zone.setpoint, -1), 'time': _moment_text(until)}
+
+
+def _manual_changes(payload: dict[str, object]) -> list[str]:
+    changes: list[str] = []
+    power = _change_pair(payload.get('power'))
+    if power is not None and isinstance(power[1], bool):
+        changes.append(str(MANUAL_POWER[power[1]]))
+    mode = _change_pair(payload.get('mode'))
+    if mode is not None:
+        changes.append(str(MANUAL_MODE) % {'old': mode[0], 'new': mode[1]})
+    setpoint = _change_pair(payload.get('setpoint'))
+    if setpoint is not None and all(floatformat(value, -1) for value in setpoint):
+        changes.append(MANUAL_SETPOINT % {'old': _degrees(setpoint[0]), 'new': _degrees(setpoint[1])})
+    return changes
+
+
+def _change_pair(value: object) -> tuple[object, object] | None:
+    if not isinstance(value, list) or len(value) != 2:
+        return None
+
+    return value[0], value[1]
 
 
 def _journaled_moment(value: object) -> str | None:

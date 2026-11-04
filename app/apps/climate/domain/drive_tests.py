@@ -19,6 +19,7 @@ from apps.climate.domain.modes import ZoneCycleOutcome
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
 
 NOW = datetime(2026, 11, 2, 7, 0, tzinfo=UTC)
+HOLD_ENDS = NOW + timedelta(hours=1, minutes=40)
 COMFORT = ThermostatTarget(power=True, setpoint=Decimal('28.0'))
 NIGHT = ThermostatTarget(power=True, setpoint=Decimal('22.0'))
 OFF = ThermostatTarget(power=False, setpoint=None)
@@ -85,7 +86,17 @@ def test_drive_writes_only_an_allowed_change_to_a_zone_that_is_not_shed(
     slot_free: bool,
     expected: ZoneDrive,
 ) -> None:
-    assert plan_drive(COMFORT, state, last_write_at=last_write_at, now=NOW, held=held, slot_free=slot_free) == expected
+    drive = plan_drive(
+        COMFORT,
+        state,
+        last_write_at=last_write_at,
+        now=NOW,
+        held=held,
+        hands_off=False,
+        slot_free=slot_free,
+    )
+
+    assert drive == expected
 
 
 @pytest.mark.parametrize(
@@ -134,7 +145,9 @@ def test_write_starts_a_zone_that_draws_nothing_and_would_heat(
     state: ThermostatState,
     expected: ZoneDrive,
 ) -> None:
-    assert plan_drive(target, state, last_write_at=None, now=NOW, held=False, slot_free=True) == expected
+    drive = plan_drive(target, state, last_write_at=None, now=NOW, held=False, hands_off=False, slot_free=True)
+
+    assert drive == expected
 
 
 @pytest.mark.parametrize(
@@ -207,7 +220,75 @@ def test_pending_write_names_when_the_target_reaches_the_thermostat(
     writes_live: bool,
     expected: PendingWrite,
 ) -> None:
-    assert (
-        pending_write(target, state, last_write_at=last_write_at, now=NOW, held=held, writes_live=writes_live)
-        == expected
+    pending = pending_write(
+        target,
+        state,
+        last_write_at=last_write_at,
+        now=NOW,
+        held=held,
+        writes_live=writes_live,
+        hands_off_until=None,
     )
+
+    assert pending == expected
+
+
+@pytest.mark.parametrize(
+    ('state', 'held', 'hands_off', 'expected'),
+    [
+        (IDLE, True, True, _settled(ZoneCycleOutcome.SHED)),
+        (IDLE, False, True, _settled(ZoneCycleOutcome.HANDS_OFF)),
+        (None, False, True, _settled(ZoneCycleOutcome.HANDS_OFF)),
+        (replace(IDLE, setpoint=Decimal('28.0')), False, True, _settled(ZoneCycleOutcome.HANDS_OFF)),
+    ],
+    ids=[
+        'shed_wins_over_a_hold_by_hand',
+        'held_by_hand',
+        'held_by_hand_whatever_its_thermostat_reads',
+        'held_by_hand_on_its_target',
+    ],
+)
+def test_drive_leaves_a_zone_held_by_hand_alone_unless_it_is_shed(
+    state: ThermostatState | None,
+    held: bool,
+    hands_off: bool,
+    expected: ZoneDrive,
+) -> None:
+    drive = plan_drive(
+        COMFORT,
+        state,
+        last_write_at=None,
+        now=NOW,
+        held=held,
+        hands_off=hands_off,
+        slot_free=True,
+    )
+
+    assert drive == expected
+
+
+@pytest.mark.parametrize(
+    ('state', 'held', 'expected'),
+    [
+        (IDLE, False, PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
+        (None, False, PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
+        (IDLE, True, PendingWrite(kind=PendingKind.HELD, at=None)),
+    ],
+    ids=['held_by_hand', 'held_by_hand_whatever_it_reads', 'shed_wins_over_a_hold_by_hand'],
+)
+def test_pending_write_names_the_end_of_a_hold_by_hand(
+    state: ThermostatState | None,
+    held: bool,
+    expected: PendingWrite,
+) -> None:
+    pending = pending_write(
+        COMFORT,
+        state,
+        last_write_at=None,
+        now=NOW,
+        held=held,
+        writes_live=True,
+        hands_off_until=HOLD_ENDS,
+    )
+
+    assert pending == expected

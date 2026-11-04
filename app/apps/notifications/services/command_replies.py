@@ -51,6 +51,7 @@ FLOOR_AT = gettext_lazy('%(zone)s: floor %(setpoint)s° no sooner than %(time)s'
 FLOOR_SOON = gettext_lazy('%(zone)s: floor %(setpoint)s° within the next minute')
 FLOOR_WATCHED = gettext_lazy('%(zone)s: watching only, no command goes out')
 FLOOR_SHED = gettext_lazy('%(zone)s: the floor is off by load management')
+FLOOR_HANDS_OFF = gettext_lazy('%(zone)s: changed on the thermostat, teplo leaves it alone until %(time)s')
 NO_CONNECTION = gettext_lazy('%(zone)s: no connection to the thermostat')
 HEATING_OFF = gettext_lazy('%(zone)s: heating is off')
 ROOM_AIR = gettext_lazy('%(room)s: %(air)s°, target %(target)s°, %(reason)s')
@@ -145,6 +146,9 @@ def zone_state_line(zone: ZoneStatus) -> str:
 
 def zone_write_line(zone: ZoneStatus, now: datetime) -> str:
     pending = zone.pending
+    if pending is not None and pending.kind is PendingKind.HANDS_OFF and pending.at is not None:
+        return str(FLOOR_HANDS_OFF) % {'zone': zone.name, 'time': moment_text(pending.at, now)}
+
     if zone.air_path or pending is None:
         return str(BY_AIR) % {'zone': zone.name}
 

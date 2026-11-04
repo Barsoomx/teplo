@@ -5,6 +5,7 @@
       {% include 'panel/_regime.html' with regime=zone.regime %}
       {% if zone.air %}<span class="chip path path-{{ zone.path }}">{% if zone.path == 'air' %}{% translate 'Air mode' %}{% elif zone.path == 'air_dry_run' %}{% translate 'Air mode: watching' %}{% else %}{% translate 'Floor mode' %}{% endif %}</span>{% endif %}
       {% if overview.dry_run or not zone.live_control %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}
+      {% if zone.manual_until %}<span class="chip intent hands-off">{% icon 'clock' %}{% with time=zone.manual_until|time:'H:i' day=zone.manual_until|day_word %}{% blocktranslate %}Changed on the thermostat: teplo leaves it alone until {{ time }}{% endblocktranslate %}{% if day %} {{ day }}{% endif %}{% endwith %}</span>{% endif %}
     </p>
   </header>
   <div class="readout">
@@ -18,7 +19,7 @@
       {% endif %}
     </div>
     {% if zone.available %}
-    <p class="readout-caption">{% if zone.target_setpoint is None %}{% translate 'Floor, heating off' %}{% else %}{% blocktranslate with target=zone.target_setpoint|floatformat:'-1' %}Floor, target {{ target }}°{% endblocktranslate %}{% if zone.power is False %}. {% if zone.pending.kind == 'held' %}{% translate 'Load management keeps the floor off' %}{% else %}{% translate 'Thermostat is off' %}{% endif %}{% elif zone.setpoint != zone.target_setpoint %}. {% with next_write=zone|next_write_text %}{% if next_write %}{{ next_write }}{% else %}{% blocktranslate with setpoint=zone.setpoint|floatformat:'-1' %}Thermostat set to {{ setpoint }}°{% endblocktranslate %}{% endif %}{% endwith %}{% endif %}{% endif %}</p>
+    <p class="readout-caption">{% if zone.target_setpoint is None %}{% translate 'Floor, heating off' %}{% else %}{% blocktranslate with target=zone.target_setpoint|floatformat:'-1' %}Floor, target {{ target }}°{% endblocktranslate %}{% if zone.power is False %}. {% if zone.pending.kind == 'held' %}{% translate 'Load management keeps the floor off' %}{% elif zone.pending.kind == 'hands_off' %}{{ zone|next_write_text }}{% else %}{% translate 'Thermostat is off' %}{% endif %}{% elif zone.setpoint != zone.target_setpoint %}. {% with next_write=zone|next_write_text %}{% if next_write %}{{ next_write }}{% else %}{% blocktranslate with setpoint=zone.setpoint|floatformat:'-1' %}Thermostat set to {{ setpoint }}°{% endblocktranslate %}{% endif %}{% endwith %}{% endif %}{% endif %}</p>
     {% if zone.regime == 'boost' %}
     <p class="next next-boost">{% blocktranslate with until=zone.boost_until|time:'H:i' %}Boost until {{ until }}{% endblocktranslate %}</p>
     {% elif zone.next_change %}

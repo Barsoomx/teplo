@@ -15,6 +15,7 @@ GATE_INPUTS = (
     'name="live_control"',
     'name="air_control_live"',
     'name="backup_live"',
+    'name="manual_hold_live"',
     'name="load_management_live"',
     'name="loads-0-live"',
     'name="loads-1-live"',
@@ -25,6 +26,17 @@ GATE_INPUTS = (
 def m_settings_use_case(settings_page: GetSettingsPageOutputDTO) -> Iterator[MagicMock]:
     with mock.patch('apps.panel.views.settings_page.GetSettingsPageUseCase') as use_case:
         use_case.init.return_value.execute.return_value = settings_page
+        yield use_case
+
+
+@pytest.fixture
+def m_manual_hold_settings_use_case(
+    request: pytest.FixtureRequest,
+    settings_page: GetSettingsPageOutputDTO,
+) -> Iterator[MagicMock]:
+    climate = replace(settings_page.climate, manual_hold_live=request.param)
+    with mock.patch('apps.panel.views.settings_page.GetSettingsPageUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(settings_page, climate=climate)
         yield use_case
 
 
@@ -99,12 +111,13 @@ def test_settings_page_shows_every_gate_read_only_with_a_link_to_the_admin(
             'href="/admin/power/loadsettings/1/change/"' in content,
             'href="/admin/power/load/1/change/"' in content,
             'href="/admin/power/load/2/change/"' in content,
+            'href="/admin/climate/climatesettings/1/change/"' in content,
         ],
         content.count('Изменить в админке'),
         content.count('class="chip gate-live"'),
         [gate for gate in GATE_INPUTS if gate in content],
         m_settings_use_case.init.call_count,
-    ) == ([True] * 6, 7, 2, [], 1)
+    ) == ([True] * 7, 8, 2, [], 1)
 
 
 def test_settings_page_says_how_changes_reach_the_devices_and_that_teplo_only_watches(
@@ -203,4 +216,28 @@ def test_settings_page_shows_the_gate_of_the_fireplace_detector_on_its_room(
         state in card[gate_at : card.index('</p>', gate_at)],
         'href="/admin/climate/heatsource/7/change/"' in card,
         m_fireplace_settings_use_case.init.call_count,
+    ) == (True, True, 1)
+
+
+@pytest.mark.parametrize(
+    ('m_manual_hold_settings_use_case', 'state'),
+    [(False, 'Наблюдение'), (True, 'Работает')],
+    ids=['watching', 'live'],
+    indirect=['m_manual_hold_settings_use_case'],
+)
+def test_settings_page_shows_the_gate_of_manual_changes_on_the_climate_card(
+    f_russian_client: Client,
+    m_manual_hold_settings_use_case: MagicMock,
+    state: str,
+) -> None:
+    response = f_russian_client.get('/settings/')
+
+    content = response.content.decode()
+    card_at = content.index('id="climate-settings"')
+    card = content[card_at : content.index('</article>', card_at)]
+    gate_at = card.index('Ручная правка на термостатах')
+    assert (
+        state in card[gate_at : card.index('</p>', gate_at)],
+        'href="/admin/climate/climatesettings/1/change/"' in card,
+        m_manual_hold_settings_use_case.init.call_count,
     ) == (True, True, 1)

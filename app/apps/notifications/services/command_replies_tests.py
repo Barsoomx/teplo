@@ -121,8 +121,32 @@ def test_either_of_asks_between_the_names() -> None:
         (replace(KITCHEN, pending=PendingWrite(kind=PendingKind.UNREACHED, at=None)), 'Кухня: нет связи с термостатом'),
         (replace(KITCHEN, floor_target=None), 'Кухня: отопление выключено'),
         (replace(KITCHEN, air_path=True, floor_target=None, pending=None), 'Кухня: по воздуху'),
+        (
+            replace(KITCHEN, pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=NOW + timedelta(hours=2))),
+            'Кухня: изменён на термостате, teplo не трогает до 18:40',
+        ),
+        (
+            replace(
+                KITCHEN,
+                air_path=True,
+                floor_target=None,
+                pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=NOW + timedelta(hours=1)),
+            ),
+            'Кухня: изменён на термостате, teplo не трогает до 17:40',
+        ),
     ],
-    ids=['next_write', 'within_a_minute', 'holds', 'shed', 'watching', 'unreached', 'heating_off', 'by_air'],
+    ids=[
+        'next_write',
+        'within_a_minute',
+        'holds',
+        'shed',
+        'watching',
+        'unreached',
+        'heating_off',
+        'by_air',
+        'held_by_hand',
+        'held_by_hand_by_air',
+    ],
 )
 def test_zone_write_line_names_the_setpoint_and_when_it_reaches_the_floor(zone: ZoneStatus, expected: str) -> None:
     assert zone_write_line(zone, NOW) == expected

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
-from apps.climate.domain.control import ClimateControl
+from apps.climate.domain.control import ClimateControl, ClimateGates
 from apps.climate.domain.optimal_start import OptimalStartSettings
 from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.sensors import ClimateSensors
@@ -39,6 +39,11 @@ class ClimateSettingsRepository:
         )
 
     @staticmethod
+    def gates() -> ClimateGates:
+        stored = ClimateSettings.objects.order_by('pk').first()
+        return ClimateGates(manual_hold_live=stored is not None and stored.manual_hold_live)
+
+    @staticmethod
     def config_record() -> ClimateConfigRecord:
         stored = ClimateSettings.objects.order_by('pk').first()
         climate_settings = ClimateSettings() if stored is None else stored
@@ -52,6 +57,7 @@ class ClimateSettingsRepository:
                 preheat_lead_cap_minutes=climate_settings.preheat_lead_cap_minutes,
                 guests_end_hour=climate_settings.guests_end_hour,
             ),
+            manual_hold_live=climate_settings.manual_hold_live,
         )
 
     @staticmethod

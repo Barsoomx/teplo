@@ -138,3 +138,16 @@ jobs:
             poetry run python app/manage.py migrate --noinput
           done
           TEPLO_SITE=barsoom TEPLO_DB_PATH=/tmp/teplo-barsoom-heat-sources.sqlite3 poetry run python app/manage.py shell -c "from apps.climate.repositories.heat_source import HeatSourceRepository; assert [(fireplace.slug, fireplace.room_slug, fireplace.live, fireplace.lit_until) for fireplace in HeatSourceRepository.fireplaces()] == [('fireplace', 'open-space', False, None)]"
+      - name: Site migrations roll back past the manual hold
+        env:
+          DJANGO_SETTINGS_MODULE: settings.settings
+          DJANGO_SECRET_KEY: ci-site-migrations-only
+        run: |
+          for site in example barsoom; do
+            cp /tmp/teplo-$site.sqlite3 /tmp/teplo-$site-manual-hold.sqlite3
+            export TEPLO_SITE=$site TEPLO_DB_PATH=/tmp/teplo-$site-manual-hold.sqlite3
+            poetry run python app/manage.py migrate climate 0012 --noinput
+            poetry run python app/manage.py shell -c "from django.db import connection; cursor = connection.cursor(); columns = lambda table: [column.name for column in connection.introspection.get_table_description(cursor, table)]; assert ('manual_until' in columns('climate_zone'), 'manual_hold_live' in columns('climate_climatesettings')) == (False, False)"
+            poetry run python app/manage.py migrate --noinput
+            poetry run python app/manage.py shell -c "from apps.climate.domain.control import ClimateGates; from apps.climate.repositories.climate_settings import ClimateSettingsRepository; from apps.climate.repositories.zone import ZoneRepository; assert (ClimateSettingsRepository.gates(), {zone.manual_until for zone in ZoneRepository.all_settings()}) == (ClimateGates(manual_hold_live=False), {None})"
+          done

@@ -182,16 +182,27 @@ class ZoneWriteStampsStub:
     def __init__(self, error: Exception | None) -> None:
         self._error = error
         self._stamps: list[tuple[str, datetime]] = []
+        self._sheds: list[tuple[str, datetime]] = []
 
     @property
     def stamps(self) -> list[tuple[str, datetime]]:
         return self._stamps
 
+    @property
+    def sheds(self) -> list[tuple[str, datetime]]:
+        return self._sheds
+
     def mark_commanded(self, slug: str, at: datetime) -> None:
+        self._stamp(self._stamps, slug, at)
+
+    def mark_shed(self, slug: str, at: datetime) -> None:
+        self._stamp(self._sheds, slug, at)
+
+    def _stamp(self, stamps: list[tuple[str, datetime]], slug: str, at: datetime) -> None:
         if self._error is not None:
             raise self._error
 
-        self._stamps.append((slug, at))
+        stamps.append((slug, at))
 
 
 class PermitStub:

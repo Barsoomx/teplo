@@ -355,6 +355,12 @@ body {
   color: var(--ink);
 }
 
+/* A floor changed on its thermostat: the chip names the end of the hold and wraps on a narrow tile */
+
+.hands-off {
+  white-space: normal;
+}
+
 /* A room's own target with half-degree steps, in ink only like every reading but the floor */
 
 .room-target {

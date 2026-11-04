@@ -310,3 +310,7 @@ msgstr "Камин и так не отмечен."
 
 msgid "The house has no fireplace."
 msgstr "В доме нет камина."
+
+#, python-format
+msgid "%(zone)s: changed on the thermostat, teplo leaves it alone until %(time)s"
+msgstr "%(zone)s: изменён на термостате, teplo не трогает до %(time)s"

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.core.stubs import MonotonicClockStub
 from apps.power.domain.loads import LiveShed, LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.stubs import LoadStoreStub
@@ -93,7 +93,7 @@ SHED_BOILER = replace(
 )
 
 
-def _boost_frees(writes: ZoneWriteGate, zone: str) -> bool:
+def _boost_frees(writes: KeyedWriteGate, zone: str) -> bool:
     with writes.clearing((zone,)) as freed:
         return zone in freed
 
@@ -104,8 +104,8 @@ def f_clock() -> MonotonicClockStub:
 
 
 @pytest.fixture
-def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, zone_lock=threading.Lock)
+def f_writes(f_clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=threading.Lock)
 
 
 @pytest.fixture
@@ -122,17 +122,17 @@ def loads() -> LoadStoreStub:
 
 
 @pytest.fixture
-def f_use_case(loads: LoadStoreStub, f_writes: ZoneWriteGate) -> RecoverWriteHoldsUseCase:
+def f_use_case(loads: LoadStoreStub, f_writes: KeyedWriteGate) -> RecoverWriteHoldsUseCase:
     return RecoverWriteHoldsUseCase(loads=loads, writes=f_writes, dry_run=False)
 
 
 @pytest.fixture
-def f_dry_run_use_case(loads: LoadStoreStub, f_writes: ZoneWriteGate) -> RecoverWriteHoldsUseCase:
+def f_dry_run_use_case(loads: LoadStoreStub, f_writes: KeyedWriteGate) -> RecoverWriteHoldsUseCase:
     return RecoverWriteHoldsUseCase(loads=loads, writes=f_writes, dry_run=True)
 
 
 @pytest.fixture
-def f_recovered_writes(f_use_case: RecoverWriteHoldsUseCase, f_writes: ZoneWriteGate) -> ZoneWriteGate:
+def f_recovered_writes(f_use_case: RecoverWriteHoldsUseCase, f_writes: KeyedWriteGate) -> KeyedWriteGate:
     f_use_case.execute(RecoverWriteHoldsInputDTO(now=NOW))
     return f_writes
 
@@ -140,8 +140,8 @@ def f_recovered_writes(f_use_case: RecoverWriteHoldsUseCase, f_writes: ZoneWrite
 @pytest.fixture
 def f_writes_recovered_on_a_clock_behind_the_shed(
     f_use_case: RecoverWriteHoldsUseCase,
-    f_writes: ZoneWriteGate,
-) -> ZoneWriteGate:
+    f_writes: KeyedWriteGate,
+) -> KeyedWriteGate:
     f_use_case.execute(RecoverWriteHoldsInputDTO(now=SHED_AT - timedelta(hours=1)))
     return f_writes
 
@@ -158,7 +158,7 @@ def test_recovery_holds_each_zone_shed_live_less_than_thirty_minutes_before_the_
     ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
 )
 def test_recovered_hold_keeps_a_boost_from_freeing_the_zone_until_thirty_minutes_after_the_shed(
-    f_recovered_writes: ZoneWriteGate,
+    f_recovered_writes: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     seconds: int,
     freed: bool,
@@ -174,7 +174,7 @@ def test_recovered_hold_keeps_a_boost_from_freeing_the_zone_until_thirty_minutes
     ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
 )
 def test_recovered_hold_keeps_the_zone_from_a_write_until_thirty_minutes_after_the_shed_whatever_the_clock_reads(
-    f_recovered_writes: ZoneWriteGate,
+    f_recovered_writes: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     seconds: int,
     written: bool,
@@ -197,7 +197,7 @@ def test_recovered_hold_keeps_the_zone_from_a_write_until_thirty_minutes_after_t
     ids=['within_thirty_minutes_of_the_start', 'thirty_minutes_after_the_start'],
 )
 def test_hold_recovered_on_a_clock_reading_earlier_than_the_shed_counts_thirty_minutes_from_the_start(
-    f_writes_recovered_on_a_clock_behind_the_shed: ZoneWriteGate,
+    f_writes_recovered_on_a_clock_behind_the_shed: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     seconds: int,
     freed: bool,
@@ -209,7 +209,7 @@ def test_hold_recovered_on_a_clock_reading_earlier_than_the_shed_counts_thirty_m
 
 def test_recovery_on_a_clock_reading_earlier_than_the_sheds_holds_no_floor_written_half_an_hour_after_its_shed(
     f_use_case: RecoverWriteHoldsUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
 ) -> None:
     output = f_use_case.execute(RecoverWriteHoldsInputDTO(now=SHED_AT - timedelta(hours=1)))
 
@@ -222,7 +222,7 @@ def test_recovery_on_a_clock_reading_earlier_than_the_sheds_holds_no_floor_writt
 
 def test_teplo_in_dry_run_recovers_no_hold(
     f_dry_run_use_case: RecoverWriteHoldsUseCase,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
 ) -> None:
     output = f_dry_run_use_case.execute(RecoverWriteHoldsInputDTO(now=NOW))
 

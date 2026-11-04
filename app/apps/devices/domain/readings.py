@@ -68,3 +68,12 @@ class EvChargerState:
     charging: bool
     current_limit_amps: Decimal
     read_at: datetime
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReadingPair[TState]:
+    slug: str
+    before: TState
+    after: TState
+    before_moment: float
+    after_moment: float

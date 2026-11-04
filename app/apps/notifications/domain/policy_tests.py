@@ -88,6 +88,11 @@ def f_unknown_zone() -> ZoneHeating:
 
 
 @pytest.fixture
+def f_zone_held_by_hand() -> ZoneHeating:
+    return ZoneHeating(slug='kitchen', name='Кухня', should_heat=True, power=False, hands_off=True)
+
+
+@pytest.fixture
 def f_idle_zone() -> ZoneHeating:
     return ZoneHeating(slug='kitchen', name='Кухня', should_heat=False, power=False)
 
@@ -358,6 +363,41 @@ def test_zone_is_off_only_when_it_should_heat_and_reports_power_off(
     zone = ZoneHeating(slug='kitchen', name='Кухня', should_heat=should_heat, power=power)
 
     assert zone_condition(zone).failing is failing
+
+
+@pytest.mark.parametrize(
+    ('should_heat', 'power'),
+    [(True, False), (True, True), (True, None), (False, False)],
+    ids=['off_while_it_should_heat', 'on', 'power_unknown', 'off_while_it_should_not_heat'],
+)
+def test_zone_held_by_hand_is_neither_off_nor_on(should_heat: bool, power: bool | None) -> None:
+    zone = ZoneHeating(slug='kitchen', name='Кухня', should_heat=should_heat, power=power, hands_off=True)
+
+    assert zone_condition(zone).failing is None
+
+
+def test_hold_by_hand_stops_the_zone_off_timer(
+    f_zone_held_by_hand: ZoneHeating,
+    f_noticed_cold_zone: Tracks,
+) -> None:
+    evaluation = _evaluate([zone_condition(f_zone_held_by_hand)], f_noticed_cold_zone, timedelta(hours=2))
+
+    assert (evaluation.changes, evaluation.tracks) == (
+        (),
+        {ZONE_KEY: AlertTrack(began_at=NOTICED, noticed_at=None, raised=False)},
+    )
+
+
+def test_raised_zone_off_sends_no_recovery_while_its_zone_is_held_by_hand(
+    f_zone_held_by_hand: ZoneHeating,
+    f_raised_cold_zone: Tracks,
+) -> None:
+    evaluation = _evaluate([zone_condition(f_zone_held_by_hand)], f_raised_cold_zone, timedelta(minutes=40))
+
+    assert (evaluation.changes, evaluation.tracks) == (
+        (),
+        {ZONE_KEY: AlertTrack(began_at=NOTICED, noticed_at=None, raised=True)},
+    )
 
 
 @pytest.mark.parametrize(

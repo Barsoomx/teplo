@@ -8,7 +8,7 @@ from django.test.utils import CaptureQueriesContext
 
 from apps.climate.domain.air_policy import AirRegulationSettings
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
-from apps.climate.domain.control import ClimateControl
+from apps.climate.domain.control import ClimateControl, ClimateGates
 from apps.climate.domain.optimal_start import OptimalStartSettings
 from apps.climate.domain.room_intent import GuestsRecord
 from apps.climate.domain.sensors import ClimateSensors
@@ -86,6 +86,11 @@ def f_guarded_settings() -> ClimateSettings:
         air_min_band=Decimal('0.25'),
         guests_end_hour=12,
     )
+
+
+@pytest.fixture
+def f_hold_settings() -> ClimateSettings:
+    return ClimateSettingsFactory.create(manual_hold_live=True)
 
 
 @pytest.fixture
@@ -180,6 +185,22 @@ def test_saved_config_without_stored_settings_creates_them_with_the_old_guard_of
         Decimal('0.30'),
         False,
     )
+
+
+def test_gates_keep_the_manual_hold_off_without_climate_settings() -> None:
+    assert ClimateSettingsRepository.gates() == ClimateGates(manual_hold_live=False)
+
+
+def test_gates_and_the_config_record_read_the_gate_of_the_manual_hold(f_hold_settings: ClimateSettings) -> None:
+    assert (ClimateSettingsRepository.gates(), ClimateSettingsRepository.config_record()) == (
+        ClimateGates(manual_hold_live=True),
+        ClimateConfigRecord(id=f_hold_settings.pk, config=DEFAULT_CONFIG, manual_hold_live=True),
+    )
+
+
+def test_saved_config_refuses_to_write_the_gate_of_the_manual_hold() -> None:
+    with pytest.raises(KeyError):
+        ClimateSettingsRepository.save_config(DEFAULT_CONFIG, ('manual_hold_live',))
 
 
 @pytest.mark.parametrize('field', GUARD_FIELDS)

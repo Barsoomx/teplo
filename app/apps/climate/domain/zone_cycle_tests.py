@@ -1114,9 +1114,11 @@ def test_lost_air_sensor_keeps_latched_preheat_and_forgets_air_state(
     )
 
 
-def test_shed_zone_keeps_no_air_state_and_drops_its_morning_and_stop_watch(
+@pytest.mark.parametrize('outcome', [ZoneCycleOutcome.SHED, ZoneCycleOutcome.HANDS_OFF], ids=['shed', 'held_by_hand'])
+def test_zone_left_alone_keeps_no_air_state_and_drops_its_morning_and_stop_watch(
     f_live_zone: ZoneSettings,
     f_preheating_morning_memory: ZoneMemory,
+    outcome: ZoneCycleOutcome,
 ) -> None:
     memory = replace(
         f_preheating_morning_memory,
@@ -1134,7 +1136,7 @@ def test_shed_zone_keeps_no_air_state_and_drops_its_morning_and_stop_watch(
         memory,
         _conditions('21.7', learning=LEARNED),
         _cycle(AIR_MODE_STOP),
-        ZoneCycleOutcome.SHED,
+        outcome,
     )
 
     assert follow_up == ZoneFollowUp(
@@ -1151,11 +1153,13 @@ def test_shed_zone_keeps_no_air_state_and_drops_its_morning_and_stop_watch(
     )
 
 
-def test_shed_zone_in_air_dry_run_journals_nothing_and_keeps_its_would_be_target(
+@pytest.mark.parametrize('outcome', [ZoneCycleOutcome.SHED, ZoneCycleOutcome.HANDS_OFF], ids=['shed', 'held_by_hand'])
+def test_zone_left_alone_in_air_dry_run_journals_nothing_and_keeps_its_would_be_target(
     f_zone: ZoneSettings,
     f_journaled_memory: ZoneMemory,
+    outcome: ZoneCycleOutcome,
 ) -> None:
-    follow_up = _follow(f_zone, f_journaled_memory, _conditions('22.0'), _cycle(MORNING), ZoneCycleOutcome.SHED)
+    follow_up = _follow(f_zone, f_journaled_memory, _conditions('22.0'), _cycle(MORNING), outcome)
 
     assert follow_up == ZoneFollowUp(
         memory=ZoneMemory(path=ControlPath.AIR_DRY_RUN, mode=ScheduleMode.COMFORT, would_be_target=HEAT),

@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from apps.climate.domain.air_policy import resolve_control_path
 from apps.climate.domain.backup_heat import apply_backup_heat
-from apps.climate.domain.drive import pending_write
+from apps.climate.domain.drive import PendingKind, PendingWrite, pending_write
 from apps.climate.domain.modes import ControlPath
 from apps.climate.domain.ports import LoadGate, ZoneStore
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
@@ -105,6 +105,10 @@ class RoomStatusReader:
             floor_target=None,
             pending=None,
         )
+        hands_off_until = zone.manual_until if intent.hands_off and not held else None
+        if status.air_path and hands_off_until is not None:
+            return replace(status, pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=hands_off_until))
+
         if status.air_path:
             return status
 
@@ -121,6 +125,7 @@ class RoomStatusReader:
                 now=now,
                 held=held,
                 writes_live=zone.live_control and not self._dry_run,
+                hands_off_until=hands_off_until,
             ),
         )
 

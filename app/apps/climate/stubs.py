@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from apps.climate.domain.climate_config import ClimateConfig, ClimateConfigRecord
 from apps.climate.domain.comfort_windows import RoomWeek, StoredWindow
+from apps.climate.domain.control import ClimateGates
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.climate.domain.errors import ComfortWindowNotFoundError, ZoneNotFoundError
 from apps.climate.domain.heat_sources import FireplaceRecord
@@ -52,6 +53,31 @@ class ZoneStoreStub:
             raise error
 
         self._stamps.append((stamp, slug, at))
+
+
+class ZoneHoldStoreStub:
+    def __init__(self, errors: dict[str, Exception]) -> None:
+        self._errors = errors
+        self._holds: list[tuple[str, datetime]] = []
+
+    @property
+    def holds(self) -> list[tuple[str, datetime]]:
+        return self._holds
+
+    def hold_by_hand(self, slug: str, until: datetime) -> None:
+        error = self._errors.get(slug)
+        if error is not None:
+            raise error
+
+        self._holds.append((slug, until))
+
+
+class ClimateGatesStoreStub:
+    def __init__(self, gates: ClimateGates) -> None:
+        self._gates = gates
+
+    def gates(self) -> ClimateGates:
+        return self._gates
 
 
 class ZoneLearningStoreStub:

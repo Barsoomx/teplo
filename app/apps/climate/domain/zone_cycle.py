@@ -27,6 +27,7 @@ from apps.climate.domain.zone import ZoneSettings
 from apps.climate.domain.zone_intent import ZoneIntent, decide_floor_mode, forced_air_mode
 
 MINUTE = timedelta(minutes=1)
+LEFT_ALONE = frozenset({ZoneCycleOutcome.SHED, ZoneCycleOutcome.HANDS_OFF})
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -90,7 +91,7 @@ def follow_zone(
 ) -> ZoneFollowUp:
     reading = _morning_reading(zone, memory, decision, outcome, conditions, cycle)
     kept = _kept_memory(zone, memory, decision, outcome, reading, cycle)
-    if outcome is ZoneCycleOutcome.SHED:
+    if outcome in LEFT_ALONE:
         return ZoneFollowUp(
             memory=kept,
             air_dry_run=None,

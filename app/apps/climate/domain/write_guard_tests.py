@@ -205,3 +205,50 @@ def test_override_holds_its_zone_for_thirty_minutes_on_the_monotonic_clock(
     expected: bool,
 ) -> None:
     assert override_holds(slot, MOMENT) is expected
+
+
+@pytest.mark.parametrize(
+    ('slot', 'stamped_at', 'expected'),
+    [
+        (None, NOW - timedelta(minutes=9), False),
+        (None, NOW - timedelta(minutes=10), True),
+        (WriteSlot(generation=1, at=NOW, moment=MOMENT - 599), None, False),
+        (WriteSlot(generation=1, at=NOW, moment=MOMENT - 600), None, True),
+        (WriteSlot(generation=1, at=NOW, moment=MOMENT - 599, override=True, stored_at=READ_AT), None, False),
+        (WriteSlot(generation=1, at=NOW, moment=MOMENT - 600, override=True, stored_at=READ_AT), None, True),
+    ],
+    ids=[
+        'stamp_within_the_interval',
+        'stamp_the_interval_ago',
+        'slot_not_read_within_the_interval',
+        'slot_not_read_the_interval_ago',
+        'shed_within_the_interval',
+        'shed_the_interval_ago',
+    ],
+)
+def test_slot_frees_after_the_interval_it_is_given(
+    slot: WriteSlot | None,
+    stamped_at: datetime | None,
+    expected: bool,
+) -> None:
+    free = slot_free(
+        slot,
+        stamped_at=stamped_at,
+        now=NOW,
+        read_at=READ_AT,
+        moment=MOMENT,
+        interval=timedelta(minutes=10),
+    )
+
+    assert free is expected
+
+
+@pytest.mark.parametrize(
+    ('interval', 'expected'),
+    [(timedelta(minutes=10), False), (timedelta(minutes=30), True)],
+    ids=['ten_minutes', 'thirty_minutes'],
+)
+def test_override_holds_its_key_for_the_interval_it_is_given(interval: timedelta, expected: bool) -> None:
+    slot = WriteSlot(generation=1, at=NOW, moment=MOMENT - 600, override=True)
+
+    assert override_holds(slot, MOMENT, interval) is expected

@@ -103,6 +103,7 @@ class ZoneOverview:
     air: SensorOverview | None
     room: str | None = None
     pending: PendingWrite | None = None
+    manual_until: datetime | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -405,6 +406,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         regime = _regime(zone, decision.mode, boosted=boosted, clock_trusted=cycle.clock_trusted, forced=forced)
         lead = _schedule_lead(zone, decision)
         state = snapshot.state
+        manual_until = zone.manual_until if intent.hands_off else None
         return ZoneOverview(
             slug=zone.slug,
             name=zone.name,
@@ -439,7 +441,9 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
                 now=cycle.now,
                 held=held,
                 writes_live=writes_live,
+                hands_off_until=manual_until,
             ),
+            manual_until=manual_until,
         )
 
     def _load_overviews(self, live_zones: frozenset[str]) -> tuple[LoadOverview, ...]:

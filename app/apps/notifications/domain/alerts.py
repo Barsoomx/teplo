@@ -38,6 +38,7 @@ class ZoneHeating:
     name: str
     should_heat: bool
     power: bool | None
+    hands_off: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)

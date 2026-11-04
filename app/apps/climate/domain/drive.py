@@ -15,6 +15,7 @@ class PendingKind(StrEnum):
     HOLDS = 'holds'
     NEXT_WRITE = 'next_write'
     HELD = 'held'
+    HANDS_OFF = 'hands_off'
     WATCHING = 'watching'
     UNREACHED = 'unreached'
 
@@ -68,10 +69,14 @@ def plan_drive(
     last_write_at: datetime | None,
     now: datetime,
     held: bool,
+    hands_off: bool,
     slot_free: bool,
 ) -> ZoneDrive:
     if held:
         return _settled(ZoneCycleOutcome.SHED)
+
+    if hands_off:
+        return _settled(ZoneCycleOutcome.HANDS_OFF)
 
     if state is None:
         return _settled(ZoneCycleOutcome.DEVICE_UNAVAILABLE)
@@ -94,9 +99,13 @@ def pending_write(
     now: datetime,
     held: bool,
     writes_live: bool,
+    hands_off_until: datetime | None,
 ) -> PendingWrite:
     if held:
         return PendingWrite(kind=PendingKind.HELD, at=None)
+
+    if hands_off_until is not None:
+        return PendingWrite(kind=PendingKind.HANDS_OFF, at=hands_off_until)
 
     if state is None:
         return PendingWrite(kind=PendingKind.UNREACHED, at=None)

@@ -49,3 +49,6 @@ msgstr "Сбрасывать нечего: %(zones)s ещё ничего не в
 #, python-format
 msgid "The database did not take the reset of %(zones)s: try again"
 msgstr "База данных не приняла сброс (%(zones)s): попробуйте ещё раз"
+
+msgid "While on, a change made on a wall thermostat or in its app holds that floor for 2 hours; while off, it is only journaled and teplo reverts it at the zone’s next allowed write"
+msgstr "Включено: изменение на настенном термостате или в его приложении оставляет этот пол владельцу на 2 часа. Выключено: изменение только пишется в журнал, а teplo возвращает своё при следующей разрешённой записи зоны"

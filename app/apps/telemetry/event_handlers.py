@@ -16,6 +16,7 @@ from apps.climate.domain.events import (
     ZoneCommandFailed,
     ZoneCommandIssued,
     ZoneLearningReset,
+    ZoneManualChange,
     ZoneMorningRejected,
 )
 from apps.core.domain.events import DomainEvent, domain_event_handler
@@ -86,6 +87,11 @@ def journal_zone_boost(event: ZoneBoosted) -> None:
         payload=_payload(event),
         created_at=event.occurred_at,
     )
+
+
+@domain_event_handler(ZoneManualChange)
+def journal_zone_manual_change(event: ZoneManualChange) -> None:
+    _journal('zone_manual_change', event.zone, event)
 
 
 @domain_event_handler(AirControlDryRun)

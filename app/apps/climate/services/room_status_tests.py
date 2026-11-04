@@ -9,7 +9,8 @@ from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
 from apps.climate.domain.zone_intent import ForcedTarget
-from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
+from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
+from apps.climate.models import Zone
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.heat_source import HeatSourceRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
@@ -31,6 +32,7 @@ MOSCOW = ZoneInfo('Europe/Moscow')
 NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
 OVERRIDE_ENDS = NOW + timedelta(hours=1)
 COMFORT_ENDS = datetime(2026, 11, 4, 23, 30, tzinfo=MOSCOW)
+HOLD_ENDS = NOW + timedelta(hours=1, minutes=20)
 THERMOSTATS = (
     ('thermostat-living-room', True, '30.0', '27.5'),
     ('thermostat-kitchen', True, '28.0', '26.0'),
@@ -52,6 +54,7 @@ def _reader(
             rooms=RoomClimateRepository(),
             guests=ClimateSettingsRepository(),
             fireplaces=HeatSourceRepository(),
+            gates=ClimateSettingsRepository(),
             book=ControlBook(),
         ),
         temperatures=temperatures,
@@ -118,6 +121,12 @@ def house() -> None:
             room=climate.room,
             live_control=True,
         )
+
+
+@pytest.fixture
+def held_by_hand() -> None:
+    ClimateSettingsFactory.create(manual_hold_live=True)
+    Zone.objects.filter(slug__in=('living-room', 'kitchen', 'hallway')).update(manual_until=HOLD_ENDS)
 
 
 @pytest.fixture
@@ -300,4 +309,17 @@ def test_a_floor_teplo_only_watches_takes_no_write(f_dry_run_reader: RoomStatusR
         ('hallway', PendingKind.HELD),
         ('bathroom-1f', PendingKind.HOLDS),
         ('bathroom-2f', PendingKind.UNREACHED),
+    ]
+
+
+@pytest.mark.usefixtures('house', 'held_by_hand')
+def test_floors_changed_on_their_thermostats_say_until_when_teplo_leaves_them_alone_unless_shed(
+    f_reader: RoomStatusReader,
+) -> None:
+    rooms = f_reader.rooms(NOW, clock_trusted=True)
+
+    assert [(zone.slug, zone.pending) for zone in rooms[0].zones] == [
+        ('living-room', PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
+        ('kitchen', PendingWrite(kind=PendingKind.HANDS_OFF, at=HOLD_ENDS)),
+        ('hallway', PendingWrite(kind=PendingKind.HELD, at=None)),
     ]

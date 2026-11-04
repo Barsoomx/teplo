@@ -79,7 +79,7 @@ class ZoneAdmin(admin.ModelAdmin):
     )
     list_editable = ('heating_enabled', 'live_control', 'air_control_live')
     list_filter = ('room',)
-    readonly_fields = ('boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at')
+    readonly_fields = ('boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at', 'manual_until')
 
     def get_inlines(self, request: HttpRequest, obj: Zone | None) -> tuple[type[ComfortPeriodInline], ...]:  # noqa: ARG002
         if obj is not None and RoomClimate.objects.filter(room__zones=obj).exists():
@@ -152,7 +152,8 @@ class ClimateSettingsAdminForm(forms.ModelForm):
 @admin.register(ClimateSettings)
 class ClimateSettingsAdmin(admin.ModelAdmin):
     form = ClimateSettingsAdminForm
-    list_display = ('__str__', 'outdoor_sensor')
+    list_display = ('__str__', 'outdoor_sensor', 'manual_hold_live')
+    list_editable = ('manual_hold_live',)
     exclude = GUARD_FIELDS
     readonly_fields = ('guests_until',)
 

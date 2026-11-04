@@ -19,3 +19,4 @@ class ZoneOverviewSerializer(serializers.Serializer):
     path = serializers.CharField()
     air_target = serializers.DecimalField(max_digits=4, decimal_places=1, allow_null=True)
     room = serializers.CharField(allow_null=True)
+    manual_until = serializers.DateTimeField(allow_null=True)

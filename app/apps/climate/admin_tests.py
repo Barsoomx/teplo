@@ -32,7 +32,7 @@ from apps.telemetry.models import JournalEntry
 
 pytestmark = pytest.mark.django_db
 
-CYCLE_FIELDS = {'boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at'}
+CYCLE_FIELDS = {'boost_until', 'last_command_at', 'last_dry_run_at', 'last_air_dry_run_at', 'manual_until'}
 SHED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 CLIMATE_POSTED = {
     'air_start_offset': '0.30',
@@ -381,7 +381,19 @@ def test_climate_settings_page_leaves_out_the_second_floor_guard_fields(
 
     assert (set(GUARD_FIELDS) & set(form.base_fields), f_climate_settings_admin.list_display) == (
         set(),
-        ('__str__', 'outdoor_sensor'),
+        ('__str__', 'outdoor_sensor', 'manual_hold_live'),
+    )
+
+
+def test_climate_settings_admin_switches_the_manual_hold_in_the_list_and_on_the_page(
+    f_climate_settings_admin: ClimateSettingsAdmin,
+    f_request: HttpRequest,
+) -> None:
+    form = f_climate_settings_admin.get_form(f_request)
+
+    assert (f_climate_settings_admin.list_editable, 'manual_hold_live' in form.base_fields) == (
+        ('manual_hold_live',),
+        True,
     )
 
 

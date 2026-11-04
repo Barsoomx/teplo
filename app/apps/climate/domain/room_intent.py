@@ -62,6 +62,7 @@ class RoomIntents:
     by_room: Mapping[str, RoomIntent]
     now: datetime
     fireplaces: tuple[FireplaceRecord, ...] = ()
+    manual_hold_live: bool = False
 
     def of(self, room: str) -> RoomIntent | None:
         return self.by_room.get(room)
@@ -81,10 +82,12 @@ class RoomIntents:
     ) -> ZoneIntent:
         intent = None if zone.room_slug is None else self.of(zone.room_slug)
         forced = () if intent is None else intent.forced
+        hands_off = self.manual_hold_live and zone.held_by_hand(self.now)
         return ZoneIntent(
             forced=forced,
             backup=zone.slug in backed_up,
-            learns=not forced and zone.room_slug not in heated,
+            learns=not forced and not hands_off and zone.room_slug not in heated,
+            hands_off=hands_off,
         )
 
 
@@ -116,6 +119,7 @@ def resolve_room_intents(
     clock_trusted: bool,
     guests_until: datetime | None,
     fireplaces: Iterable[FireplaceRecord] = (),
+    manual_hold_live: bool = False,
 ) -> RoomIntents:
     settled = tuple(rooms)
     return RoomIntents(
@@ -126,6 +130,7 @@ def resolve_room_intents(
         },
         now=now,
         fireplaces=tuple(fireplaces),
+        manual_hold_live=manual_hold_live,
     )
 
 

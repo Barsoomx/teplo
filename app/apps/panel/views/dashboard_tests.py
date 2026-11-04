@@ -319,6 +319,21 @@ def m_pending_overview_use_case(
         yield use_case
 
 
+@pytest.fixture
+def m_held_by_hand_overview_use_case(
+    request: pytest.FixtureRequest,
+    panel_overview: GetPanelOverviewOutputDTO,
+) -> Iterator[MagicMock]:
+    kitchen = replace(panel_overview.zones[0], manual_until=request.param)
+    with mock.patch('apps.panel.views.dashboard.GetPanelOverviewUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = replace(
+            panel_overview,
+            zones=(kitchen,),
+            unplaced_zones=(kitchen,),
+        )
+        yield use_case
+
+
 def test_dashboard_lists_zones(
     f_client: Client,
     m_overview_use_case: MagicMock,
@@ -830,8 +845,24 @@ def test_dashboard_offers_no_steps_in_a_room_that_takes_no_override(
         ((False, PendingWrite(kind=PendingKind.HELD, at=None)), 'Пол, цель 30°. Пол отключён управлением нагрузкой'),
         ((False, PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW)), 'Пол, цель 30°. Термостат выключен'),
         ((True, PendingWrite(kind=PendingKind.WATCHING, at=None)), 'Пол, цель 30°. На термостате 28°'),
+        (
+            (True, PendingWrite(kind=PendingKind.HANDS_OFF, at=PANEL_NOW + timedelta(hours=2))),
+            'Пол, цель 30°. На термостате 28°: teplo вернёт расписание после 18:40',
+        ),
+        (
+            (False, PendingWrite(kind=PendingKind.HANDS_OFF, at=PANEL_NOW + timedelta(hours=2))),
+            'Пол, цель 30°. Термостат выключен: teplo вернёт расписание после 18:40',
+        ),
     ],
-    ids=['next_write_later', 'next_write_now', 'held_by_load_management', 'switched_off', 'watching'],
+    ids=[
+        'next_write_later',
+        'next_write_now',
+        'held_by_load_management',
+        'switched_off',
+        'watching',
+        'changed_on_the_thermostat',
+        'switched_off_on_the_thermostat',
+    ],
     indirect=['m_pending_overview_use_case'],
 )
 def test_dashboard_says_when_a_floor_gets_its_target(
@@ -898,3 +929,30 @@ def test_dashboard_marks_the_fireplace_and_shows_what_the_detector_sees(
         m_fireplace_overview_use_case.init.call_count,
         m_phases_use_case.init.call_count,
     ) == (True, lit_chip is not None, detected, watching, (True, True, True), 1, 1)
+
+
+@freeze_time(PANEL_NOW)
+@pytest.mark.parametrize(
+    ('m_held_by_hand_overview_use_case', 'chip'),
+    [
+        (PANEL_NOW + timedelta(hours=2), 'Изменён на термостате: teplo не трогает до 18:40'),
+        (None, None),
+    ],
+    ids=['held_by_hand', 'not_held'],
+    indirect=['m_held_by_hand_overview_use_case'],
+)
+def test_dashboard_says_until_when_teplo_leaves_a_floor_changed_on_its_thermostat_alone(
+    f_russian_client: Client,
+    m_held_by_hand_overview_use_case: MagicMock,
+    m_phases_use_case: MagicMock,
+    chip: str | None,
+) -> None:
+    response = f_russian_client.get('/')
+
+    content = response.content.decode()
+    assert (
+        'Изменён на термостате' in content,
+        chip is None or chip in content,
+        m_held_by_hand_overview_use_case.init.call_count,
+        m_phases_use_case.init.call_count,
+    ) == (chip is not None, True, 1, 1)

@@ -1246,3 +1246,36 @@ msgstr "задержка %(minutes)s мин"
 #, python-format
 msgid "early stop %(offset)s°"
 msgstr "раннее отключение %(offset)s°"
+
+#, python-format
+msgid "Thermostat set to %(setpoint)s°: teplo returns to the schedule after %(time)s"
+msgstr "На термостате %(setpoint)s°: teplo вернёт расписание после %(time)s"
+
+#, python-format
+msgid "Thermostat is off: teplo returns to the schedule after %(time)s"
+msgstr "Термостат выключен: teplo вернёт расписание после %(time)s"
+
+#, python-format
+msgid "%(name)s: changed on the thermostat: %(changes)s, teplo leaves it alone until %(time)s"
+msgstr "%(name)s: изменили на термостате: %(changes)s, teplo не трогает до %(time)s"
+
+#, python-format
+msgid "%(name)s: changed on the thermostat: %(changes)s, teplo would leave it alone until %(time)s"
+msgstr "%(name)s: изменили на термостате: %(changes)s, teplo не трогал бы до %(time)s"
+
+msgid "switched on"
+msgstr "включили"
+
+msgid "switched off"
+msgstr "выключили"
+
+#, python-format
+msgid "mode %(old)s → %(new)s"
+msgstr "режим %(old)s → %(new)s"
+
+#, python-format
+msgid "Changed on the thermostat: teplo leaves it alone until %(time)s"
+msgstr "Изменён на термостате: teplo не трогает до %(time)s"
+
+msgid "Manual changes on the thermostats"
+msgstr "Ручная правка на термостатах"

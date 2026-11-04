@@ -82,6 +82,7 @@ MARKED_CUT = EVENING_CUT - timedelta(days=1)
 NIGHT_CUT = datetime(2026, 10, 29, 3, 10, tzinfo=MOSCOW)
 GUARD_AT = 1000.0
 GUESTS_LEAVE = datetime(2026, 10, 30, 14, 0, tzinfo=MOSCOW)
+HELD_UNTIL = MORNING + timedelta(hours=1, minutes=40)
 BOILER_SHED = Shed(
     load='boiler-1f',
     phase=LoadPhase.L2,
@@ -137,6 +138,7 @@ def _intents(book: ControlBook) -> RoomIntentReader:
         rooms=RoomClimateRepository(),
         guests=ClimateSettingsRepository(),
         fireplaces=HeatSourceRepository(),
+        gates=ClimateSettingsRepository(),
         book=book,
     )
 
@@ -813,6 +815,43 @@ def f_pending_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCas
     )
 
 
+@pytest.fixture
+def f_held_by_hand_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
+    ClimateSettingsFactory.create(manual_hold_live=request.param)
+    _zone('kitchen', 'Кухня', live_control=True, manual_until=HELD_UNTIL)
+    thermostats = ThermostatStateStore(unavailable_after=timedelta(minutes=10))
+    thermostats.record_state(
+        'thermostat-kitchen',
+        ThermostatState(
+            power=True,
+            mode=ThermostatMode.HOLD,
+            setpoint=Decimal('25.0'),
+            floor_temperature=Decimal('24.5'),
+            heating=False,
+            read_at=MORNING,
+        ),
+    )
+    return GetPanelOverviewUseCase(
+        zones=ZoneRepository(),
+        intents=_intents(ControlBook()),
+        devices=DeviceRepository(),
+        house=HouseRepository(),
+        climate_settings=ClimateSettingsRepository(),
+        learning=ZoneLearningRepository(),
+        outages=OutageRepository(),
+        overloads=OutageOverloads(journal=JournalRepository()),
+        loads=LoadRepository(),
+        load_settings=LoadSettingsRepository(),
+        thermostat_store=thermostats,
+        plug_store=PlugStateStore(unavailable_after=timedelta(minutes=10)),
+        temperature_store=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
+        book=ControlBook(),
+        guard_book=GuardBook(),
+        clock=ClockStub(trusted=True),
+        dry_run=False,
+    )
+
+
 def test_overview_names_the_intent_of_each_room_its_guests_and_whether_it_takes_overrides(
     f_intent_use_case: GetPanelOverviewUseCase,
 ) -> None:
@@ -897,6 +936,25 @@ def test_overview_names_when_each_floor_gets_its_target(
     zone = f_pending_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).zones[0]
 
     assert zone.pending == pending
+
+
+@pytest.mark.parametrize(
+    ('f_held_by_hand_use_case', 'manual_until', 'pending'),
+    [
+        (True, HELD_UNTIL, PendingWrite(kind=PendingKind.HANDS_OFF, at=HELD_UNTIL)),
+        (False, None, PendingWrite(kind=PendingKind.NEXT_WRITE, at=MORNING)),
+    ],
+    ids=['gate_on', 'gate_off'],
+    indirect=['f_held_by_hand_use_case'],
+)
+def test_overview_says_until_when_teplo_leaves_a_floor_changed_on_its_thermostat_alone(
+    f_held_by_hand_use_case: GetPanelOverviewUseCase,
+    manual_until: datetime | None,
+    pending: PendingWrite,
+) -> None:
+    zone = f_held_by_hand_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).zones[0]
+
+    assert (zone.manual_until, zone.pending, zone.target_setpoint) == (manual_until, pending, Decimal('28.0'))
 
 
 def test_overview_combines_schedule_and_readings(f_use_case: GetPanelOverviewUseCase) -> None:

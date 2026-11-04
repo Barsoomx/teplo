@@ -9,7 +9,7 @@ from django.db import OperationalError
 from pytest_django import DjangoAssertNumQueries
 from structlog.testing import capture_logs
 
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.core.domain.errors import DomainError
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
@@ -178,7 +178,7 @@ class House:
     boiler: SwitchablePlugStub
     plug_provider: SwitchablePlugProviderStub
     zones: ZoneSwitchStub
-    writes: ZoneWriteGate
+    writes: KeyedWriteGate
     events: list[DomainEvent]
 
 
@@ -243,7 +243,7 @@ def _house(
     load_settings = LoadSettingsStoreStub(control=control)
     boiler = SwitchablePlugStub(state=None, error=boiler_error, switch_errors=boiler_switch_errors)
     plug_provider = SwitchablePlugProviderStub(plugs={'plug-boiler-1f': boiler}, errors=lookup_errors)
-    writes = ZoneWriteGate(clock=clock, zone_lock=threading.Lock)
+    writes = KeyedWriteGate(clock=clock, key_lock=threading.Lock)
     zones = ZoneSwitchStub(
         writes=writes,
         error=None,
@@ -891,7 +891,7 @@ def f_guard_after_its_first_second() -> Guard:
             switcher=LoadSwitcher(
                 plugs=SwitchablePlugProviderStub(plugs={}),
                 zones=ZoneSwitchStub(
-                    writes=ZoneWriteGate(clock=clock, zone_lock=threading.Lock),
+                    writes=KeyedWriteGate(clock=clock, key_lock=threading.Lock),
                     error=None,
                 ),
             ),

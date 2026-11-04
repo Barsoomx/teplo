@@ -27,12 +27,13 @@ class ZoneHeatingSource:
         return [self._zone(zone, intents, local_now, clock_trusted) for zone in self._zones.all_settings()]
 
     def _zone(self, zone: ZoneSettings, intents: RoomIntents, now: datetime, clock_trusted: bool) -> ZoneHeating:
-        forced = intents.zone_intent(zone, backed_up=frozenset()).forced
-        target = decide_floor_mode(zone, forced, now, clock_trusted=clock_trusted).target
+        intent = intents.zone_intent(zone, backed_up=frozenset())
+        target = decide_floor_mode(zone, intent.forced, now, clock_trusted=clock_trusted).target
         snapshot = self._store.snapshot(zone.thermostat_slug)
         return ZoneHeating(
             slug=zone.slug,
             name=zone.name,
             should_heat=target.power,
             power=snapshot.state.power if snapshot.available and snapshot.state else None,
+            hands_off=intent.hands_off,
         )

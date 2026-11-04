@@ -69,6 +69,7 @@ INTENTS = RoomIntents(
     },
     now=NIGHT,
 )
+INTENTS_HOLDING_BY_HAND = replace(INTENTS, manual_hold_live=True)
 FIREPLACE = FireplaceRecord(
     slug='fireplace',
     name='Камин',
@@ -103,6 +104,9 @@ KITCHEN = ZoneSettings(
     last_air_dry_run_at=None,
     room_slug='open-space',
 )
+
+
+HELD_BY_HAND = replace(KITCHEN, room_slug='bedroom', manual_until=NIGHT + timedelta(hours=1))
 
 
 def _intent(
@@ -296,6 +300,53 @@ def test_zone_of_a_room_with_external_heat_learns_nothing(
         backup=False,
         learns=learns,
     )
+
+
+@pytest.mark.parametrize(
+    ('intents', 'zone', 'expected'),
+    [
+        (
+            INTENTS_HOLDING_BY_HAND,
+            HELD_BY_HAND,
+            ZoneIntent(forced=(), backup=False, learns=False, hands_off=True),
+        ),
+        (
+            INTENTS_HOLDING_BY_HAND,
+            replace(HELD_BY_HAND, room_slug=None),
+            ZoneIntent(forced=(), backup=False, learns=False, hands_off=True),
+        ),
+        (
+            INTENTS_HOLDING_BY_HAND,
+            replace(HELD_BY_HAND, room_slug='open-space'),
+            ZoneIntent(forced=(OVERRIDE_AT_NIGHT,), backup=False, learns=False, hands_off=True),
+        ),
+        (INTENTS, HELD_BY_HAND, ZoneIntent(forced=(), backup=False, learns=True)),
+        (
+            INTENTS_HOLDING_BY_HAND,
+            replace(HELD_BY_HAND, manual_until=NIGHT),
+            ZoneIntent(forced=(), backup=False, learns=True),
+        ),
+    ],
+    ids=['held_with_the_gate_on', 'held_in_no_room', 'held_under_an_override', 'gate_off', 'hold_over'],
+)
+def test_zone_held_by_hand_is_left_alone_and_learns_nothing_only_with_its_gate_on(
+    intents: RoomIntents,
+    zone: ZoneSettings,
+    expected: ZoneIntent,
+) -> None:
+    assert intents.zone_intent(zone, backed_up=frozenset()) == expected
+
+
+def test_room_intents_carry_the_gate_of_the_manual_hold() -> None:
+    intents = resolve_room_intents(
+        (OPEN_SPACE,),
+        now=NIGHT,
+        clock_trusted=True,
+        guests_until=None,
+        manual_hold_live=True,
+    )
+
+    assert (intents.manual_hold_live, INTENTS.manual_hold_live) == (True, False)
 
 
 @pytest.mark.parametrize(

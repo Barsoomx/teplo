@@ -30,6 +30,17 @@ class ZoneBoosted(DomainEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class ZoneManualChange(DomainEvent):
+    zone: str
+    name: str
+    power: tuple[bool, bool] | None
+    mode: tuple[str, str] | None
+    setpoint: tuple[Decimal, Decimal] | None
+    until: datetime
+    dry_run: bool
+
+
+@dataclass(frozen=True, kw_only=True)
 class AirControlDryRun(DomainEvent):
     zone: str
     air: Decimal

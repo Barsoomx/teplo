@@ -5,6 +5,7 @@ from decimal import Decimal
 from apps.climate.domain.modes import ZoneKind
 
 BOOST_DURATION = timedelta(hours=2)
+MANUAL_HOLD = timedelta(hours=2)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,6 +49,10 @@ class ZoneSettings:
     last_dry_run_at: datetime | None
     last_air_dry_run_at: datetime | None
     room_slug: str | None = None
+    manual_until: datetime | None = None
 
     def is_boosted(self, now: datetime) -> bool:
         return self.boost_until is not None and now < self.boost_until <= now + BOOST_DURATION
+
+    def held_by_hand(self, now: datetime) -> bool:
+        return self.manual_until is not None and now < self.manual_until <= now + MANUAL_HOLD

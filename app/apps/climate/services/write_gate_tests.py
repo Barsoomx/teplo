@@ -9,7 +9,7 @@ import pytest
 from django.db import OperationalError
 
 from apps.climate.domain.write_guard import WriteReservation, WriteSlot
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.climate.stubs import ContendedLockStub
 from apps.core.stubs import MonotonicClockStub
 
@@ -21,25 +21,25 @@ SHED_AT = NOW + timedelta(seconds=10)
 WAIT = 5.0
 
 
-def _living_room_written(gate: ZoneWriteGate) -> None:
+def _living_room_written(gate: KeyedWriteGate) -> None:
     gate.reserve('living-room', NOW, stamped_at=None, read_at=START)
 
 
-def _kitchen_shed(gate: ZoneWriteGate) -> None:
+def _kitchen_shed(gate: KeyedWriteGate) -> None:
     gate.override('kitchen', SHED_AT)
 
 
-def _kitchen_boosted(gate: ZoneWriteGate) -> None:
+def _kitchen_boosted(gate: KeyedWriteGate) -> None:
     with gate.clearing(('kitchen',)):
         pass
 
 
-def _stored(gate: ZoneWriteGate, reservation: WriteReservation) -> None:
+def _stored(gate: KeyedWriteGate, reservation: WriteReservation) -> None:
     with gate.stamping(reservation):
         pass
 
 
-def _refused(gate: ZoneWriteGate, reservation: WriteReservation) -> None:
+def _refused(gate: KeyedWriteGate, reservation: WriteReservation) -> None:
     with pytest.raises(OperationalError), gate.stamping(reservation):
         raise OperationalError('database is locked')
 
@@ -82,28 +82,28 @@ def f_clock() -> MonotonicClockStub:
 
 
 @pytest.fixture
-def f_gate(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, zone_lock=threading.Lock)
+def f_gate(f_clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=threading.Lock)
 
 
 @pytest.fixture
-def f_contended_gate(f_clock: MonotonicClockStub, lock_contended: threading.Event) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, zone_lock=partial(ContendedLockStub, contended=lock_contended.set))
+def f_contended_gate(f_clock: MonotonicClockStub, lock_contended: threading.Event) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=partial(ContendedLockStub, contended=lock_contended.set))
 
 
 @pytest.fixture
-def f_gate_releasing_the_shed(f_clock: MonotonicClockStub, shed_may_finish: threading.Event) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, zone_lock=partial(ContendedLockStub, contended=shed_may_finish.set))
+def f_gate_releasing_the_shed(f_clock: MonotonicClockStub, shed_may_finish: threading.Event) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=partial(ContendedLockStub, contended=shed_may_finish.set))
 
 
 @pytest.fixture
-def f_uncontended_gate(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, zone_lock=partial(ContendedLockStub, contended=_never_contended))
+def f_uncontended_gate(f_clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=partial(ContendedLockStub, contended=_never_contended))
 
 
 @pytest.fixture
 def f_shed_during_a_write(
-    f_contended_gate: ZoneWriteGate,
+    f_contended_gate: KeyedWriteGate,
     f_sent: list[str],
     lock_contended: threading.Event,
     guard_thread: ThreadPoolExecutor,
@@ -125,7 +125,7 @@ def f_shed_during_a_write(
 
 @pytest.fixture
 def f_write_after_a_shed_in_flight(
-    f_gate_releasing_the_shed: ZoneWriteGate,
+    f_gate_releasing_the_shed: KeyedWriteGate,
     f_sent: list[str],
     shed_may_finish: threading.Event,
     guard_thread: ThreadPoolExecutor,
@@ -150,20 +150,20 @@ def f_write_after_a_shed_in_flight(
 
 
 @pytest.fixture
-def f_kitchen_reserved_on_an_uncontended_gate(f_uncontended_gate: ZoneWriteGate) -> WriteReservation:
+def f_kitchen_reserved_on_an_uncontended_gate(f_uncontended_gate: KeyedWriteGate) -> WriteReservation:
     reservation = f_uncontended_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START)
     assert reservation is not None
     return reservation
 
 
 @pytest.fixture
-def f_living_room_shed(f_uncontended_gate: ZoneWriteGate, f_sent: list[str]) -> Callable[[], None]:
+def f_living_room_shed(f_uncontended_gate: KeyedWriteGate, f_sent: list[str]) -> Callable[[], None]:
     shed = f_uncontended_gate.override('living-room', SHED_AT)
     return partial(f_uncontended_gate.send, shed, partial(f_sent.append, 'living-room shed'))
 
 
 @pytest.fixture
-def f_reservation(f_gate: ZoneWriteGate) -> WriteReservation:
+def f_reservation(f_gate: KeyedWriteGate) -> WriteReservation:
     reservation = f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START)
     assert reservation is not None
     return reservation
@@ -171,7 +171,7 @@ def f_reservation(f_gate: ZoneWriteGate) -> WriteReservation:
 
 @pytest.fixture
 def f_stored_reservation(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_reservation: WriteReservation,
 ) -> WriteReservation:
@@ -182,7 +182,7 @@ def f_stored_reservation(
 
 @pytest.fixture
 def f_reservation_half_an_hour_later(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_stored_reservation: WriteReservation,
 ) -> WriteReservation:
@@ -200,16 +200,16 @@ def f_reservation_half_an_hour_later(
 @pytest.fixture
 def f_reservation_after_another_write(
     request: pytest.FixtureRequest,
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_reservation: WriteReservation,
 ) -> WriteReservation:
-    meanwhile: Callable[[ZoneWriteGate], None] = request.param
+    meanwhile: Callable[[KeyedWriteGate], None] = request.param
     meanwhile(f_gate)
     return f_reservation
 
 
 @pytest.fixture
-def f_shed(f_gate: ZoneWriteGate, f_clock: MonotonicClockStub) -> WriteReservation:
+def f_shed(f_gate: KeyedWriteGate, f_clock: MonotonicClockStub) -> WriteReservation:
     f_clock.advance(10)
     shed = f_gate.override('kitchen', SHED_AT)
     _stored(f_gate, shed)
@@ -218,7 +218,7 @@ def f_shed(f_gate: ZoneWriteGate, f_clock: MonotonicClockStub) -> WriteReservati
 
 @pytest.fixture
 def f_reservation_overridden_by_a_shed(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_reservation: WriteReservation,
 ) -> WriteReservation:
@@ -227,20 +227,20 @@ def f_reservation_overridden_by_a_shed(
     return f_reservation
 
 
-def test_gate_reserves_the_slot_of_a_zone_never_written(f_gate: ZoneWriteGate) -> None:
+def test_gate_reserves_the_slot_of_a_zone_never_written(f_gate: KeyedWriteGate) -> None:
     assert f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START) == WriteReservation(
-        zone='kitchen',
+        key='kitchen',
         slot=WriteSlot(generation=1, at=NOW, moment=START),
         previous=None,
     )
 
 
-def test_gate_asked_about_a_write_takes_no_slot(f_gate: ZoneWriteGate) -> None:
+def test_gate_asked_about_a_write_takes_no_slot(f_gate: KeyedWriteGate) -> None:
     allowed = f_gate.allows('kitchen', NOW, stamped_at=None, read_at=START)
 
     assert (allowed, f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START)) == (
         True,
-        WriteReservation(zone='kitchen', slot=WriteSlot(generation=1, at=NOW, moment=START), previous=None),
+        WriteReservation(key='kitchen', slot=WriteSlot(generation=1, at=NOW, moment=START), previous=None),
     )
 
 
@@ -250,7 +250,7 @@ def test_gate_asked_about_a_write_takes_no_slot(f_gate: ZoneWriteGate) -> None:
     ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
 )
 def test_gate_answers_whether_it_takes_a_write_as_its_reservation_then_does(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_shed: WriteReservation,
     seconds: int,
@@ -271,7 +271,7 @@ def test_gate_answers_whether_it_takes_a_write_as_its_reservation_then_does(
 )
 @pytest.mark.usefixtures('f_reservation')
 def test_slot_whose_stamp_is_not_stored_yet_holds_every_writer_thirty_minutes_on_the_monotonic_clock(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     seconds: int,
     expected: bool,
@@ -294,7 +294,7 @@ def test_slot_whose_stamp_is_not_stored_yet_holds_every_writer_thirty_minutes_on
 )
 @pytest.mark.usefixtures('f_stored_reservation')
 def test_writer_that_read_the_stamps_after_the_slot_was_stored_follows_the_stamp_it_read_as_before(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     later: timedelta,
     stamped_at: datetime | None,
@@ -309,14 +309,14 @@ def test_writer_that_read_the_stamps_after_the_slot_was_stored_follows_the_stamp
 
 @pytest.mark.usefixtures('f_stored_reservation')
 def test_writer_that_read_the_stamps_after_the_slot_was_stored_reads_a_stamp_later_than_a_clock_set_back_as_before(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
 ) -> None:
     f_clock.advance(60)
 
     assert f_gate.reserve('kitchen', NOW - timedelta(seconds=10), stamped_at=NOW, read_at=f_clock()) == (
         WriteReservation(
-            zone='kitchen',
+            key='kitchen',
             slot=WriteSlot(generation=2, at=NOW - timedelta(seconds=10), moment=STORED + 60),
             previous=WriteSlot(generation=1, at=NOW, moment=START, stored_at=STORED),
         )
@@ -330,7 +330,7 @@ def test_writer_that_read_the_stamps_after_the_slot_was_stored_reads_a_stamp_lat
 )
 @pytest.mark.usefixtures('f_stored_reservation')
 def test_writer_that_took_its_time_before_the_slot_was_stored_waits_thirty_minutes_on_the_monotonic_clock(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     seconds: int,
     expected: bool,
@@ -343,9 +343,9 @@ def test_writer_that_took_its_time_before_the_slot_was_stored_waits_thirty_minut
 
 
 @pytest.mark.usefixtures('f_stored_reservation')
-def test_writer_holds_no_other_zone(f_gate: ZoneWriteGate) -> None:
+def test_writer_holds_no_other_zone(f_gate: KeyedWriteGate) -> None:
     assert f_gate.reserve('living-room', NOW, stamped_at=None, read_at=START) == WriteReservation(
-        zone='living-room',
+        key='living-room',
         slot=WriteSlot(generation=2, at=NOW, moment=STORED),
         previous=None,
     )
@@ -357,7 +357,7 @@ def test_writer_holds_no_other_zone(f_gate: ZoneWriteGate) -> None:
     ids=['within_thirty_minutes_of_the_shed', 'thirty_minutes_after_the_shed'],
 )
 def test_writer_that_read_the_stamp_of_a_shed_waits_thirty_minutes_on_the_monotonic_clock_whatever_the_clock_reads(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_shed: WriteReservation,
     seconds: int,
@@ -371,43 +371,43 @@ def test_writer_that_read_the_stamp_of_a_shed_waits_thirty_minutes_on_the_monoto
 
 
 @pytest.mark.usefixtures('f_stored_reservation')
-def test_shed_takes_the_slot_whatever_the_budget(f_gate: ZoneWriteGate) -> None:
+def test_shed_takes_the_slot_whatever_the_budget(f_gate: KeyedWriteGate) -> None:
     assert f_gate.override('kitchen', SHED_AT) == WriteReservation(
-        zone='kitchen',
+        key='kitchen',
         slot=WriteSlot(generation=2, at=SHED_AT, moment=STORED, override=True),
         previous=WriteSlot(generation=1, at=NOW, moment=START, stored_at=STORED),
     )
 
 
 def test_refused_stamp_hands_the_slot_back_to_the_write_before_it(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_reservation_half_an_hour_later: WriteReservation,
 ) -> None:
     _refused(f_gate, f_reservation_half_an_hour_later)
 
     assert f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=NOW, read_at=f_clock()) == WriteReservation(
-        zone='kitchen',
+        key='kitchen',
         slot=WriteSlot(generation=3, at=NOW + HALF_HOUR, moment=STORED + 1800),
         previous=WriteSlot(generation=1, at=NOW, moment=START, stored_at=STORED),
     )
 
 
 def test_refused_stamp_of_the_first_write_leaves_the_zone_free(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_reservation: WriteReservation,
 ) -> None:
     _refused(f_gate, f_reservation)
 
     assert f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START) == WriteReservation(
-        zone='kitchen',
+        key='kitchen',
         slot=WriteSlot(generation=2, at=NOW, moment=START),
         previous=None,
     )
 
 
 def test_refused_stamp_keeps_a_slot_a_shed_took_meanwhile(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_reservation_overridden_by_a_shed: WriteReservation,
 ) -> None:
@@ -416,7 +416,7 @@ def test_refused_stamp_keeps_a_slot_a_shed_took_meanwhile(
 
     assert f_gate.reserve('kitchen', NOW + timedelta(minutes=31), stamped_at=None, read_at=f_clock()) == (
         WriteReservation(
-            zone='kitchen',
+            key='kitchen',
             slot=WriteSlot(generation=3, at=NOW + timedelta(minutes=31), moment=START + 1810),
             previous=WriteSlot(generation=2, at=SHED_AT, moment=START + 10, override=True),
         )
@@ -424,7 +424,7 @@ def test_refused_stamp_keeps_a_slot_a_shed_took_meanwhile(
 
 
 def test_stamp_stored_for_a_write_a_shed_overtook_marks_nothing(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_reservation_overridden_by_a_shed: WriteReservation,
 ) -> None:
@@ -447,7 +447,7 @@ def test_stamp_stored_for_a_write_a_shed_overtook_marks_nothing(
     indirect=['f_reservation_after_another_write'],
 )
 def test_write_goes_out_until_another_write_takes_the_slot(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_reservation_after_another_write: WriteReservation,
     f_sent: list[str],
     expected: tuple[bool, list[str]],
@@ -458,7 +458,7 @@ def test_write_goes_out_until_another_write_takes_the_slot(
 
 
 def test_write_whose_stamp_is_stored_still_goes_out(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_stored_reservation: WriteReservation,
     f_sent: list[str],
 ) -> None:
@@ -468,7 +468,7 @@ def test_write_whose_stamp_is_stored_still_goes_out(
 
 
 def test_shed_that_takes_the_slot_during_a_write_in_flight_goes_out_once_the_write_is_done(
-    f_contended_gate: ZoneWriteGate,
+    f_contended_gate: KeyedWriteGate,
     f_shed_during_a_write: ShedDuringWrite,
     f_sent: list[str],
 ) -> None:
@@ -479,7 +479,7 @@ def test_shed_that_takes_the_slot_during_a_write_in_flight_goes_out_once_the_wri
 
 
 def test_write_that_reaches_its_zone_while_a_shed_is_in_flight_sends_nothing_after_it(
-    f_gate_releasing_the_shed: ZoneWriteGate,
+    f_gate_releasing_the_shed: KeyedWriteGate,
     f_write_after_a_shed_in_flight: ShedDuringWrite,
     f_sent: list[str],
 ) -> None:
@@ -493,7 +493,7 @@ def test_write_that_reaches_its_zone_while_a_shed_is_in_flight_sends_nothing_aft
 
 
 def test_shed_while_a_stamp_of_its_zone_is_stored_goes_out_at_once_and_holds_the_write(
-    f_uncontended_gate: ZoneWriteGate,
+    f_uncontended_gate: KeyedWriteGate,
     f_kitchen_reserved_on_an_uncontended_gate: WriteReservation,
     f_sent: list[str],
 ) -> None:
@@ -505,7 +505,7 @@ def test_shed_while_a_stamp_of_its_zone_is_stored_goes_out_at_once_and_holds_the
 
 
 def test_shed_of_another_zone_goes_out_at_once_during_a_write(
-    f_uncontended_gate: ZoneWriteGate,
+    f_uncontended_gate: KeyedWriteGate,
     f_kitchen_reserved_on_an_uncontended_gate: WriteReservation,
     f_living_room_shed: Callable[[], None],
     f_sent: list[str],
@@ -516,14 +516,14 @@ def test_shed_of_another_zone_goes_out_at_once_during_a_write(
 
 
 @pytest.mark.usefixtures('f_reservation')
-def test_cleared_zone_takes_its_next_write_at_once(f_gate: ZoneWriteGate) -> None:
+def test_cleared_zone_takes_its_next_write_at_once(f_gate: KeyedWriteGate) -> None:
     with f_gate.clearing(('kitchen', 'living-room')) as freed:
         pass
 
     assert (freed, f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None, read_at=START)) == (
         frozenset({'kitchen', 'living-room'}),
         WriteReservation(
-            zone='kitchen',
+            key='kitchen',
             slot=WriteSlot(generation=2, at=NOW + timedelta(minutes=1), moment=START),
             previous=None,
         ),
@@ -531,7 +531,7 @@ def test_cleared_zone_takes_its_next_write_at_once(f_gate: ZoneWriteGate) -> Non
 
 
 @pytest.mark.usefixtures('f_reservation')
-def test_clearing_the_database_refuses_leaves_the_slot_holding_the_zone(f_gate: ZoneWriteGate) -> None:
+def test_clearing_the_database_refuses_leaves_the_slot_holding_the_zone(f_gate: KeyedWriteGate) -> None:
     with pytest.raises(OperationalError), f_gate.clearing(('kitchen',)):
         raise OperationalError('database is locked')
 
@@ -539,28 +539,28 @@ def test_clearing_the_database_refuses_leaves_the_slot_holding_the_zone(f_gate: 
 
 
 def test_clearing_frees_a_slot_whose_stamp_is_stored_meanwhile(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_reservation: WriteReservation,
 ) -> None:
     with f_gate.clearing(('kitchen',)):
         _stored(f_gate, f_reservation)
 
     assert f_gate.reserve('kitchen', NOW + timedelta(minutes=1), stamped_at=None, read_at=START) == WriteReservation(
-        zone='kitchen',
+        key='kitchen',
         slot=WriteSlot(generation=2, at=NOW + timedelta(minutes=1), moment=START),
         previous=None,
     )
 
 
 @pytest.mark.usefixtures('f_reservation')
-def test_clearing_keeps_the_slot_of_a_shed_that_overtakes_it(f_gate: ZoneWriteGate) -> None:
+def test_clearing_keeps_the_slot_of_a_shed_that_overtakes_it(f_gate: KeyedWriteGate) -> None:
     with f_gate.clearing(('kitchen',)):
         _kitchen_shed(f_gate)
 
     assert f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None, read_at=START) is None
 
 
-def test_clearing_keeps_the_slot_of_a_first_write_that_overtakes_it(f_gate: ZoneWriteGate) -> None:
+def test_clearing_keeps_the_slot_of_a_first_write_that_overtakes_it(f_gate: KeyedWriteGate) -> None:
     with f_gate.clearing(('kitchen',)):
         f_gate.reserve('kitchen', NOW, stamped_at=None, read_at=START)
 
@@ -576,7 +576,7 @@ def test_clearing_keeps_the_slot_of_a_first_write_that_overtakes_it(f_gate: Zone
             (
                 True,
                 WriteReservation(
-                    zone='kitchen',
+                    key='kitchen',
                     slot=WriteSlot(generation=3, at=NOW + HALF_HOUR, moment=START + 1810),
                     previous=None,
                 ),
@@ -587,7 +587,7 @@ def test_clearing_keeps_the_slot_of_a_first_write_that_overtakes_it(f_gate: Zone
 )
 @pytest.mark.usefixtures('f_reservation_overridden_by_a_shed')
 def test_clear_keeps_the_slot_of_a_shed_for_thirty_minutes_on_the_monotonic_clock_and_says_so(
-    f_gate: ZoneWriteGate,
+    f_gate: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     seconds: int,
     expected: tuple[bool, WriteReservation | None],
@@ -600,3 +600,89 @@ def test_clear_keeps_the_slot_of_a_shed_for_thirty_minutes_on_the_monotonic_cloc
     assert ('kitchen' in freed, f_gate.reserve('kitchen', NOW + HALF_HOUR, stamped_at=None, read_at=f_clock())) == (
         expected
     )
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'expected'),
+    [(599, False), (600, True)],
+    ids=['within_the_interval', 'the_interval_after_the_write'],
+)
+@pytest.mark.usefixtures('f_stored_reservation')
+def test_gate_holds_a_key_for_the_interval_it_is_given(
+    f_gate: KeyedWriteGate,
+    f_clock: MonotonicClockStub,
+    seconds: int,
+    expected: bool,
+) -> None:
+    f_clock.advance(seconds)
+
+    at = NOW + timedelta(seconds=seconds)
+    interval = timedelta(minutes=10)
+    allowed = f_gate.allows('kitchen', at, stamped_at=NOW, read_at=f_clock(), interval=interval)
+    reservation = f_gate.reserve('kitchen', at, stamped_at=NOW, read_at=f_clock(), interval=interval)
+
+    assert (allowed, reservation is not None) == (expected, expected)
+
+
+@pytest.mark.usefixtures('f_shed')
+def test_clearing_frees_the_slot_of_a_shed_once_the_interval_it_is_given_has_passed(
+    f_gate: KeyedWriteGate,
+    f_clock: MonotonicClockStub,
+) -> None:
+    f_clock.advance(600)
+
+    with f_gate.clearing(('kitchen',), interval=timedelta(minutes=10)) as freed:
+        pass
+
+    assert freed == frozenset({'kitchen'})
+
+
+@pytest.mark.usefixtures('f_reservation')
+def test_gate_says_whether_a_write_took_the_slot_of_a_key_between_two_moments(f_gate: KeyedWriteGate) -> None:
+    assert (
+        f_gate.written_between('kitchen', START - 60, START),
+        f_gate.written_between('kitchen', START + 1, START + 90),
+        f_gate.written_between('living-room', START - 60, START + 90),
+    ) == (True, False, False)
+
+
+@pytest.mark.usefixtures('f_shed')
+def test_gate_says_a_shed_took_the_slot_between_two_moments(f_gate: KeyedWriteGate) -> None:
+    assert (
+        f_gate.written_between('kitchen', START + 10, START + 40),
+        f_gate.written_between('kitchen', START + 11, START + 40),
+    ) == (True, False)
+
+
+@pytest.mark.usefixtures('f_reservation')
+def test_gate_remembers_a_write_whose_slot_a_boost_freed(f_gate: KeyedWriteGate) -> None:
+    with f_gate.clearing(('kitchen',)):
+        pass
+
+    assert f_gate.written_between('kitchen', START - 60, START + 30) is True
+
+
+def test_gate_remembers_a_write_whose_stamp_the_database_refused(
+    f_gate: KeyedWriteGate,
+    f_reservation: WriteReservation,
+) -> None:
+    _refused(f_gate, f_reservation)
+
+    assert f_gate.written_between('kitchen', START - 60, START + 30) is True
+
+
+@pytest.mark.parametrize(
+    ('seconds', 'expected'),
+    [(299, True), (300, False)],
+    ids=['within_five_minutes', 'five_minutes_later'],
+)
+@pytest.mark.usefixtures('f_reservation')
+def test_gate_forgets_a_write_five_minutes_after_it_took_its_slot(
+    f_gate: KeyedWriteGate,
+    f_clock: MonotonicClockStub,
+    seconds: int,
+    expected: bool,
+) -> None:
+    f_clock.advance(seconds)
+
+    assert f_gate.written_between('kitchen', START - 60, f_clock()) is expected

@@ -54,9 +54,9 @@ class ThermostatZoneSwitch:
 
     def _stamped(self, shed: WriteReservation, at: datetime) -> bool:
         try:
-            self._stamps.mark_commanded(shed.zone, at)
+            self._stamps.mark_shed(shed.key, at)
         except OperationalError as error:
-            logger.warning('zone_write_stamp_failed', zone=shed.zone, at=at.isoformat(), error=str(error))
+            logger.warning('zone_write_stamp_failed', zone=shed.key, at=at.isoformat(), error=str(error))
             return False
 
         self._writes.stored(shed)

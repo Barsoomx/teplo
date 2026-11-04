@@ -36,6 +36,7 @@ class ZoneCycleOutcome(StrEnum):
     DEVICE_UNAVAILABLE = 'device_unavailable'
     FAILED = 'failed'
     SHED = 'shed'
+    HANDS_OFF = 'hands_off'
     WAITING = 'waiting'
 
 

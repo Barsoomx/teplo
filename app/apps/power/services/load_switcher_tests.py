@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import PlugNotSwitchableError
 from apps.devices.domain.readings import PlugState
@@ -62,17 +62,17 @@ def f_other_plug() -> SwitchablePlugStub:
 
 
 @pytest.fixture
-def writes() -> ZoneWriteGate:
-    return ZoneWriteGate(clock=MonotonicClockStub(now=0.0), zone_lock=threading.Lock)
+def writes() -> KeyedWriteGate:
+    return KeyedWriteGate(clock=MonotonicClockStub(now=0.0), key_lock=threading.Lock)
 
 
 @pytest.fixture
-def f_zones(writes: ZoneWriteGate) -> ZoneSwitchStub:
+def f_zones(writes: KeyedWriteGate) -> ZoneSwitchStub:
     return ZoneSwitchStub(writes=writes, error=None)
 
 
 @pytest.fixture
-def f_zones_written_a_minute_ago(writes: ZoneWriteGate) -> ZoneSwitchStub:
+def f_zones_written_a_minute_ago(writes: KeyedWriteGate) -> ZoneSwitchStub:
     writes.reserve('kitchen', NOW - timedelta(minutes=1), stamped_at=None, read_at=LOADS_READ_AT)
     return ZoneSwitchStub(writes=writes, error=None)
 
@@ -100,7 +100,7 @@ def f_switcher_without_plugs(f_zones: ZoneSwitchStub) -> LoadSwitcher:
 
 
 @pytest.fixture
-def f_switcher_whose_zone_stamps_fail(f_plug: SwitchablePlugStub, writes: ZoneWriteGate) -> LoadSwitcher:
+def f_switcher_whose_zone_stamps_fail(f_plug: SwitchablePlugStub, writes: KeyedWriteGate) -> LoadSwitcher:
     return LoadSwitcher(
         plugs=SwitchablePlugProviderStub(plugs={'plug-boiler-1f': f_plug}),
         zones=ZoneSwitchStub(writes=writes, error=None, stamped=False),

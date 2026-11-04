@@ -37,6 +37,9 @@
           <p class="event-text">{% blocktranslate with name=entry.subject_name summary=entry.payload.change|command_summary %}{{ name }}: command failed ({{ summary }}){% endblocktranslate %}</p>
           {% if note %}<p class="event-note">{{ note }}</p>{% endif %}
         </div>
+        {% elif entry.kind == 'zone_manual_change' %}
+        <span class="event-mark">{% icon 'thermometer' %}</span>
+        <div class="event-body"><p class="event-text">{{ entry|manual_change_text }}</p></div>
         {% elif entry.kind == 'zone_boosted' %}
         <span class="event-mark event-mark-boost">{% icon 'flame' %}</span>
         <div class="event-body"><p class="event-text">{% blocktranslate with name=entry.subject_name until=entry.payload.until|local_time %}{{ name }}: boost until {{ until }}{% endblocktranslate %}</p></div>

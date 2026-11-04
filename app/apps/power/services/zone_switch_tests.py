@@ -10,7 +10,7 @@ from apps.climate.domain.write_guard import WriteReservation, WriteSlot
 from apps.climate.factories import ZoneFactory
 from apps.climate.models import Zone
 from apps.climate.repositories.zone import ZoneRepository
-from apps.climate.services.write_gate import ZoneWriteGate
+from apps.climate.services.write_gate import KeyedWriteGate
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import DeviceUnavailableError, DriverNotImplementedError
 from apps.devices.stubs import FloorThermostatStub, ThermostatProviderStub
@@ -28,11 +28,14 @@ LOADS_READ_AT = START - 60
 
 
 class ShedWhileStampingStub:
-    def __init__(self, writes: ZoneWriteGate) -> None:
+    def __init__(self, writes: KeyedWriteGate) -> None:
         self._writes = writes
 
     def mark_commanded(self, slug: str, at: datetime) -> None:
         self._writes.override(slug, at)
+
+    def mark_shed(self, slug: str, at: datetime) -> None:
+        self.mark_commanded(slug, at)
 
 
 def _switch_off(switch: ThermostatZoneSwitch) -> object:
@@ -64,12 +67,18 @@ def f_clock() -> MonotonicClockStub:
 
 
 @pytest.fixture
-def f_writes(f_clock: MonotonicClockStub) -> ZoneWriteGate:
-    return ZoneWriteGate(clock=f_clock, zone_lock=threading.Lock)
+def f_writes(f_clock: MonotonicClockStub) -> KeyedWriteGate:
+    return KeyedWriteGate(clock=f_clock, key_lock=threading.Lock)
 
 
 @pytest.fixture
-def f_kitchen_written_by_the_heating_cycle(f_kitchen: Zone, f_writes: ZoneWriteGate) -> Zone:
+def f_kitchen_held_by_hand(f_kitchen: Zone) -> Zone:
+    Zone.objects.filter(pk=f_kitchen.pk).update(manual_until=NOW + timedelta(hours=1))
+    return f_kitchen
+
+
+@pytest.fixture
+def f_kitchen_written_by_the_heating_cycle(f_kitchen: Zone, f_writes: KeyedWriteGate) -> Zone:
     reservation = f_writes.reserve('kitchen', HEATING_WRITE_AT, stamped_at=WRITTEN_AT, read_at=START)
     assert reservation is not None
     with f_writes.stamping(reservation):
@@ -78,7 +87,7 @@ def f_kitchen_written_by_the_heating_cycle(f_kitchen: Zone, f_writes: ZoneWriteG
 
 
 @pytest.fixture
-def f_switch(f_thermostat: FloorThermostatStub, f_writes: ZoneWriteGate) -> ThermostatZoneSwitch:
+def f_switch(f_thermostat: FloorThermostatStub, f_writes: KeyedWriteGate) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneRepository(),
         thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': f_thermostat}),
@@ -89,7 +98,7 @@ def f_switch(f_thermostat: FloorThermostatStub, f_writes: ZoneWriteGate) -> Ther
 @pytest.fixture
 def f_unreachable_switch(
     unreachable_thermostat: FloorThermostatStub,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
 ) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneRepository(),
@@ -99,7 +108,7 @@ def f_unreachable_switch(
 
 
 @pytest.fixture
-def f_switch_without_the_thermostat(f_writes: ZoneWriteGate) -> ThermostatZoneSwitch:
+def f_switch_without_the_thermostat(f_writes: KeyedWriteGate) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneRepository(),
         thermostats=ThermostatProviderStub(thermostats={}),
@@ -108,7 +117,7 @@ def f_switch_without_the_thermostat(f_writes: ZoneWriteGate) -> ThermostatZoneSw
 
 
 @pytest.fixture
-def f_switch_without_a_database(f_thermostat: FloorThermostatStub, f_writes: ZoneWriteGate) -> ThermostatZoneSwitch:
+def f_switch_without_a_database(f_thermostat: FloorThermostatStub, f_writes: KeyedWriteGate) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneWriteStampsStub(error=OperationalError('database is locked')),
         thermostats=ThermostatProviderStub(thermostats={'thermostat-kitchen': f_thermostat}),
@@ -118,7 +127,7 @@ def f_switch_without_a_database(f_thermostat: FloorThermostatStub, f_writes: Zon
 
 @pytest.fixture
 def f_switch_whose_release_a_shed_overtakes(
-    f_thermostat: FloorThermostatStub, f_writes: ZoneWriteGate
+    f_thermostat: FloorThermostatStub, f_writes: KeyedWriteGate
 ) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ShedWhileStampingStub(writes=f_writes),
@@ -130,7 +139,7 @@ def f_switch_whose_release_a_shed_overtakes(
 @pytest.fixture
 def f_unreachable_switch_without_a_database(
     unreachable_thermostat: FloorThermostatStub,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
 ) -> ThermostatZoneSwitch:
     return ThermostatZoneSwitch(
         stamps=ZoneWriteStampsStub(error=OperationalError('database is locked')),
@@ -150,6 +159,26 @@ def test_switch_off_powers_the_thermostat_off_stamps_the_write_and_says_it_did(
     assert (stamped, f_thermostat.commands, f_kitchen.last_command_at) == (True, [('power', False)], NOW)
 
 
+def test_switch_off_ends_a_hold_by_hand_with_its_stamp(
+    f_switch: ThermostatZoneSwitch,
+    f_kitchen_held_by_hand: Zone,
+) -> None:
+    f_switch.switch_off('kitchen', 'thermostat-kitchen', NOW)
+
+    f_kitchen_held_by_hand.refresh_from_db()
+    assert (f_kitchen_held_by_hand.last_command_at, f_kitchen_held_by_hand.manual_until) == (NOW, None)
+
+
+def test_switch_off_takes_a_slot_the_gate_remembers_as_a_write(
+    f_switch: ThermostatZoneSwitch,
+    f_writes: KeyedWriteGate,
+    f_clock: MonotonicClockStub,
+) -> None:
+    f_switch.switch_off('kitchen', 'thermostat-kitchen', NOW)
+
+    assert f_writes.written_between('kitchen', START - 60, f_clock() + 30) is True
+
+
 def test_switch_on_powers_the_thermostat_on_and_stamps_the_write(
     f_switch: ThermostatZoneSwitch,
     f_kitchen: Zone,
@@ -164,7 +193,7 @@ def test_switch_on_powers_the_thermostat_on_and_stamps_the_write(
 @pytest.mark.usefixtures('f_kitchen_written_by_the_heating_cycle')
 def test_switch_off_takes_the_zones_write_slot_within_its_budget_and_holds_the_next_write(
     f_switch: ThermostatZoneSwitch,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_thermostat: FloorThermostatStub,
 ) -> None:
@@ -195,7 +224,7 @@ def test_switch_on_within_the_zones_write_budget_writes_and_stamps_nothing(
 @pytest.mark.parametrize('switch', [_switch_off, _switch_on], ids=['off', 'on'])
 def test_failed_switch_still_spends_the_write_budget(
     f_unreachable_switch: ThermostatZoneSwitch,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_clock: MonotonicClockStub,
     f_kitchen: Zone,
     switch: Callable[[ThermostatZoneSwitch], object],
@@ -213,7 +242,7 @@ def test_failed_switch_still_spends_the_write_budget(
 @pytest.mark.parametrize('switch', [_switch_off, _switch_on], ids=['off', 'on'])
 def test_switch_that_cannot_find_its_thermostat_writes_nothing_and_spends_no_write_budget(
     f_switch_without_the_thermostat: ThermostatZoneSwitch,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_kitchen: Zone,
     switch: Callable[[ThermostatZoneSwitch], object],
 ) -> None:
@@ -223,7 +252,7 @@ def test_switch_that_cannot_find_its_thermostat_writes_nothing_and_spends_no_wri
     f_kitchen.refresh_from_db()
     assert (f_kitchen.last_command_at, f_writes.reserve('kitchen', NOW, stamped_at=WRITTEN_AT, read_at=START)) == (
         WRITTEN_AT,
-        WriteReservation(zone='kitchen', slot=WriteSlot(generation=1, at=NOW, moment=START), previous=None),
+        WriteReservation(key='kitchen', slot=WriteSlot(generation=1, at=NOW, moment=START), previous=None),
     )
 
 
@@ -238,7 +267,7 @@ def test_switch_off_reaches_the_thermostat_and_says_so_when_the_database_cannot_
 
 def test_switch_on_writes_nothing_and_gives_the_slot_back_when_the_database_cannot_stamp_the_write(
     f_switch_without_a_database: ThermostatZoneSwitch,
-    f_writes: ZoneWriteGate,
+    f_writes: KeyedWriteGate,
     f_thermostat: FloorThermostatStub,
 ) -> None:
     with pytest.raises(OperationalError):
@@ -246,7 +275,7 @@ def test_switch_on_writes_nothing_and_gives_the_slot_back_when_the_database_cann
 
     assert (f_thermostat.commands, f_writes.reserve('kitchen', NOW, stamped_at=WRITTEN_AT, read_at=START)) == (
         [],
-        WriteReservation(zone='kitchen', slot=WriteSlot(generation=2, at=NOW, moment=START), previous=None),
+        WriteReservation(key='kitchen', slot=WriteSlot(generation=2, at=NOW, moment=START), previous=None),
     )
 
 

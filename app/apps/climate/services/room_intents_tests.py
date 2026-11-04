@@ -67,6 +67,7 @@ def f_reader(book: ControlBook) -> RoomIntentReader:
         rooms=RoomClimateRepository(),
         guests=ClimateSettingsRepository(),
         fireplaces=HeatSourceRepository(),
+        gates=ClimateSettingsRepository(),
         book=book,
     )
 

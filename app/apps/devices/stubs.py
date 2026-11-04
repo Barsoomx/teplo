@@ -41,6 +41,21 @@ class FloorThermostatStub:
         self._commands.append((name, value))
 
 
+class ChangingThermostatStub(FloorThermostatStub):
+    def __init__(self, readings: tuple[ThermostatState | DomainError, ...]) -> None:
+        super().__init__(state=None)
+        self._readings = readings
+        self._reads = 0
+
+    def read_state(self) -> ThermostatState:
+        reading = self._readings[min(self._reads, len(self._readings) - 1)]
+        self._reads += 1
+        if isinstance(reading, DomainError):
+            raise reading
+
+        return reading
+
+
 class ThermostatProviderStub:
     def __init__(self, thermostats: dict[str, FloorThermostat]) -> None:
         self._thermostats = thermostats

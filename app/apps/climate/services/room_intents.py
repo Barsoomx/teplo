@@ -2,7 +2,7 @@ from datetime import datetime
 
 from django.utils import timezone
 
-from apps.climate.domain.ports import FireplaceStore, GuestsStore, RoomClimateStore
+from apps.climate.domain.ports import ClimateGatesStore, FireplaceStore, GuestsStore, RoomClimateStore
 from apps.climate.domain.room_intent import RoomIntents, resolve_room_intents
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.heat_source import HeatSourceRepository
@@ -16,11 +16,13 @@ class RoomIntentReader:
         rooms: RoomClimateStore,
         guests: GuestsStore,
         fireplaces: FireplaceStore,
+        gates: ClimateGatesStore,
         book: ControlBook,
     ) -> None:
         self._rooms = rooms
         self._guests = guests
         self._fireplaces = fireplaces
+        self._gates = gates
         self._book = book
 
     @classmethod
@@ -29,6 +31,7 @@ class RoomIntentReader:
             rooms=RoomClimateRepository(),
             guests=ClimateSettingsRepository(),
             fireplaces=HeatSourceRepository(),
+            gates=ClimateSettingsRepository(),
             book=control_book,
         )
 
@@ -39,6 +42,7 @@ class RoomIntentReader:
             clock_trusted=clock_trusted,
             guests_until=self._guests.guests().until,
             fireplaces=self._fireplaces.fireplaces(),
+            manual_hold_live=self._gates.gates().manual_hold_live,
         )
 
     def backed_up(self, intents: RoomIntents) -> frozenset[str]:

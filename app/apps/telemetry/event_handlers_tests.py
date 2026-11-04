@@ -21,6 +21,7 @@ from apps.climate.domain.events import (
     ZoneCommandFailed,
     ZoneCommandIssued,
     ZoneLearningReset,
+    ZoneManualChange,
     ZoneMorningRejected,
 )
 from apps.climate.domain.external_heat import FireEnd
@@ -80,6 +81,7 @@ from apps.telemetry.event_handlers import (
     journal_zone_command,
     journal_zone_command_failure,
     journal_zone_learning_reset,
+    journal_zone_manual_change,
     journal_zone_morning_rejected,
 )
 from apps.telemetry.models import JournalEntry
@@ -169,6 +171,36 @@ def test_zone_boost_is_journaled() -> None:
     journal_zone_boost(ZoneBoosted(zone='bathroom-1f', until=NOW + timedelta(hours=2), occurred_at=NOW))
 
     assert _entry() == ('zone_boosted', 'bathroom-1f', {'zone': 'bathroom-1f', 'until': '2026-10-29T08:00:00Z'}, NOW)
+
+
+def test_manual_change_on_a_thermostat_is_journaled_with_its_zone_as_the_subject() -> None:
+    journal_zone_manual_change(
+        ZoneManualChange(
+            zone='kitchen',
+            name='Кухня',
+            power=(True, False),
+            mode=('hold', 'smart'),
+            setpoint=(Decimal('28.0'), Decimal('25.0')),
+            until=NOW + timedelta(hours=2),
+            dry_run=True,
+            occurred_at=NOW,
+        ),
+    )
+
+    assert _entry() == (
+        'zone_manual_change',
+        'kitchen',
+        {
+            'zone': 'kitchen',
+            'name': 'Кухня',
+            'power': [True, False],
+            'mode': ['hold', 'smart'],
+            'setpoint': ['28.0', '25.0'],
+            'until': '2026-10-29T08:00:00Z',
+            'dry_run': True,
+        },
+        NOW,
+    )
 
 
 def test_air_control_dry_run_is_journaled_with_would_be_state() -> None:

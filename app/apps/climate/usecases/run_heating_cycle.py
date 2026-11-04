@@ -332,6 +332,7 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
             last_write_at=zone.last_command_at if conditions.writes_live else zone.last_dry_run_at,
             now=cycle.now,
             held=held,
+            hands_off=conditions.intent.hands_off,
             slot_free=self._slot_free(zone, conditions, cycle.now, read_at=read_at),
         )
         return ZoneRun(zone=zone, memory=memory, conditions=conditions, decision=decision, drive=drive)

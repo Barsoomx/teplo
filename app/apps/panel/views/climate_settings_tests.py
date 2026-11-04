@@ -101,7 +101,7 @@ def test_saved_climate_settings_go_to_the_use_case_without_the_old_second_floor_
         [field for field in DEAD_GUARD if hasattr(executed, field)],
         'Сохранено. Цикл отопления учтёт это в течение минуты.' in content,
         'id="climate-settings"' in content,
-        ('second_floor_guard' in content, 'Защита второго этажа' in content, 'class="gates"' in content),
+        ('second_floor_guard' in content, 'Защита второго этажа' in content, 'Ручная правка на термостатах' in content),
         m_settings_use_case.init.call_count,
     ) == (
         200,
@@ -117,7 +117,7 @@ def test_saved_climate_settings_go_to_the_use_case_without_the_old_second_floor_
         [],
         True,
         True,
-        (False, False, False),
+        (False, False, True),
         1,
     )
 
