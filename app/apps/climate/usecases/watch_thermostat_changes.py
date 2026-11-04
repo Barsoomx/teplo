@@ -1,3 +1,5 @@
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -38,6 +40,7 @@ class WatchThermostatChangesUseCase(BaseUseCase[WatchThermostatChangesInputDTO, 
         holds: ZoneHoldStore,
         gates: ClimateGatesStore,
         writes: WriteGate,
+        clock: Callable[[], float],
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
         super().__init__(dispatcher=dispatcher)
@@ -45,6 +48,7 @@ class WatchThermostatChangesUseCase(BaseUseCase[WatchThermostatChangesInputDTO, 
         self._holds = holds
         self._gates = gates
         self._writes = writes
+        self._clock = clock
 
     @classmethod
     def init(cls) -> 'WatchThermostatChangesUseCase':
@@ -53,6 +57,7 @@ class WatchThermostatChangesUseCase(BaseUseCase[WatchThermostatChangesInputDTO, 
             holds=ZoneRepository(),
             gates=ClimateSettingsRepository(),
             writes=zone_write_gate,
+            clock=time.monotonic,
         )
 
     def _execute(self, input_dto: WatchThermostatChangesInputDTO) -> WatchThermostatChangesOutputDTO:
@@ -61,12 +66,13 @@ class WatchThermostatChangesUseCase(BaseUseCase[WatchThermostatChangesInputDTO, 
             return WatchThermostatChangesOutputDTO(held=(), journaled=())
 
         zones = {zone.thermostat_slug: zone for zone in self._zones.all_settings()}
+        checked_at = self._clock()
         live = self._gates.gates().manual_hold_live
         held: list[str] = []
         journaled: list[str] = []
         for pair, change in changes:
             zone = zones.get(pair.slug)
-            if zone is None or self._writes.written_between(zone.slug, *teplo_window(pair)):
+            if zone is None or self._writes.written_between(zone.slug, *teplo_window(pair, checked_at)):
                 continue
 
             if self._note(zone, change, live=live, now=input_dto.now):
@@ -77,16 +83,8 @@ class WatchThermostatChangesUseCase(BaseUseCase[WatchThermostatChangesInputDTO, 
 
     def _note(self, zone: ZoneSettings, change: ManualChange, *, live: bool, now: datetime) -> bool:
         until = now + MANUAL_HOLD
-        if live:
-            try:
-                self._holds.hold_by_hand(zone.slug, until)
-            except (OperationalError, ZoneNotFoundError) as error:
-                logger.warning(
-                    'zone_manual_hold_failed',
-                    zone=zone.slug,
-                    error=str(error),
-                )
-                return False
+        if live and not self._held(zone, until):
+            return False
 
         logger.info(
             'zone_manual_change',
@@ -110,3 +108,18 @@ class WatchThermostatChangesUseCase(BaseUseCase[WatchThermostatChangesInputDTO, 
             ),
         )
         return True
+
+    def _held(self, zone: ZoneSettings, until: datetime) -> bool:
+        try:
+            held = self._holds.hold_by_hand(zone.slug, until, stamped_at=zone.last_command_at)
+        except (OperationalError, ZoneNotFoundError) as error:
+            logger.warning(
+                'zone_manual_hold_failed',
+                zone=zone.slug,
+                error=str(error),
+            )
+            return False
+
+        if not held:
+            logger.info('zone_manual_hold_overtaken', zone=zone.slug)
+        return held

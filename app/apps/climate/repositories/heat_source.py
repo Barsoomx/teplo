@@ -55,9 +55,14 @@ class HeatSourceRepository:
         HeatSource.objects.filter(slug=slug).update(last_command_at=at, commanded_power=False, manual_until=None)
 
     @staticmethod
-    def hold_by_hand(slug: str, until: datetime) -> None:
-        if HeatSource.objects.filter(slug=slug).update(manual_until=until) == 0:
+    def hold_by_hand(slug: str, until: datetime, *, stamped_at: datetime | None) -> bool:
+        if HeatSource.objects.filter(slug=slug, last_command_at=stamped_at).update(manual_until=until) == 1:
+            return True
+
+        if not HeatSource.objects.filter(slug=slug).exists():
             raise HeatSourceNotFoundError(slug)
+
+        return False
 
 
 def _fireplaces() -> QuerySet[HeatSource]:

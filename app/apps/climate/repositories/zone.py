@@ -46,9 +46,14 @@ class ZoneRepository:
             raise ZoneNotFoundError(slug)
 
     @staticmethod
-    def hold_by_hand(slug: str, until: datetime) -> None:
-        if Zone.objects.filter(slug=slug).update(manual_until=until) == 0:
+    def hold_by_hand(slug: str, until: datetime, *, stamped_at: datetime | None) -> bool:
+        if Zone.objects.filter(slug=slug, last_command_at=stamped_at).update(manual_until=until) == 1:
+            return True
+
+        if not Zone.objects.filter(slug=slug).exists():
             raise ZoneNotFoundError(slug)
+
+        return False
 
     @staticmethod
     def config_records() -> list[ZoneConfigRecord]:

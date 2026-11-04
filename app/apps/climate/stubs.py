@@ -58,20 +58,25 @@ class ZoneStoreStub:
 
 
 class ZoneHoldStoreStub:
-    def __init__(self, errors: dict[str, Exception]) -> None:
+    def __init__(self, errors: dict[str, Exception], stamps: dict[str, datetime | None] | None = None) -> None:
         self._errors = errors
+        self._stamps = {} if stamps is None else stamps
         self._holds: list[tuple[str, datetime]] = []
 
     @property
     def holds(self) -> list[tuple[str, datetime]]:
         return self._holds
 
-    def hold_by_hand(self, slug: str, until: datetime) -> None:
+    def hold_by_hand(self, slug: str, until: datetime, *, stamped_at: datetime | None) -> bool:
         error = self._errors.get(slug)
         if error is not None:
             raise error
 
+        if self._stamps.get(slug, stamped_at) != stamped_at:
+            return False
+
         self._holds.append((slug, until))
+        return True
 
 
 class ClimateGatesStoreStub:
@@ -214,20 +219,25 @@ class HeatSourceStoreStub:
 
 
 class SourceHoldStoreStub:
-    def __init__(self, errors: dict[str, Exception]) -> None:
+    def __init__(self, errors: dict[str, Exception], stamps: dict[str, datetime | None] | None = None) -> None:
         self._errors = errors
+        self._stamps = {} if stamps is None else stamps
         self._holds: list[tuple[str, datetime]] = []
 
     @property
     def holds(self) -> list[tuple[str, datetime]]:
         return self._holds
 
-    def hold_by_hand(self, slug: str, until: datetime) -> None:
+    def hold_by_hand(self, slug: str, until: datetime, *, stamped_at: datetime | None) -> bool:
         error = self._errors.get(slug)
         if error is not None:
             raise error
 
+        if self._stamps.get(slug, stamped_at) != stamped_at:
+            return False
+
         self._holds.append((slug, until))
+        return True
 
 
 class SourceLoadGateStub:

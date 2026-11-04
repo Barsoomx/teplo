@@ -1,3 +1,5 @@
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -38,6 +40,7 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
         sources: HeatSourceStore,
         holds: SourceHoldStore,
         writes: SourceWrites,
+        clock: Callable[[], float],
         dry_run: bool,
         dispatcher: EventDispatcher = event_dispatcher,
     ) -> None:
@@ -45,6 +48,7 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
         self._sources = sources
         self._holds = holds
         self._writes = writes
+        self._clock = clock
         self._dry_run = dry_run
 
     @classmethod
@@ -53,6 +57,7 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
             sources=HeatSourceRepository(),
             holds=HeatSourceRepository(),
             writes=source_write_gate,
+            clock=time.monotonic,
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
@@ -62,11 +67,12 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
             return WatchSourceChangesOutputDTO(held=(), journaled=())
 
         sources = {source.device_slug: source for source in self._sources.commanded_settings()}
+        checked_at = self._clock()
         held: list[str] = []
         journaled: list[str] = []
         for pair, change in changes:
             source = sources.get(pair.slug)
-            if source is None or self._writes.written_between(source.slug, *teplo_window(pair)):
+            if source is None or self._writes.written_between(source.slug, *teplo_window(pair, checked_at)):
                 continue
 
             live = source.writes_live(dry_run=self._dry_run)
@@ -78,16 +84,8 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
 
     def _note(self, source: SourceSettings, change: ManualChange, *, live: bool, now: datetime) -> bool:
         until = now + MANUAL_HOLD
-        if live:
-            try:
-                self._holds.hold_by_hand(source.slug, until)
-            except (OperationalError, HeatSourceNotFoundError) as error:
-                logger.warning(
-                    'source_manual_hold_failed',
-                    source=source.slug,
-                    error=str(error),
-                )
-                return False
+        if live and not self._held(source, until):
+            return False
 
         logger.info(
             'source_manual_change',
@@ -109,3 +107,18 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
             ),
         )
         return True
+
+    def _held(self, source: SourceSettings, until: datetime) -> bool:
+        try:
+            held = self._holds.hold_by_hand(source.slug, until, stamped_at=source.last_command_at)
+        except (OperationalError, HeatSourceNotFoundError) as error:
+            logger.warning(
+                'source_manual_hold_failed',
+                source=source.slug,
+                error=str(error),
+            )
+            return False
+
+        if not held:
+            logger.info('source_manual_hold_overtaken', source=source.slug)
+        return held

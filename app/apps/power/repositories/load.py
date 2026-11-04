@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.db import transaction
 from django.db.models import Max
 
+from apps.climate.models import HeatSource, Zone
 from apps.core.repositories.write_lock import lock_for_update
 from apps.devices.models import Device
 from apps.power.domain.errors import LoadNotFoundError
@@ -28,14 +29,18 @@ class LoadRepository:
 
     @staticmethod
     def mark_shed(slug: str, shed: LiveShed) -> None:
-        Load.objects.filter(slug=slug).update(
-            shed_at=shed.at,
-            shed_reason=shed.reason,
-            shed_phase=shed.phase,
-            shed_was_on=shed.was_on,
-            shed_device=shed.device,
-            shed_handed_back=shed.handed_back,
-        )
+        with transaction.atomic():
+            Load.objects.filter(slug=slug).update(
+                shed_at=shed.at,
+                shed_reason=shed.reason,
+                shed_phase=shed.phase,
+                shed_was_on=shed.was_on,
+                shed_device=shed.device,
+                shed_handed_back=shed.handed_back,
+            )
+            if not shed.handed_back:
+                Zone.objects.filter(load__slug=slug).update(manual_until=None)
+                HeatSource.objects.filter(load__slug=slug).update(manual_until=None)
 
     @staticmethod
     def clear_shed(slug: str) -> None:

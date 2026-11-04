@@ -99,8 +99,16 @@ def test_change_counts_only_between_polls_at_most_ninety_seconds_apart(span: flo
     assert (change is not None) is counts
 
 
-def test_teplo_window_runs_from_a_minute_before_the_first_poll_to_the_second() -> None:
-    assert teplo_window(_pair(STATE, span=45.0)) == (FIRST_POLL - 60, FIRST_POLL + 45)
+@pytest.mark.parametrize(
+    ('checked_at', 'window'),
+    [(FIRST_POLL + 50, (FIRST_POLL - 60, FIRST_POLL + 50)), (FIRST_POLL + 40, (FIRST_POLL - 60, FIRST_POLL + 45))],
+    ids=['until_the_watch_read_what_teplo_stamped', 'at_least_to_the_second_poll'],
+)
+def test_teplo_window_runs_from_a_minute_before_the_first_poll_until_the_watch_read_the_stamps(
+    checked_at: float,
+    window: tuple[float, float],
+) -> None:
+    assert teplo_window(_pair(STATE, span=45.0), checked_at) == window
 
 
 @pytest.mark.parametrize(

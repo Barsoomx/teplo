@@ -45,8 +45,8 @@ def source_change(pair: ReadingPair[ClimateUnitState]) -> ManualChange | None:
     return None if change.is_empty else change
 
 
-def teplo_window[TState](pair: ReadingPair[TState]) -> tuple[float, float]:
-    return pair.before_moment - WRITE_SETTLE.total_seconds(), pair.after_moment
+def teplo_window[TState](pair: ReadingPair[TState], checked_at: float) -> tuple[float, float]:
+    return pair.before_moment - WRITE_SETTLE.total_seconds(), max(pair.after_moment, checked_at)
 
 
 def _consecutive[TState](pair: ReadingPair[TState]) -> bool:

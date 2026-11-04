@@ -91,6 +91,16 @@ def f_convector() -> Load:
 
 
 @pytest.fixture
+def held_kitchen(f_kitchen: Load) -> None:
+    Zone.objects.filter(load=f_kitchen).update(manual_until=SHED_AT + timedelta(hours=1))
+
+
+@pytest.fixture
+def held_convector(f_convector: Load) -> None:
+    HeatSource.objects.filter(load=f_convector).update(manual_until=SHED_AT + timedelta(hours=1))
+
+
+@pytest.fixture
 def f_plug() -> Device:
     return DeviceFactory.create(slug='plug-boiler-2f', kind=DeviceKind.PLUG, driver=DeviceDriver.TUYA_SWITCHABLE_PLUG)
 
@@ -261,6 +271,35 @@ def test_marked_hand_back_of_a_floor_is_read_back() -> None:
     LoadRepository.mark_shed('kitchen', hand_back)
 
     assert LoadRepository.all_records() == [replace(KITCHEN, shed=hand_back)]
+
+
+@pytest.mark.usefixtures('held_kitchen', 'held_convector')
+@pytest.mark.parametrize(
+    ('load', 'device', 'holds'),
+    [
+        ('kitchen', 'thermostat-kitchen', (None, SHED_AT + timedelta(hours=1))),
+        ('convector-office', 'heater-office', (SHED_AT + timedelta(hours=1), None)),
+    ],
+    ids=['zone', 'heat_source'],
+)
+def test_stored_live_shed_ends_the_hold_by_hand_of_what_its_load_controls(
+    load: str,
+    device: str,
+    holds: tuple[datetime | None, datetime | None],
+) -> None:
+    LoadRepository.mark_shed(load, replace(OVERLOAD_SHED, was_on=None, device=device))
+
+    assert (Zone.objects.get().manual_until, HeatSource.objects.get().manual_until) == holds
+
+
+@pytest.mark.usefixtures('held_kitchen')
+def test_stored_hand_back_of_a_floor_keeps_its_hold_by_hand() -> None:
+    LoadRepository.mark_shed(
+        'kitchen',
+        replace(OVERLOAD_SHED, was_on=None, device='thermostat-kitchen', handed_back=True),
+    )
+
+    assert Zone.objects.get().manual_until == SHED_AT + timedelta(hours=1)
 
 
 @pytest.mark.usefixtures('kitchen_shed_while_the_meter_was_lost')

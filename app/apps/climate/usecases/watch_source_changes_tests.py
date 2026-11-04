@@ -6,6 +6,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from django.db import OperationalError
+from structlog.testing import capture_logs
 
 from apps.climate.domain.events import SourceManualChange
 from apps.climate.domain.heat_sources import HeatSourceKind, SourceSettings
@@ -99,6 +100,13 @@ def written_by_teplo(writes: KeyedWriteGate) -> KeyedWriteGate:
 
 
 @pytest.fixture
+def written_after_the_second_poll(clock: MonotonicClockStub, writes: KeyedWriteGate) -> KeyedWriteGate:
+    clock.advance(5)
+    writes.reserve('convector-office', NOW, stamped_at=None, read_at=SECOND_POLL + 5, interval=INTERVAL)
+    return writes
+
+
+@pytest.fixture
 def f_holds(request: pytest.FixtureRequest) -> SourceHoldStoreStub:
     return SourceHoldStoreStub(errors=getattr(request, 'param', {}))
 
@@ -113,6 +121,7 @@ def _use_case(
     holds: SourceHoldStoreStub,
     writes: KeyedWriteGate,
     events: list[DomainEvent],
+    clock: MonotonicClockStub,
     *,
     dry_run: bool = False,
 ) -> WatchSourceChangesUseCase:
@@ -122,6 +131,7 @@ def _use_case(
         sources=HeatSourceStoreStub(sources=[source], errors={}),
         holds=holds,
         writes=writes,
+        clock=clock,
         dry_run=dry_run,
         dispatcher=dispatcher,
     )
@@ -132,8 +142,9 @@ def f_live_use_case(
     f_holds: SourceHoldStoreStub,
     writes: KeyedWriteGate,
     f_events: list[DomainEvent],
+    clock: MonotonicClockStub,
 ) -> WatchSourceChangesUseCase:
-    return _use_case(LIVE_CONVECTOR, f_holds, writes, f_events)
+    return _use_case(LIVE_CONVECTOR, f_holds, writes, f_events, clock)
 
 
 @pytest.fixture
@@ -141,8 +152,9 @@ def f_watching_use_case(
     f_holds: SourceHoldStoreStub,
     writes: KeyedWriteGate,
     f_events: list[DomainEvent],
+    clock: MonotonicClockStub,
 ) -> WatchSourceChangesUseCase:
-    return _use_case(WATCHED_CONVECTOR, f_holds, writes, f_events)
+    return _use_case(WATCHED_CONVECTOR, f_holds, writes, f_events, clock)
 
 
 @pytest.fixture
@@ -150,8 +162,9 @@ def f_dry_run_use_case(
     f_holds: SourceHoldStoreStub,
     writes: KeyedWriteGate,
     f_events: list[DomainEvent],
+    clock: MonotonicClockStub,
 ) -> WatchSourceChangesUseCase:
-    return _use_case(LIVE_CONVECTOR, f_holds, writes, f_events, dry_run=True)
+    return _use_case(LIVE_CONVECTOR, f_holds, writes, f_events, clock, dry_run=True)
 
 
 @pytest.fixture
@@ -159,8 +172,29 @@ def f_use_case_after_a_write(
     f_holds: SourceHoldStoreStub,
     written_by_teplo: KeyedWriteGate,
     f_events: list[DomainEvent],
+    clock: MonotonicClockStub,
 ) -> WatchSourceChangesUseCase:
-    return _use_case(LIVE_CONVECTOR, f_holds, written_by_teplo, f_events)
+    return _use_case(LIVE_CONVECTOR, f_holds, written_by_teplo, f_events, clock)
+
+
+@pytest.fixture
+def f_use_case_after_a_write_since_the_second_poll(
+    f_holds: SourceHoldStoreStub,
+    written_after_the_second_poll: KeyedWriteGate,
+    f_events: list[DomainEvent],
+    clock: MonotonicClockStub,
+) -> WatchSourceChangesUseCase:
+    return _use_case(LIVE_CONVECTOR, f_holds, written_after_the_second_poll, f_events, clock)
+
+
+@pytest.fixture
+def f_overtaken_use_case(
+    writes: KeyedWriteGate,
+    f_events: list[DomainEvent],
+    clock: MonotonicClockStub,
+) -> WatchSourceChangesUseCase:
+    holds = SourceHoldStoreStub(errors={}, stamps={'convector-office': NOW})
+    return _use_case(LIVE_CONVECTOR, holds, writes, f_events, clock)
 
 
 def test_setpoint_changed_on_a_live_source_holds_it_for_two_hours(
@@ -215,14 +249,34 @@ def test_level_changed_on_a_source_is_no_manual_change(
     assert (output, f_events) == (WatchSourceChangesOutputDTO(held=(), journaled=()), [])
 
 
+@pytest.mark.parametrize(
+    'use_case',
+    ['f_use_case_after_a_write', 'f_use_case_after_a_write_since_the_second_poll'],
+    ids=['written_before_the_second_poll', 'written_after_the_second_poll_before_the_watch_read_the_sources'],
+)
 def test_change_that_follows_a_write_of_teplo_is_not_taken_for_the_owner(
-    f_use_case_after_a_write: WatchSourceChangesUseCase,
+    use_case: str,
+    request: pytest.FixtureRequest,
     f_holds: SourceHoldStoreStub,
     f_events: list[DomainEvent],
 ) -> None:
-    output = f_use_case_after_a_write.execute(_changed(replace(AT_22, target=Decimal(19))))
+    output = request.getfixturevalue(use_case).execute(_changed(replace(AT_22, target=Decimal(19))))
 
     assert (output, f_holds.holds, f_events) == (WatchSourceChangesOutputDTO(held=(), journaled=()), [], [])
+
+
+def test_change_on_a_source_teplo_stamped_since_the_watch_read_it_is_neither_held_nor_journaled(
+    f_overtaken_use_case: WatchSourceChangesUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    with capture_logs() as logs:
+        output = f_overtaken_use_case.execute(_changed(replace(AT_22, target=Decimal(25))))
+
+    assert (output, f_events, [log for log in logs if log['event'] == 'source_manual_hold_overtaken']) == (
+        WatchSourceChangesOutputDTO(held=(), journaled=()),
+        [],
+        [{'event': 'source_manual_hold_overtaken', 'log_level': 'info', 'source': 'convector-office'}],
+    )
 
 
 @pytest.mark.parametrize('f_holds', [{'convector-office': OperationalError('database is locked')}], indirect=True)

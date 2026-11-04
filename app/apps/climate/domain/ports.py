@@ -39,7 +39,7 @@ class ZoneBoostStore(Protocol):
 
 
 class ZoneHoldStore(Protocol):
-    def hold_by_hand(self, slug: str, until: datetime) -> None: ...
+    def hold_by_hand(self, slug: str, until: datetime, *, stamped_at: datetime | None) -> bool: ...
 
 
 class ClimateGatesStore(Protocol):
@@ -83,7 +83,7 @@ class HeatSourceStore(Protocol):
 
 
 class SourceHoldStore(Protocol):
-    def hold_by_hand(self, slug: str, until: datetime) -> None: ...
+    def hold_by_hand(self, slug: str, until: datetime, *, stamped_at: datetime | None) -> bool: ...
 
 
 class SourceLoadGate(Protocol):

@@ -91,6 +91,7 @@ def _use_case(
     holds: ZoneHoldStoreStub,
     writes: KeyedWriteGate,
     events: list[DomainEvent],
+    clock: MonotonicClockStub,
     *,
     live: bool,
 ) -> WatchThermostatChangesUseCase:
@@ -101,6 +102,7 @@ def _use_case(
         holds=holds,
         gates=ClimateGatesStoreStub(gates=ClimateGates(manual_hold_live=live)),
         writes=writes,
+        clock=clock,
         dispatcher=dispatcher,
     )
 
@@ -109,7 +111,7 @@ def _written(clock: MonotonicClockStub, moment: float) -> KeyedWriteGate:
     writes = KeyedWriteGate(clock=clock, key_lock=threading.Lock)
     clock.advance(moment - clock())
     writes.reserve('kitchen', NOW, stamped_at=None, read_at=moment)
-    clock.advance(SECOND_POLL - moment)
+    clock.advance(max(SECOND_POLL, moment) - moment)
     return writes
 
 
@@ -138,8 +140,9 @@ def f_use_case(
     f_holds: ZoneHoldStoreStub,
     f_writes: KeyedWriteGate,
     f_events: list[DomainEvent],
+    f_clock: MonotonicClockStub,
 ) -> WatchThermostatChangesUseCase:
-    return _use_case(f_holds, f_writes, f_events, live=True)
+    return _use_case(f_holds, f_writes, f_events, f_clock, live=True)
 
 
 @pytest.fixture
@@ -147,8 +150,9 @@ def f_watching_use_case(
     f_holds: ZoneHoldStoreStub,
     f_writes: KeyedWriteGate,
     f_events: list[DomainEvent],
+    f_clock: MonotonicClockStub,
 ) -> WatchThermostatChangesUseCase:
-    return _use_case(f_holds, f_writes, f_events, live=False)
+    return _use_case(f_holds, f_writes, f_events, f_clock, live=False)
 
 
 @pytest.fixture
@@ -158,7 +162,17 @@ def f_use_case_after_a_write(
     f_events: list[DomainEvent],
 ) -> WatchThermostatChangesUseCase:
     clock = MonotonicClockStub(now=FIRST_POLL - 120)
-    return _use_case(f_holds, _written(clock, request.param), f_events, live=True)
+    return _use_case(f_holds, _written(clock, request.param), f_events, clock, live=True)
+
+
+@pytest.fixture
+def f_overtaken_use_case(
+    f_writes: KeyedWriteGate,
+    f_events: list[DomainEvent],
+    f_clock: MonotonicClockStub,
+) -> WatchThermostatChangesUseCase:
+    holds = ZoneHoldStoreStub(errors={}, stamps={'kitchen': NOW})
+    return _use_case(holds, f_writes, f_events, f_clock, live=True)
 
 
 @pytest.fixture
@@ -168,9 +182,13 @@ def f_held_use_case(f_use_case: WatchThermostatChangesUseCase) -> WatchThermosta
 
 
 @pytest.fixture
-def f_locked_use_case(f_writes: KeyedWriteGate, f_events: list[DomainEvent]) -> WatchThermostatChangesUseCase:
+def f_locked_use_case(
+    f_writes: KeyedWriteGate,
+    f_events: list[DomainEvent],
+    f_clock: MonotonicClockStub,
+) -> WatchThermostatChangesUseCase:
     holds = ZoneHoldStoreStub(errors={'kitchen': OperationalError(LOCKED)})
-    return _use_case(holds, f_writes, f_events, live=True)
+    return _use_case(holds, f_writes, f_events, f_clock, live=True)
 
 
 def test_change_made_on_a_thermostat_holds_its_zone_for_two_hours_and_is_journaled(
@@ -189,12 +207,13 @@ def test_change_made_on_a_thermostat_holds_its_zone_for_two_hours_and_is_journal
 
 @pytest.mark.parametrize(
     'f_use_case_after_a_write',
-    [FIRST_POLL - 60, FIRST_POLL - 30, FIRST_POLL + 10, SECOND_POLL],
+    [FIRST_POLL - 60, FIRST_POLL - 30, FIRST_POLL + 10, SECOND_POLL, SECOND_POLL + 5],
     ids=[
         'slot_taken_a_minute_before_the_first_poll',
         'slot_taken_before_the_first_poll',
         'slot_taken_between_the_polls',
         'slot_taken_as_the_second_poll_read',
+        'slot_taken_after_the_second_poll_before_the_watch_read_the_zones',
     ],
     indirect=True,
 )
@@ -255,6 +274,20 @@ def test_reading_that_is_no_change_of_a_zone_holds_nothing(
     output = f_use_case.execute(WatchThermostatChangesInputDTO(pairs=(pair,), now=NOW))
 
     assert (output, f_holds.holds, f_events) == (WatchThermostatChangesOutputDTO(held=(), journaled=()), [], [])
+
+
+def test_change_whose_zone_teplo_stamped_since_the_watch_read_it_is_neither_held_nor_journaled(
+    f_overtaken_use_case: WatchThermostatChangesUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    with capture_logs() as logs:
+        output = f_overtaken_use_case.execute(_changed())
+
+    assert (output, f_events, [log for log in logs if log['event'] == 'zone_manual_hold_overtaken']) == (
+        WatchThermostatChangesOutputDTO(held=(), journaled=()),
+        [],
+        [{'event': 'zone_manual_hold_overtaken', 'log_level': 'info', 'zone': 'kitchen'}],
+    )
 
 
 def test_hold_the_database_refuses_is_logged_and_journals_nothing_while_other_zones_are_held(

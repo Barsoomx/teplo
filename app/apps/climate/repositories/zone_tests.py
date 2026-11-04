@@ -367,15 +367,37 @@ def test_all_settings_read_the_end_of_a_hold_by_hand() -> None:
 
 
 def test_hold_by_hand_stores_its_end_and_leaves_the_stamps(f_commanded_zone: Zone) -> None:
-    ZoneRepository.hold_by_hand(f_commanded_zone.slug, NOW + timedelta(hours=2))
+    held = ZoneRepository.hold_by_hand(
+        f_commanded_zone.slug,
+        NOW + timedelta(hours=2),
+        stamped_at=NOW - timedelta(minutes=5),
+    )
 
     zone = Zone.objects.get(pk=f_commanded_zone.pk)
-    assert (zone.manual_until, zone.last_command_at) == (NOW + timedelta(hours=2), NOW - timedelta(minutes=5))
+    assert (held, zone.manual_until, zone.last_command_at) == (
+        True,
+        NOW + timedelta(hours=2),
+        NOW - timedelta(minutes=5),
+    )
+
+
+@pytest.mark.parametrize(
+    'stamped_at',
+    [None, NOW - timedelta(minutes=35)],
+    ids=['before_its_first_write', 'before_its_last_write'],
+)
+def test_hold_by_hand_of_a_zone_teplo_stamped_since_it_was_read_stores_nothing(
+    f_commanded_zone: Zone,
+    stamped_at: datetime | None,
+) -> None:
+    held = ZoneRepository.hold_by_hand(f_commanded_zone.slug, NOW + timedelta(hours=2), stamped_at=stamped_at)
+
+    assert (held, Zone.objects.get(pk=f_commanded_zone.pk).manual_until) == (False, None)
 
 
 def test_hold_by_hand_of_an_unknown_zone_raises() -> None:
     with pytest.raises(ZoneNotFoundError):
-        ZoneRepository.hold_by_hand('attic', NOW)
+        ZoneRepository.hold_by_hand('attic', NOW, stamped_at=None)
 
 
 def test_mark_shed_stamps_the_write_and_ends_a_hold_by_hand(f_held_zone: Zone) -> None:

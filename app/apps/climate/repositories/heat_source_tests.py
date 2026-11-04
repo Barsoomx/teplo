@@ -198,7 +198,7 @@ def test_marked_command_stores_its_stamp_and_what_teplo_commanded() -> None:
 
 @pytest.mark.usefixtures('f_house')
 def test_shed_stamps_the_source_switches_it_off_and_ends_its_hold() -> None:
-    HeatSourceRepository.hold_by_hand('heater-office', COMMANDED_AT + timedelta(hours=2))
+    HeatSourceRepository.hold_by_hand('heater-office', COMMANDED_AT + timedelta(hours=2), stamped_at=None)
     HeatSourceRepository.mark_shed('heater-office', COMMANDED_AT)
 
     settings = HeatSourceRepository.commanded_settings()[0]
@@ -207,11 +207,25 @@ def test_shed_stamps_the_source_switches_it_off_and_ends_its_hold() -> None:
 
 @pytest.mark.usefixtures('f_house')
 def test_hold_by_hand_stores_its_end() -> None:
-    HeatSourceRepository.hold_by_hand('heater-office', COMMANDED_AT + timedelta(hours=2))
+    held = HeatSourceRepository.hold_by_hand('heater-office', COMMANDED_AT + timedelta(hours=2), stamped_at=None)
 
-    assert HeatSourceRepository.commanded_settings()[0].manual_until == COMMANDED_AT + timedelta(hours=2)
+    assert (held, HeatSourceRepository.commanded_settings()[0].manual_until) == (
+        True,
+        COMMANDED_AT + timedelta(hours=2),
+    )
+
+
+@pytest.mark.usefixtures('f_house')
+def test_hold_by_hand_of_a_source_teplo_stamped_since_it_was_read_stores_nothing() -> None:
+    held = HeatSourceRepository.hold_by_hand(
+        'heater-office',
+        COMMANDED_AT + timedelta(hours=2),
+        stamped_at=COMMANDED_AT - timedelta(minutes=10),
+    )
+
+    assert (held, HeatSourceRepository.commanded_settings()[0].manual_until) == (False, None)
 
 
 def test_hold_by_hand_of_a_source_that_is_gone_raises() -> None:
     with pytest.raises(HeatSourceNotFoundError):
-        HeatSourceRepository.hold_by_hand('heater-office', COMMANDED_AT)
+        HeatSourceRepository.hold_by_hand('heater-office', COMMANDED_AT, stamped_at=None)
