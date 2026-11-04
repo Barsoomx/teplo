@@ -2107,6 +2107,26 @@ def f_overridden_cycle(
 
 
 @pytest.fixture
+def f_guests_stepped_down_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_living_room_thermostat: FloorThermostatStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    climate = _open_space(
+        guest_room=True,
+        override_target=Decimal('21.5'),
+        override_until=NIGHT + timedelta(hours=1),
+        override_source='panel',
+    )
+    _open_space_zone(climate, kind=ZoneKind.FLOOR)
+    ClimateSettingsFactory.create(guests_until=GUESTS_LEAVE)
+    store.record_state(LIVING_ROOM, _state('28.0'))
+    return _use_case(store, temperatures, {LIVING_ROOM: f_living_room_thermostat}, book, dispatcher)
+
+
+@pytest.fixture
 def f_recently_written_overridden_cycle(
     store: ThermostatStateStore,
     temperatures: TemperatureStateStore,
@@ -2182,11 +2202,18 @@ def test_guests_hold_a_guest_room_floor_at_comfort_through_the_night(
         ((MORNING, '22.5', '28.0'), MORNING, [('setpoint', Decimal('30.0'))]),
         ((MORNING, '21.5', '28.0'), MORNING, [('setpoint', Decimal('22.0'))]),
         ((MORNING, '22.0', '28.0'), MORNING, []),
+        ((PREHEAT, '20.0', '28.0'), PREHEAT, []),
     ],
-    ids=['night_up_to_comfort', 'comfort_up_to_boost', 'comfort_down_to_night', 'equal_keeps_comfort'],
+    ids=[
+        'night_up_to_comfort',
+        'comfort_up_to_boost',
+        'comfort_down_to_night',
+        'equal_keeps_comfort',
+        'step_up_from_the_setback_keeps_a_preheat',
+    ],
     indirect=['f_overridden_cycle'],
 )
-def test_override_above_the_schedule_raises_the_floor_one_setpoint_and_below_lowers_it(
+def test_override_moves_the_floor_one_setpoint_only_the_way_it_moves_the_room(
     f_overridden_cycle: RunHeatingCycleUseCase,
     f_living_room_thermostat: FloorThermostatStub,
     now: datetime,
@@ -2195,6 +2222,18 @@ def test_override_above_the_schedule_raises_the_floor_one_setpoint_and_below_low
     f_overridden_cycle.execute(_at(now))
 
     assert f_living_room_thermostat.commands == commands
+
+
+def test_a_step_down_from_guests_takes_the_floor_to_its_night_setpoint(
+    f_guests_stepped_down_cycle: RunHeatingCycleUseCase,
+    f_living_room_thermostat: FloorThermostatStub,
+) -> None:
+    output = f_guests_stepped_down_cycle.execute(_at(NIGHT))
+
+    assert (output.outcomes, f_living_room_thermostat.commands) == (
+        {'living-room': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('22.0'))],
+    )
 
 
 def test_override_reaches_the_floor_at_its_next_allowed_write_only(

@@ -14,6 +14,7 @@ from apps.climate.domain.modes import AirState, ScheduleMode, ZoneKind
 from apps.climate.domain.optimal_start import OptimalStartSettings, PreheatStart
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
+from apps.climate.domain.zone_intent import ForcedTarget
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
@@ -49,7 +50,7 @@ def _plan(
     learning: ZoneLearningRecord = UNLEARNED,
     clock_trusted: bool = True,
     dry_run: bool = False,
-    forced_target: Decimal | None = None,
+    forced: tuple[ForcedTarget, ...] = (),
 ) -> AirPlan:
     return plan_air(
         zone,
@@ -62,8 +63,12 @@ def _plan(
         now=now,
         clock_trusted=clock_trusted,
         dry_run=dry_run,
-        forced_target=forced_target,
+        forced=forced,
     )
+
+
+def _over(target: str, beneath: str) -> ForcedTarget:
+    return ForcedTarget(target=Decimal(target), beneath=Decimal(beneath))
 
 
 @pytest.fixture
@@ -133,21 +138,33 @@ def test_plan_idles_at_night_air_target(f_zone: ZoneSettings) -> None:
 @pytest.mark.parametrize(
     ('now', 'clock_trusted', 'forced', 'air', 'expected'),
     [
-        (NIGHT, True, Decimal('22.5'), '19.4', (ScheduleMode.NIGHT, Decimal('22.5'), AirState.HEAT, HEAT)),
-        (MORNING, True, Decimal('21.0'), '21.6', (ScheduleMode.COMFORT, Decimal('21.0'), AirState.IDLE, IDLE)),
-        (NIGHT, False, Decimal('20.0'), '21.0', (ScheduleMode.NIGHT, Decimal('20.0'), AirState.IDLE, IDLE)),
+        (NIGHT, True, _over('22.5', '19.5'), '19.4', (ScheduleMode.NIGHT, Decimal('22.5'), AirState.HEAT, HEAT)),
+        (MORNING, True, _over('21.0', '22.0'), '21.6', (ScheduleMode.COMFORT, Decimal('21.0'), AirState.IDLE, IDLE)),
+        (NIGHT, False, _over('20.0', '22.0'), '21.0', (ScheduleMode.NIGHT, Decimal('20.0'), AirState.IDLE, IDLE)),
+        (
+            COMFORT_AT - timedelta(hours=3),
+            True,
+            _over('20.0', '19.5'),
+            '20.4',
+            (ScheduleMode.PREHEAT, Decimal('22.0'), AirState.HEAT, HEAT),
+        ),
     ],
-    ids=['above_the_night_target', 'below_the_comfort_target', 'on_an_untrusted_clock'],
+    ids=[
+        'above_the_night_target',
+        'below_the_comfort_target',
+        'on_an_untrusted_clock',
+        'step_up_from_the_setback_keeps_the_preheat_target',
+    ],
 )
-def test_forced_target_replaces_the_scheduled_target(
+def test_forced_target_replaces_the_scheduled_target_it_moves_the_room_s_way(
     f_zone: ZoneSettings,
     now: datetime,
     clock_trusted: bool,
-    forced: Decimal,
+    forced: ForcedTarget,
     air: str,
     expected: tuple[ScheduleMode, Decimal, AirState, ThermostatTarget],
 ) -> None:
-    plan = _plan(f_zone, now, air, clock_trusted=clock_trusted, forced_target=forced)
+    plan = _plan(f_zone, now, air, clock_trusted=clock_trusted, forced=(forced,))
 
     assert (plan.mode, plan.target, plan.state, plan.thermostat) == expected
 

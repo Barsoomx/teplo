@@ -379,7 +379,7 @@ class GetPanelOverviewUseCase(BaseUseCase[GetPanelOverviewInputDTO, GetPanelOver
         writes_live = zone.live_control and not self._dry_run
         conditions = ZoneConditions(air=_temperature(air), learning=learning, intent=intent, writes_live=writes_live)
         decision = decide_zone(zone, self._book.zone(zone.slug), conditions, cycle)
-        forced = intent.target is not None
+        forced = bool(intent.forced)
         boosted = zone.is_boosted(cycle.now)
         regime = _regime(zone, decision.mode, boosted=boosted, clock_trusted=cycle.clock_trusted, forced=forced)
         lead = _schedule_lead(zone, decision)

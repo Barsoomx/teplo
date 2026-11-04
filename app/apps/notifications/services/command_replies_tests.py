@@ -44,7 +44,7 @@ OPEN_SPACE = RoomStatus(
         reason=IntentReason.COMFORT,
         target=Decimal('22.0'),
         until=datetime(2026, 11, 4, 23, 30, tzinfo=MOSCOW),
-        forced=False,
+        forced=(),
     ),
     adjustable=True,
     guest_room=True,

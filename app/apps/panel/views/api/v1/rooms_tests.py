@@ -10,6 +10,7 @@ import pytest
 from django.test import Client
 
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, RoomComfortOverview
 
 pytestmark = pytest.mark.django_db
@@ -58,14 +59,14 @@ def comfort_overview(house_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
         reason=IntentReason.OVERRIDE,
         target=Decimal('22.5'),
         until=MANUAL_UNTIL,
-        forced=True,
+        forced=(ForcedTarget(target=Decimal('22.5'), beneath=Decimal('22.0')),),
     )
     bedroom_intent = RoomIntent(
         room='bedroom',
         reason=IntentReason.SETBACK,
         target=Decimal('19.5'),
         until=None,
-        forced=False,
+        forced=(),
     )
     return replace(
         house_overview,

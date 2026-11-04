@@ -8,7 +8,13 @@ import pytest
 from apps.climate.domain.floor_policy import ThermostatTarget
 from apps.climate.domain.modes import ScheduleMode, ZoneKind
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
-from apps.climate.domain.zone_intent import FloorDecision, decide_floor_mode, forced_air_mode
+from apps.climate.domain.zone_intent import (
+    FloorDecision,
+    ForcedTarget,
+    decide_floor_mode,
+    forced_air_mode,
+    forced_air_target,
+)
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 NIGHT = datetime(2026, 11, 2, 1, 0, tzinfo=MOSCOW)
@@ -43,48 +49,93 @@ COMFORT = ThermostatTarget(power=True, setpoint=Decimal('28.0'))
 NIGHT_SETPOINT = ThermostatTarget(power=True, setpoint=Decimal('22.0'))
 BOOST = ThermostatTarget(power=True, setpoint=Decimal('30.0'))
 OFF = ThermostatTarget(power=False, setpoint=None)
+GUESTS_AT_NIGHT = ForcedTarget(target=Decimal('22.0'), beneath=Decimal('19.5'))
+
+
+def _over(target: str, beneath: str) -> ForcedTarget:
+    return ForcedTarget(target=Decimal(target), beneath=Decimal(beneath))
 
 
 @pytest.mark.parametrize(
     ('zone', 'forced', 'now', 'clock_trusted', 'expected'),
     [
-        (ZONE, Decimal('20.0'), NIGHT, True, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
-        (ZONE, Decimal('22.5'), MORNING, True, FloorDecision(mode=ScheduleMode.COMFORT, target=BOOST)),
-        (ZONE, Decimal('22.5'), PREHEAT, True, FloorDecision(mode=ScheduleMode.PREHEAT, target=BOOST)),
-        (ZONE, Decimal('21.5'), MORNING, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
-        (ZONE, Decimal('21.5'), PREHEAT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
-        (ZONE, Decimal('19.0'), NIGHT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
-        (ZONE, Decimal('22.0'), MORNING, True, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
-        (ZONE, Decimal('19.5'), NIGHT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
+        (ZONE, (_over('20.0', '19.5'),), NIGHT, True, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
+        (ZONE, (_over('22.5', '22.0'),), MORNING, True, FloorDecision(mode=ScheduleMode.COMFORT, target=BOOST)),
+        (ZONE, (_over('22.5', '19.5'),), PREHEAT, True, FloorDecision(mode=ScheduleMode.PREHEAT, target=BOOST)),
+        (
+            ZONE,
+            (_over('21.5', '22.0'),),
+            MORNING,
+            True,
+            FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT),
+        ),
+        (ZONE, (_over('20.0', '19.5'),), PREHEAT, True, FloorDecision(mode=ScheduleMode.PREHEAT, target=COMFORT)),
+        (
+            ZONE,
+            (_over('19.0', '19.5'),),
+            PREHEAT,
+            True,
+            FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT),
+        ),
+        (ZONE, (_over('19.0', '19.5'),), NIGHT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
+        (ZONE, (_over('22.0', '22.0'),), MORNING, True, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
+        (ZONE, (_over('19.5', '19.5'),), NIGHT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
+        (ZONE, (GUESTS_AT_NIGHT,), NIGHT, True, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
+        (ZONE, (GUESTS_AT_NIGHT,), PREHEAT, True, FloorDecision(mode=ScheduleMode.PREHEAT, target=COMFORT)),
+        (
+            ZONE,
+            (GUESTS_AT_NIGHT, _over('21.5', '22.0')),
+            NIGHT,
+            True,
+            FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT),
+        ),
+        (
+            ZONE,
+            (GUESTS_AT_NIGHT, _over('22.5', '22.0')),
+            NIGHT,
+            True,
+            FloorDecision(mode=ScheduleMode.COMFORT, target=BOOST),
+        ),
         (
             replace(ZONE, boost_until=MORNING + timedelta(hours=1)),
-            Decimal('19.0'),
+            (_over('19.0', '22.0'),),
             MORNING,
             True,
             FloorDecision(mode=ScheduleMode.COMFORT, target=BOOST),
         ),
         (
             replace(ZONE, heating_enabled=False),
-            Decimal('23.0'),
+            (_over('23.0', '19.5'),),
             NIGHT,
             True,
             FloorDecision(mode=ScheduleMode.NIGHT, target=OFF),
         ),
-        (ZONE, None, NIGHT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
-        (ZONE, None, NIGHT, False, FloorDecision(mode=ScheduleMode.NIGHT, target=COMFORT)),
-        (ZONE, Decimal('22.5'), NIGHT, False, FloorDecision(mode=ScheduleMode.COMFORT, target=BOOST)),
-        (ZONE, Decimal('21.0'), NIGHT, False, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
-        (ZONE, Decimal('22.0'), NIGHT, False, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
+        (ZONE, (), NIGHT, True, FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT)),
+        (ZONE, (), NIGHT, False, FloorDecision(mode=ScheduleMode.NIGHT, target=COMFORT)),
+        (ZONE, (_over('22.5', '22.0'),), NIGHT, False, FloorDecision(mode=ScheduleMode.COMFORT, target=BOOST)),
+        (
+            ZONE,
+            (_over('21.0', '22.0'),),
+            NIGHT,
+            False,
+            FloorDecision(mode=ScheduleMode.NIGHT, target=NIGHT_SETPOINT),
+        ),
+        (ZONE, (_over('22.0', '22.0'),), NIGHT, False, FloorDecision(mode=ScheduleMode.COMFORT, target=COMFORT)),
     ],
     ids=[
         'night_and_above_goes_to_comfort',
         'comfort_and_above_goes_to_boost',
-        'preheat_and_above_goes_to_boost',
+        'preheat_and_above_both_goes_to_boost',
         'comfort_and_below_goes_to_night',
-        'preheat_and_below_goes_to_night',
+        'step_up_from_the_setback_keeps_a_preheat',
+        'preheat_and_below_both_goes_to_night',
         'night_and_below_stays_at_night',
         'equal_in_comfort_keeps_comfort',
         'equal_at_night_keeps_night',
+        'guests_hold_comfort_at_night',
+        'guests_leave_a_preheat_as_it_is',
+        'step_down_from_guests_goes_to_night',
+        'step_up_from_guests_goes_to_boost',
         'boost_keeps_its_setpoint',
         'heating_off_stays_off',
         'nothing_forced_keeps_the_schedule',
@@ -94,14 +145,45 @@ OFF = ThermostatTarget(power=False, setpoint=None)
         'untrusted_clock_and_equal_holds_comfort',
     ],
 )
-def test_forced_target_moves_a_floor_one_setpoint_up_or_down_from_the_schedules(
+def test_forced_target_moves_a_floor_one_setpoint_only_the_way_it_moves_the_room(
     zone: ZoneSettings,
-    forced: Decimal | None,
+    forced: tuple[ForcedTarget, ...],
     now: datetime,
     clock_trusted: bool,
     expected: FloorDecision,
 ) -> None:
     assert decide_floor_mode(zone, forced, now, clock_trusted=clock_trusted) == expected
+
+
+@pytest.mark.parametrize(
+    ('own', 'forced', 'expected'),
+    [
+        (Decimal('19.5'), (_over('20.0', '19.5'),), Decimal('20.0')),
+        (Decimal('22.0'), (_over('20.0', '19.5'),), Decimal('22.0')),
+        (Decimal('22.0'), (_over('19.0', '19.5'),), Decimal('19.0')),
+        (Decimal('22.0'), (_over('21.5', '22.0'),), Decimal('21.5')),
+        (Decimal('22.0'), (_over('22.0', '22.0'),), Decimal('22.0')),
+        (Decimal('19.5'), (GUESTS_AT_NIGHT,), Decimal('22.0')),
+        (Decimal('19.5'), (GUESTS_AT_NIGHT, _over('21.5', '22.0')), Decimal('21.5')),
+        (Decimal('19.5'), (), Decimal('19.5')),
+    ],
+    ids=[
+        'step_up_at_night',
+        'step_up_from_the_setback_keeps_a_preheat_target',
+        'step_down_from_the_setback_lowers_a_preheat_target',
+        'step_down_in_comfort',
+        'equal_keeps_the_target',
+        'guests_at_night',
+        'step_down_from_guests',
+        'nothing_forced',
+    ],
+)
+def test_forced_air_target_replaces_a_zone_s_own_target_only_the_way_it_moves_the_room(
+    own: Decimal,
+    forced: tuple[ForcedTarget, ...],
+    expected: Decimal,
+) -> None:
+    assert forced_air_target(own, forced) == expected
 
 
 @pytest.mark.parametrize(

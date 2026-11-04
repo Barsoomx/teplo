@@ -108,7 +108,7 @@ class RoomStatusReader:
         if status.air_path:
             return status
 
-        target = decide_floor_mode(zone, intent.target, now, clock_trusted=clock_trusted).target
+        target = decide_floor_mode(zone, intent.forced, now, clock_trusted=clock_trusted).target
         if intent.backup:
             target = apply_backup_heat(target, zone.setpoints)
         return replace(

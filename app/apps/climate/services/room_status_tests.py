@@ -8,6 +8,7 @@ from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.modes import ZoneKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.factories import ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
@@ -164,7 +165,7 @@ def test_rooms_give_each_room_s_target_and_what_each_floor_takes_and_when(f_read
                 reason=IntentReason.OVERRIDE,
                 target=Decimal('23.0'),
                 until=OVERRIDE_ENDS,
-                forced=True,
+                forced=(ForcedTarget(target=Decimal('23.0'), beneath=Decimal('22.0')),),
             ),
             adjustable=True,
             guest_room=False,
@@ -216,7 +217,7 @@ def test_rooms_give_each_room_s_target_and_what_each_floor_takes_and_when(f_read
                 reason=IntentReason.COMFORT,
                 target=Decimal('22.0'),
                 until=COMFORT_ENDS,
-                forced=False,
+                forced=(),
             ),
             adjustable=False,
             guest_room=False,
@@ -244,7 +245,7 @@ def test_rooms_give_each_room_s_target_and_what_each_floor_takes_and_when(f_read
                 reason=IntentReason.SETBACK,
                 target=Decimal('19.5'),
                 until=None,
-                forced=False,
+                forced=(),
             ),
             adjustable=False,
             guest_room=False,
@@ -259,7 +260,7 @@ def test_rooms_give_each_room_s_target_and_what_each_floor_takes_and_when(f_read
                 reason=IntentReason.SETBACK,
                 target=Decimal('19.5'),
                 until=None,
-                forced=False,
+                forced=(),
             ),
             adjustable=False,
             guest_room=False,

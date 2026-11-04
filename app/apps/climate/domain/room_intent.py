@@ -10,7 +10,7 @@ from apps.climate.domain.room_climate import RoomClimateSettings
 from apps.climate.domain.schedule import next_comfort_start, next_transition, resolve_mode
 from apps.climate.domain.zone import AirTargets, ZoneSettings
 from apps.climate.domain.zone_config import tenths
-from apps.climate.domain.zone_intent import ZoneIntent
+from apps.climate.domain.zone_intent import ForcedTarget, ZoneIntent
 from apps.core.domain.settings import SettingProblem
 
 OVERRIDE_DURATION = timedelta(hours=2)
@@ -46,7 +46,7 @@ class RoomIntent:
     reason: IntentReason
     target: Decimal
     until: datetime | None
-    forced: bool
+    forced: tuple[ForcedTarget, ...]
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -64,12 +64,9 @@ class RoomIntents:
         return self.by_room.get(room)
 
     def zone_intent(self, zone: ZoneSettings, *, backed_up: frozenset[str]) -> ZoneIntent:
-        backup = zone.slug in backed_up
         intent = None if zone.room_slug is None else self.of(zone.room_slug)
-        if intent is None or not intent.forced:
-            return ZoneIntent(target=None, backup=backup, learns=True)
-
-        return ZoneIntent(target=intent.target, backup=backup, learns=False)
+        forced = () if intent is None else intent.forced
+        return ZoneIntent(forced=forced, backup=zone.slug in backed_up, learns=not forced)
 
 
 def resolve_room_intent(
@@ -79,50 +76,17 @@ def resolve_room_intent(
     clock_trusted: bool,
     guests_until: datetime | None,
 ) -> RoomIntent:
+    beneath = _beneath_override(room, now=now, clock_trusted=clock_trusted, guests_until=guests_until)
     override = room.override
-    if override is not None and now < override.until <= now + OVERRIDE_DURATION:
-        return RoomIntent(
-            room=room.slug,
-            reason=IntentReason.OVERRIDE,
-            target=override.target,
-            until=override.until,
-            forced=True,
-        )
-
-    if not clock_trusted:
-        return RoomIntent(
-            room=room.slug,
-            reason=IntentReason.CLOCK,
-            target=room.targets.comfort,
-            until=None,
-            forced=False,
-        )
-
-    if room.guest_room and guests_active(guests_until, now):
-        return RoomIntent(
-            room=room.slug,
-            reason=IntentReason.GUESTS,
-            target=room.targets.comfort,
-            until=guests_until,
-            forced=True,
-        )
-
-    if resolve_mode(room.windows, now, NO_LEAD) is ScheduleMode.COMFORT:
-        transition = next_transition(room.windows, now, NO_LEAD)
-        return RoomIntent(
-            room=room.slug,
-            reason=IntentReason.COMFORT,
-            target=room.targets.comfort,
-            until=None if transition is None else transition.at,
-            forced=False,
-        )
+    if override is None or not now < override.until <= now + OVERRIDE_DURATION:
+        return beneath
 
     return RoomIntent(
         room=room.slug,
-        reason=IntentReason.SETBACK,
-        target=room.targets.night,
-        until=next_comfort_start(room.windows, now),
-        forced=False,
+        reason=IntentReason.OVERRIDE,
+        target=override.target,
+        until=override.until,
+        forced=(*beneath.forced, ForcedTarget(target=override.target, beneath=beneath.target)),
     )
 
 
@@ -175,3 +139,52 @@ def guests_end(now: datetime, nights: int, end_hour: int) -> datetime:
     first_day = now.date() if now.hour < GUESTS_NIGHT_ENDS_HOUR else now.date() + DAY
     end = datetime.combine(first_day + (nights - 1) * DAY, time(end_hour), tzinfo=now.tzinfo)
     return end if end > now else end + DAY
+
+
+def _beneath_override(
+    room: RoomClimateSettings,
+    *,
+    now: datetime,
+    clock_trusted: bool,
+    guests_until: datetime | None,
+) -> RoomIntent:
+    if not clock_trusted:
+        return RoomIntent(
+            room=room.slug,
+            reason=IntentReason.CLOCK,
+            target=room.targets.comfort,
+            until=None,
+            forced=(),
+        )
+
+    scheduled = _scheduled(room, now)
+    if not room.guest_room or not guests_active(guests_until, now):
+        return scheduled
+
+    return RoomIntent(
+        room=room.slug,
+        reason=IntentReason.GUESTS,
+        target=room.targets.comfort,
+        until=guests_until,
+        forced=(ForcedTarget(target=room.targets.comfort, beneath=scheduled.target),),
+    )
+
+
+def _scheduled(room: RoomClimateSettings, now: datetime) -> RoomIntent:
+    if resolve_mode(room.windows, now, NO_LEAD) is ScheduleMode.COMFORT:
+        transition = next_transition(room.windows, now, NO_LEAD)
+        return RoomIntent(
+            room=room.slug,
+            reason=IntentReason.COMFORT,
+            target=room.targets.comfort,
+            until=None if transition is None else transition.at,
+            forced=(),
+        )
+
+    return RoomIntent(
+        room=room.slug,
+        reason=IntentReason.SETBACK,
+        target=room.targets.night,
+        until=next_comfort_start(room.windows, now),
+        forced=(),
+    )

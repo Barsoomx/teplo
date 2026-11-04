@@ -70,9 +70,9 @@ def decide_zone(
 ) -> ZoneDecision:
     path = resolve_control_path(zone, air_available=conditions.air is not None)
     plan = None if conditions.air is None else _plan(zone, memory, path, conditions.air, conditions, cycle)
-    forced = conditions.intent.target
+    forced = conditions.intent.forced
     if plan is not None and path is ControlPath.AIR:
-        mode = plan.mode if forced is None else forced_air_mode(zone, forced)
+        mode = forced_air_mode(zone, plan.target) if forced else plan.mode
         target = plan.thermostat
     else:
         floor = decide_floor_mode(zone, forced, cycle.now, clock_trusted=cycle.clock_trusted)
@@ -197,7 +197,7 @@ def _plan(
         now=cycle.now,
         clock_trusted=cycle.clock_trusted,
         dry_run=path is ControlPath.AIR_DRY_RUN,
-        forced_target=conditions.intent.target,
+        forced=conditions.intent.forced,
     )
 
 

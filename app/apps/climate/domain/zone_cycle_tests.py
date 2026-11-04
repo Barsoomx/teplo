@@ -25,7 +25,7 @@ from apps.climate.domain.zone_cycle import (
     follow_zone,
     hold_air_dry_run,
 )
-from apps.climate.domain.zone_intent import NO_INTENT, ZoneIntent
+from apps.climate.domain.zone_intent import NO_INTENT, ForcedTarget, ZoneIntent
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 COMFORT_AT = datetime(2026, 11, 2, 6, 30, tzinfo=MOSCOW)
@@ -81,8 +81,12 @@ def _conditions(
     )
 
 
-def _forced(target: str, *, backup: bool = False) -> ZoneIntent:
-    return ZoneIntent(target=Decimal(target), backup=backup, learns=False)
+def _forced(target: str, *, beneath: str = '22.0', backup: bool = False) -> ZoneIntent:
+    return ZoneIntent(
+        forced=(ForcedTarget(target=Decimal(target), beneath=Decimal(beneath)),),
+        backup=backup,
+        learns=False,
+    )
 
 
 def _follow(
@@ -253,7 +257,7 @@ def test_live_air_zone_drives_air_actuation(f_live_zone: ZoneSettings) -> None:
 @pytest.mark.parametrize(
     ('intent', 'target'),
     [
-        (ZoneIntent(target=None, backup=True, learns=True), COMFORT),
+        (ZoneIntent(forced=(), backup=True, learns=True), COMFORT),
         (NO_INTENT, ThermostatTarget(power=True, setpoint=Decimal('22.0'))),
     ],
     ids=['backup_heat_raises_night_to_comfort', 'without_backup_heat_night_stays'],
@@ -329,7 +333,7 @@ def test_forced_target_withholds_the_morning_a_preheat_would_start(f_zone: ZoneS
     follow_up = _follow(
         f_zone,
         memory,
-        _conditions('20.0', intent=_forced('22.0')),
+        _conditions('20.0', intent=_forced('22.0', beneath='19.5')),
         _cycle(FIXED_START),
         ZoneCycleOutcome.APPLIED,
     )
@@ -343,7 +347,7 @@ def test_forced_target_drops_a_morning_in_progress(f_zone: ZoneSettings, f_morni
     follow_up = _follow(
         f_zone,
         memory,
-        _conditions('20.4', intent=_forced('22.0')),
+        _conditions('20.4', intent=_forced('22.0', beneath='19.5')),
         _cycle(FIXED_START + timedelta(hours=1)),
         ZoneCycleOutcome.UNCHANGED,
     )

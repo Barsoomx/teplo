@@ -11,6 +11,7 @@ from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode, ZoneK
 from apps.climate.domain.optimal_start import PreheatStart
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.factories import (
     ClimateSettingsFactory,
     ComfortPeriodFactory,
@@ -805,7 +806,10 @@ def test_overview_names_the_intent_of_each_room_its_guests_and_whether_it_takes_
                     reason=IntentReason.OVERRIDE,
                     target=Decimal('22.5'),
                     until=MORNING + timedelta(hours=1),
-                    forced=True,
+                    forced=(
+                        ForcedTarget(target=Decimal('22.0'), beneath=Decimal('22.0')),
+                        ForcedTarget(target=Decimal('22.5'), beneath=Decimal('22.0')),
+                    ),
                 ),
                 True,
                 True,
@@ -817,7 +821,7 @@ def test_overview_names_the_intent_of_each_room_its_guests_and_whether_it_takes_
                     reason=IntentReason.SETBACK,
                     target=Decimal('19.5'),
                     until=None,
-                    forced=False,
+                    forced=(),
                 ),
                 False,
                 False,

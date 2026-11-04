@@ -12,6 +12,7 @@ from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.modes import ControlPath, ScheduleMode, ZoneKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.week_plan import DayPeriod
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.core.domain.errors import DomainError, SecretMissingError
 from apps.devices.domain.errors import (
     BrokerUnavailableError,
@@ -170,7 +171,7 @@ def _intent(target: str) -> RoomIntent:
         reason=IntentReason.OVERRIDE,
         target=Decimal(target),
         until=PANEL_NOW,
-        forced=True,
+        forced=(ForcedTarget(target=Decimal(target), beneath=Decimal('22.0')),),
     )
 
 

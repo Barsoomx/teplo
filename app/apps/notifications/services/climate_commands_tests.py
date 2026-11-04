@@ -11,6 +11,7 @@ from apps.climate.domain.errors import RoomNotAdjustableError
 from apps.climate.domain.modes import CommandSource
 from apps.climate.domain.room_intent import IntentReason, OverrideChange, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.usecases.boost_zone import BoostZoneInputDTO, BoostZoneOutputDTO
 from apps.climate.usecases.clear_room_override import ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO
 from apps.climate.usecases.override_room import OverrideRoomInputDTO, OverrideRoomOutputDTO
@@ -69,7 +70,7 @@ OPEN_SPACE = RoomStatus(
         reason=IntentReason.COMFORT,
         target=Decimal('22.0'),
         until=datetime(2026, 11, 4, 23, 30, tzinfo=MOSCOW),
-        forced=False,
+        forced=(),
     ),
     adjustable=True,
     guest_room=True,
@@ -88,7 +89,7 @@ BEDROOM = RoomStatus(
     slug='bedroom',
     name='Спальня',
     air=Decimal('18.8'),
-    intent=RoomIntent(room='bedroom', reason=IntentReason.SETBACK, target=Decimal('19.5'), until=None, forced=False),
+    intent=RoomIntent(room='bedroom', reason=IntentReason.SETBACK, target=Decimal('19.5'), until=None, forced=()),
     adjustable=False,
     guest_room=False,
     zones=(),
@@ -113,7 +114,12 @@ HOUSE_AFTER = [
 GUESTS_HOUSE = [
     replace(
         OPEN_SPACE,
-        intent=replace(OPEN_SPACE.intent, reason=IntentReason.GUESTS, until=GUESTS_LEAVE, forced=True),
+        intent=replace(
+            OPEN_SPACE.intent,
+            reason=IntentReason.GUESTS,
+            until=GUESTS_LEAVE,
+            forced=(ForcedTarget(target=Decimal('22.0'), beneath=Decimal('22.0')),),
+        ),
     ),
     BATHROOM,
     BEDROOM,

@@ -20,7 +20,7 @@ from apps.climate.domain.room_intent import (
     resolve_room_intents,
 )
 from apps.climate.domain.zone import AirTargets, ComfortWindow, FloorSetpoints, ZoneSettings
-from apps.climate.domain.zone_intent import ZoneIntent
+from apps.climate.domain.zone_intent import ForcedTarget, ZoneIntent
 from apps.core.domain.settings import SettingProblem
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -44,6 +44,8 @@ OPEN_SPACE = RoomClimateSettings(
 )
 OVERRIDE = RoomOverride(target=Decimal('23.0'), until=NIGHT + timedelta(hours=1), source=CommandSource.PANEL)
 OVERRIDDEN = replace(OPEN_SPACE, override=OVERRIDE)
+OVERRIDE_AT_NIGHT = ForcedTarget(target=Decimal('23.0'), beneath=SETBACK)
+GUESTS_AT_NIGHT = ForcedTarget(target=COMFORT, beneath=SETBACK)
 BEDROOM = replace(OPEN_SPACE, slug='bedroom', name='Спальня', guest_room=False, adjustable=False)
 INTENTS = RoomIntents(
     rooms=(OVERRIDDEN, BEDROOM),
@@ -53,14 +55,14 @@ INTENTS = RoomIntents(
             reason=IntentReason.OVERRIDE,
             target=Decimal('23.0'),
             until=NIGHT + timedelta(hours=1),
-            forced=True,
+            forced=(OVERRIDE_AT_NIGHT,),
         ),
         'bedroom': RoomIntent(
             room='bedroom',
             reason=IntentReason.SETBACK,
             target=SETBACK,
             until=COMFORT_AT,
-            forced=False,
+            forced=(),
         ),
     },
 )
@@ -91,7 +93,13 @@ KITCHEN = ZoneSettings(
 )
 
 
-def _intent(reason: IntentReason, target: Decimal, until: datetime | None, *, forced: bool) -> RoomIntent:
+def _intent(
+    reason: IntentReason,
+    target: Decimal,
+    until: datetime | None,
+    *,
+    forced: tuple[ForcedTarget, ...] = (),
+) -> RoomIntent:
     return RoomIntent(room='open-space', reason=reason, target=target, until=until, forced=forced)
 
 
@@ -103,60 +111,95 @@ def _intent(reason: IntentReason, target: Decimal, until: datetime | None, *, fo
             NIGHT,
             False,
             GUESTS_LEAVE,
-            _intent(IntentReason.OVERRIDE, Decimal('23.0'), NIGHT + timedelta(hours=1), forced=True),
+            _intent(
+                IntentReason.OVERRIDE,
+                Decimal('23.0'),
+                NIGHT + timedelta(hours=1),
+                forced=(ForcedTarget(target=Decimal('23.0'), beneath=COMFORT),),
+            ),
         ),
-        (OPEN_SPACE, NIGHT, False, GUESTS_LEAVE, _intent(IntentReason.CLOCK, COMFORT, None, forced=False)),
-        (OPEN_SPACE, NIGHT, True, GUESTS_LEAVE, _intent(IntentReason.GUESTS, COMFORT, GUESTS_LEAVE, forced=True)),
+        (OPEN_SPACE, NIGHT, False, GUESTS_LEAVE, _intent(IntentReason.CLOCK, COMFORT, None)),
+        (
+            OPEN_SPACE,
+            NIGHT,
+            True,
+            GUESTS_LEAVE,
+            _intent(IntentReason.GUESTS, COMFORT, GUESTS_LEAVE, forced=(GUESTS_AT_NIGHT,)),
+        ),
         (
             replace(OPEN_SPACE, guest_room=False),
             NIGHT,
             True,
             GUESTS_LEAVE,
-            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT),
         ),
         (
             OPEN_SPACE,
             NIGHT,
             True,
             NIGHT + timedelta(days=4, minutes=1),
-            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT),
         ),
         (
             OPEN_SPACE,
             NIGHT,
             True,
             NIGHT,
-            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT),
         ),
         (
             replace(OPEN_SPACE, override=replace(OVERRIDE, until=NIGHT + timedelta(hours=2, minutes=1))),
             NIGHT,
             True,
             None,
-            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT),
         ),
         (
             replace(OPEN_SPACE, override=replace(OVERRIDE, until=NIGHT)),
             NIGHT,
             True,
             None,
-            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT),
         ),
         (
             OVERRIDDEN,
             NIGHT,
             True,
             GUESTS_LEAVE,
-            _intent(IntentReason.OVERRIDE, Decimal('23.0'), NIGHT + timedelta(hours=1), forced=True),
+            _intent(
+                IntentReason.OVERRIDE,
+                Decimal('23.0'),
+                NIGHT + timedelta(hours=1),
+                forced=(GUESTS_AT_NIGHT, ForcedTarget(target=Decimal('23.0'), beneath=COMFORT)),
+            ),
         ),
-        (OPEN_SPACE, MORNING, True, None, _intent(IntentReason.COMFORT, COMFORT, COMFORT_ENDS, forced=False)),
-        (OPEN_SPACE, NIGHT, True, None, _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT, forced=False)),
+        (
+            OVERRIDDEN,
+            NIGHT,
+            True,
+            None,
+            _intent(IntentReason.OVERRIDE, Decimal('23.0'), NIGHT + timedelta(hours=1), forced=(OVERRIDE_AT_NIGHT,)),
+        ),
+        (
+            replace(OPEN_SPACE, override=replace(OVERRIDE, until=MORNING + timedelta(hours=1))),
+            MORNING,
+            True,
+            None,
+            _intent(
+                IntentReason.OVERRIDE,
+                Decimal('23.0'),
+                MORNING + timedelta(hours=1),
+                forced=(ForcedTarget(target=Decimal('23.0'), beneath=COMFORT),),
+            ),
+        ),
+        (OPEN_SPACE, MORNING, True, None, _intent(IntentReason.COMFORT, COMFORT, COMFORT_ENDS)),
+        (OPEN_SPACE, NIGHT, True, None, _intent(IntentReason.SETBACK, SETBACK, COMFORT_AT)),
         (
             replace(OPEN_SPACE, windows=()),
             NIGHT,
             True,
             None,
-            _intent(IntentReason.SETBACK, SETBACK, None, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, None),
         ),
     ],
     ids=[
@@ -168,7 +211,9 @@ def _intent(reason: IntentReason, target: Decimal, until: datetime | None, *, fo
         'guests_gone',
         'override_ending_more_than_two_hours_ahead_ignored',
         'override_over',
-        'override_beats_guests',
+        'override_beats_guests_and_steps_from_them',
+        'override_steps_from_the_setback',
+        'override_steps_from_the_comfort_target',
         'comfort_window_until_its_end',
         'outside_the_windows_setback_until_the_next_comfort_start',
         'room_without_windows_stays_in_setback',
@@ -189,8 +234,8 @@ def test_room_intents_resolve_every_room_with_the_same_guests() -> None:
 
     assert (intents.rooms, intents.of('open-space'), intents.of('bedroom'), intents.of('attic')) == (
         (OPEN_SPACE, BEDROOM),
-        _intent(IntentReason.GUESTS, COMFORT, GUESTS_LEAVE, forced=True),
-        RoomIntent(room='bedroom', reason=IntentReason.SETBACK, target=SETBACK, until=COMFORT_AT, forced=False),
+        _intent(IntentReason.GUESTS, COMFORT, GUESTS_LEAVE, forced=(GUESTS_AT_NIGHT,)),
+        RoomIntent(room='bedroom', reason=IntentReason.SETBACK, target=SETBACK, until=COMFORT_AT, forced=()),
         None,
     )
 
@@ -198,11 +243,11 @@ def test_room_intents_resolve_every_room_with_the_same_guests() -> None:
 @pytest.mark.parametrize(
     ('zone', 'backed_up', 'expected'),
     [
-        (KITCHEN, frozenset(), ZoneIntent(target=Decimal('23.0'), backup=False, learns=False)),
-        (KITCHEN, frozenset({'kitchen'}), ZoneIntent(target=Decimal('23.0'), backup=True, learns=False)),
-        (replace(KITCHEN, room_slug='bedroom'), frozenset(), ZoneIntent(target=None, backup=False, learns=True)),
-        (replace(KITCHEN, room_slug='pantry'), frozenset(), ZoneIntent(target=None, backup=False, learns=True)),
-        (replace(KITCHEN, room_slug=None), frozenset({'kitchen'}), ZoneIntent(target=None, backup=True, learns=True)),
+        (KITCHEN, frozenset(), ZoneIntent(forced=(OVERRIDE_AT_NIGHT,), backup=False, learns=False)),
+        (KITCHEN, frozenset({'kitchen'}), ZoneIntent(forced=(OVERRIDE_AT_NIGHT,), backup=True, learns=False)),
+        (replace(KITCHEN, room_slug='bedroom'), frozenset(), ZoneIntent(forced=(), backup=False, learns=True)),
+        (replace(KITCHEN, room_slug='pantry'), frozenset(), ZoneIntent(forced=(), backup=False, learns=True)),
+        (replace(KITCHEN, room_slug=None), frozenset({'kitchen'}), ZoneIntent(forced=(), backup=True, learns=True)),
     ],
     ids=[
         'override_forces_its_target',
@@ -223,24 +268,29 @@ def test_zone_intent_forces_only_override_and_guests(
 @pytest.mark.parametrize(
     ('intent', 'change', 'value', 'expected'),
     [
-        (_intent(IntentReason.COMFORT, COMFORT, None, forced=False), OverrideChange.UP, None, Decimal('22.5')),
-        (_intent(IntentReason.COMFORT, COMFORT, None, forced=False), OverrideChange.DOWN, None, Decimal('21.5')),
+        (_intent(IntentReason.COMFORT, COMFORT, None), OverrideChange.UP, None, Decimal('22.5')),
+        (_intent(IntentReason.COMFORT, COMFORT, None), OverrideChange.DOWN, None, Decimal('21.5')),
         (
-            _intent(IntentReason.OVERRIDE, Decimal('22.5'), MORNING, forced=True),
+            _intent(
+                IntentReason.OVERRIDE,
+                Decimal('22.5'),
+                MORNING,
+                forced=(ForcedTarget(target=Decimal('22.5'), beneath=COMFORT),),
+            ),
             OverrideChange.UP,
             None,
             Decimal('23.0'),
         ),
-        (_intent(IntentReason.SETBACK, SETBACK, None, forced=False), OverrideChange.WARMER, None, COMFORT),
-        (_intent(IntentReason.COMFORT, COMFORT, None, forced=False), OverrideChange.WARMER, None, Decimal('23.0')),
-        (_intent(IntentReason.COMFORT, COMFORT, None, forced=False), OverrideChange.COOLER, None, Decimal('21.0')),
+        (_intent(IntentReason.SETBACK, SETBACK, None), OverrideChange.WARMER, None, COMFORT),
+        (_intent(IntentReason.COMFORT, COMFORT, None), OverrideChange.WARMER, None, Decimal('23.0')),
+        (_intent(IntentReason.COMFORT, COMFORT, None), OverrideChange.COOLER, None, Decimal('21.0')),
         (
-            _intent(IntentReason.SETBACK, SETBACK, None, forced=False),
+            _intent(IntentReason.SETBACK, SETBACK, None),
             OverrideChange.SET,
             Decimal('21.25'),
             Decimal('21.3'),
         ),
-        (_intent(IntentReason.SETBACK, SETBACK, None, forced=False), OverrideChange.SET, None, SETBACK),
+        (_intent(IntentReason.SETBACK, SETBACK, None), OverrideChange.SET, None, SETBACK),
     ],
     ids=[
         'up_half_a_degree',

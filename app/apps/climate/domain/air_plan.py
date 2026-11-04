@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -10,6 +11,7 @@ from apps.climate.domain.modes import AirState, ScheduleMode
 from apps.climate.domain.optimal_start import NO_LEAD, PreheatStart, latch_preheat, optimal_lead
 from apps.climate.domain.schedule import next_comfort_start, resolve_mode
 from apps.climate.domain.zone import ZoneSettings
+from apps.climate.domain.zone_intent import ForcedTarget, forced_air_target
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -43,7 +45,7 @@ def plan_air(
     now: datetime,
     clock_trusted: bool,
     dry_run: bool,
-    forced_target: Decimal | None = None,
+    forced: Sequence[ForcedTarget] = (),
 ) -> AirPlan:
     lead = optimal_lead(
         learning.heat_up,
@@ -66,7 +68,7 @@ def plan_air(
     )
     schedule_lead = lead if preheat is None else preheat.lead
     mode = resolve_mode(zone.windows, now, schedule_lead)
-    target = resolve_air_target(zone, mode, clock_trusted=clock_trusted) if forced_target is None else forced_target
+    target = forced_air_target(resolve_air_target(zone, mode, clock_trusted=clock_trusted), forced)
     early_stop_offset = control.regulation.early_stop_offset(learning.early_stop_offset)
     state = decide_air_state(
         current,

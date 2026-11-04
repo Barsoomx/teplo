@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.climate.factories import ClimateSettingsFactory, ComfortPeriodFactory, RoomClimateFactory, ZoneFactory
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.room_climate import RoomClimateRepository
@@ -65,21 +66,21 @@ def test_read_resolves_every_room_with_the_stored_guests(f_reader: RoomIntentRea
                 reason=IntentReason.GUESTS,
                 target=Decimal('22.0'),
                 until=GUESTS_LEAVE,
-                forced=True,
+                forced=(ForcedTarget(target=Decimal('22.0'), beneath=Decimal('19.5')),),
             ),
             'bedroom': RoomIntent(
                 room='bedroom',
                 reason=IntentReason.SETBACK,
                 target=Decimal('19.5'),
                 until=None,
-                forced=False,
+                forced=(),
             ),
             'office': RoomIntent(
                 room='office',
                 reason=IntentReason.SETBACK,
                 target=Decimal('19.0'),
                 until=None,
-                forced=False,
+                forced=(),
             ),
         },
     )
@@ -93,7 +94,7 @@ def test_read_takes_the_comfort_windows_in_house_time(f_reader: RoomIntentReader
         reason=IntentReason.SETBACK,
         target=Decimal('19.5'),
         until=datetime(2026, 11, 5, 6, 30, tzinfo=MOSCOW),
-        forced=False,
+        forced=(),
     )
 
 

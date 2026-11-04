@@ -14,6 +14,7 @@ from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.modes import ControlPath, ScheduleMode
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
+from apps.climate.domain.zone_intent import ForcedTarget
 from apps.devices.domain.kinds import DeviceKind
 from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
@@ -249,12 +250,13 @@ def m_intent_overview_use_case(
     house_overview: GetPanelOverviewOutputDTO,
 ) -> Iterator[MagicMock]:
     reason, target, until, adjustable = request.param
+    forced = (ForcedTarget(target=target, beneath=Decimal('19.5')),)
     intent = RoomIntent(
         room='open-space',
         reason=reason,
         target=target,
         until=until,
-        forced=reason in (IntentReason.OVERRIDE, IntentReason.GUESTS),
+        forced=forced if reason in (IntentReason.OVERRIDE, IntentReason.GUESTS) else (),
     )
     ground, upstairs = house_overview.floors
     [open_space] = ground.rooms
@@ -264,7 +266,7 @@ def m_intent_overview_use_case(
         reason=IntentReason.SETBACK,
         target=Decimal('19.5'),
         until=None,
-        forced=False,
+        forced=(),
     )
     floors = (
         replace(ground, rooms=(replace(open_space, intent=intent, adjustable=adjustable, guest_room=True),)),
