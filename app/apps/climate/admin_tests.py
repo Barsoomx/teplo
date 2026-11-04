@@ -601,10 +601,11 @@ def f_convector_gates(request: pytest.FixtureRequest, f_convector: HeatSource) -
 
 
 @pytest.fixture
-def f_admin_client() -> Client:
+def f_admin_client() -> Iterator[Client]:
     client = Client(headers={'accept-language': 'ru'})
     client.force_login(User.objects.create_superuser(username='owner', password='owner-password'))  # noqa: S106
-    return client
+    with translation.override('ru'):
+        yield client
 
 
 @pytest.fixture
