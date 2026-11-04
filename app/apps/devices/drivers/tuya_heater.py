@@ -45,7 +45,12 @@ class TuyaHeaterDriver:
         if setpoint != setpoint.to_integral_value():
             raise DeviceProtocolError(f'the heater takes whole degrees, not {setpoint}')
 
-        self._write(SETPOINT_DP, int(setpoint))
+        degrees = int(setpoint)
+        if _echoes(self._write(SETPOINT_DP, degrees), SETPOINT_DP, degrees):
+            return
+
+        if self.read_state().target != setpoint:
+            raise DeviceProtocolError(f'the heater did not take the setpoint {degrees}')
 
     def _state(self, payload: TuyaPayload) -> ClimateUnitState:
         dps = payload.get('dps')
@@ -63,7 +68,7 @@ class TuyaHeaterDriver:
         except (KeyError, ValueError) as error:
             raise DeviceProtocolError(f'unexpected heater payload: {dps}') from error
 
-    def _write(self, dp: int, value: bool | int) -> None:
+    def _write(self, dp: int, value: bool | int) -> TuyaPayload | None:
         try:
             with self._lock:
                 payload = self._client.set_value(dp, value)
@@ -72,6 +77,13 @@ class TuyaHeaterDriver:
 
         if payload and 'Error' in payload:
             raise DeviceUnavailableError(str(payload['Error']))
+
+        return payload
+
+
+def _echoes(payload: TuyaPayload | None, dp: int, value: int) -> bool:
+    dps = None if payload is None else payload.get('dps')
+    return isinstance(dps, dict) and dps.get(str(dp)) == value
 
 
 def _power(value: object) -> bool:

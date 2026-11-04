@@ -38,6 +38,12 @@ class TuyaClientStub:
         return None
 
 
+class EchoingClientStub(TuyaClientStub):
+    def set_value(self, index: int, value: bool | int | str) -> TuyaPayload | None:
+        super().set_value(index, value)
+        return {'dps': {str(index): value}}
+
+
 class RefusingClientStub(TuyaClientStub):
     def set_value(self, index: int, value: bool | int | str) -> TuyaPayload | None:
         super().set_value(index, value)
@@ -88,6 +94,26 @@ def f_driver(f_client: TuyaClientStub) -> TuyaHeaterDriver:
 @pytest.fixture
 def f_payload_driver(request: pytest.FixtureRequest) -> TuyaHeaterDriver:
     return TuyaHeaterDriver(client=TuyaClientStub(status_payload=request.param), clock=_now)
+
+
+@pytest.fixture
+def f_echoing_client() -> EchoingClientStub:
+    return EchoingClientStub(status_payload=None)
+
+
+@pytest.fixture
+def f_echoing_driver(f_echoing_client: EchoingClientStub) -> TuyaHeaterDriver:
+    return TuyaHeaterDriver(client=f_echoing_client, clock=_now)
+
+
+@pytest.fixture
+def f_ignoring_client() -> TuyaClientStub:
+    return TuyaClientStub(status_payload={'dps': {**OFFICE_DPS, '1': False, '3': 35}})
+
+
+@pytest.fixture
+def f_ignoring_driver(f_ignoring_client: TuyaClientStub) -> TuyaHeaterDriver:
+    return TuyaHeaterDriver(client=f_ignoring_client, clock=_now)
 
 
 @pytest.fixture
@@ -196,6 +222,34 @@ def test_commands_write_only_power_and_whole_degree_setpoints(
     f_driver.set_power(False)
 
     assert f_client.writes == [(1, True), (3, 22), (1, False)]
+
+
+def test_set_setpoint_takes_the_heaters_echo_without_reading_it_back(
+    f_echoing_driver: TuyaHeaterDriver,
+    f_echoing_client: EchoingClientStub,
+) -> None:
+    f_echoing_driver.set_setpoint(Decimal(19))
+
+    assert f_echoing_client.writes == [(3, 19)]
+
+
+def test_set_setpoint_reads_the_setpoint_back_when_the_heater_sends_no_echo(
+    f_driver: TuyaHeaterDriver,
+    f_client: TuyaClientStub,
+) -> None:
+    f_driver.set_setpoint(Decimal(22))
+
+    assert f_client.writes == [(3, 22)]
+
+
+def test_set_setpoint_reports_a_setpoint_the_heater_ignored(
+    f_ignoring_driver: TuyaHeaterDriver,
+    f_ignoring_client: TuyaClientStub,
+) -> None:
+    with pytest.raises(DeviceProtocolError, match='did not take the setpoint 22'):
+        f_ignoring_driver.set_setpoint(Decimal(22))
+
+    assert f_ignoring_client.writes == [(3, 22)]
 
 
 def test_set_setpoint_refuses_a_fraction_of_a_degree_and_writes_nothing(

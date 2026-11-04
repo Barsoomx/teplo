@@ -188,11 +188,11 @@ class ControllableClimateUnitStub(ClimateUnitStub):
         self,
         state: ClimateUnitState | None,
         error: DomainError | None = None,
-        command_errors: tuple[DomainError, ...] = (),
+        command_errors: tuple[DomainError | None, ...] = (),
     ) -> None:
         super().__init__(state=state, error=error)
         self._command_errors = command_errors
-        self._failed_commands = 0
+        self._tried_commands = 0
         self._commands: list[tuple[str, object]] = []
 
     @property
@@ -206,9 +206,11 @@ class ControllableClimateUnitStub(ClimateUnitStub):
         self._command('setpoint', setpoint)
 
     def _command(self, name: str, value: object) -> None:
-        if self._failed_commands < len(self._command_errors):
-            self._failed_commands += 1
-            raise self._command_errors[self._failed_commands - 1]
+        tried = self._tried_commands
+        self._tried_commands += 1
+        error = self._command_errors[tried] if tried < len(self._command_errors) else None
+        if error is not None:
+            raise error
 
         self._commands.append((name, value))
 

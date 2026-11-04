@@ -38,7 +38,7 @@ from apps.climate.usecases.run_source_cycle import (
 )
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub, TransactionStub
-from apps.devices.domain.errors import DeviceUnavailableError
+from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import ClimateMode, ClimateUnitState
 from apps.devices.services.state_store import ClimateUnitStateStore, TemperatureStateStore
 from apps.devices.stubs import ControllableClimateUnitProviderStub, ControllableClimateUnitStub
@@ -314,7 +314,7 @@ def test_live_source_that_is_on_gets_its_setpoint_stamped_first_without_a_start_
     [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN)],
     indirect=True,
 )
-def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_before_its_power(
+def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_after_its_power(
     f_use_case: RunSourceCycleUseCase,
     f_sources: HeatSourceStoreStub,
     f_unit: ControllableClimateUnitStub,
@@ -326,7 +326,7 @@ def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_before_it
     assert (output, f_sources.commanded, f_unit.commands, f_gate.asked, f_gate.started, f_events) == (
         RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.APPLIED}),
         [('convector-office', True, Decimal(22))],
-        [('setpoint', Decimal(22)), ('power', True)],
+        [('power', True), ('setpoint', Decimal(22))],
         [(SourceStart(source='convector-office', writes_live=True),)],
         ['convector-office'],
         [
@@ -347,7 +347,7 @@ def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_before_it
     [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, (DeviceUnavailableError('timeout'),))],
     indirect=True,
 )
-def test_source_whose_setpoint_is_refused_is_not_switched_on(
+def test_source_that_cannot_be_switched_on_gets_no_setpoint(
     f_use_case: RunSourceCycleUseCase,
     f_unit: ControllableClimateUnitStub,
     f_events: list[DomainEvent],
@@ -365,6 +365,35 @@ def test_source_whose_setpoint_is_refused_is_not_switched_on(
                 setpoint=Decimal(22),
                 error='timeout',
                 error_code='device_unavailable',
+                occurred_at=COMFORT_AT,
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'f_unit'),
+    [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, (None, DeviceProtocolError('the heater did not take 22')))],
+    indirect=True,
+)
+def test_source_that_refuses_its_setpoint_once_on_is_switched_off_again(
+    f_use_case: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands, f_events) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.FAILED}),
+        [('power', True), ('power', False)],
+        [
+            SourceCommandFailed(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=True,
+                setpoint=Decimal(22),
+                error='the heater did not take 22',
+                error_code='device_protocol_error',
                 occurred_at=COMFORT_AT,
             ),
         ],

@@ -372,10 +372,17 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
 
 
 def _apply(unit: ControllableClimateUnit, change: SourceChange) -> None:
-    if change.setpoint is not None:
-        unit.set_setpoint(change.setpoint)
     if change.power is not None:
         unit.set_power(change.power)
+    if change.setpoint is None:
+        return
+
+    try:
+        unit.set_setpoint(change.setpoint)
+    except DomainError:
+        if change.power is True:
+            unit.set_power(False)
+        raise
 
 
 def _by_room(sources: Sequence[SourceSettings]) -> dict[str, list[SourceSettings]]:
