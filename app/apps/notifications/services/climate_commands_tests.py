@@ -137,6 +137,7 @@ HELP = (
     'статус — комнаты, цели и фазы'
 )
 ROOM_NAMES = 'Гостиная, кухня и прихожая; Санузел 2 этаж; Спальня; Кабинет'
+LOCKED = OperationalError('database is locked')
 
 
 def _runner(
@@ -227,6 +228,17 @@ def f_clockless_runner(
     f_rooms: RoomStatusSourceStub,
 ) -> ClimateCommandRunner:
     return _runner(f_clockless_guests, f_override, f_clear, f_boost, f_rooms)
+
+
+@pytest.fixture
+def f_unread_after_runner(
+    request: pytest.FixtureRequest,
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+) -> ClimateCommandRunner:
+    return _runner(f_guests, f_override, f_clear, f_boost, RoomStatusSourceStub(readings=request.param))
 
 
 @pytest.fixture
@@ -505,6 +517,48 @@ def test_a_refused_override_is_answered_in_words(f_refused_runner: ClimateComman
     reply = f_refused_runner.run(OwnerCommand(kind=CommandKind.COOLER, room=OPEN_SPACE_ROOM), NOW, clock_trusted=True)
 
     assert reply == expected
+
+
+@pytest.mark.parametrize(
+    ('f_unread_after_runner', 'command', 'expected'),
+    [
+        (
+            (HOUSE, LOCKED),
+            OwnerCommand(kind=CommandKind.WARMER, room=OPEN_SPACE_ROOM),
+            'Гостиная, кухня и прихожая: 23,0° до 18:40.',
+        ),
+        (
+            (HOUSE, LOCKED),
+            OwnerCommand(kind=CommandKind.GUESTS, nights=1),
+            'Гости до 14:00 завтра: Гостиная, кухня и прихожая в комфорте.',
+        ),
+        (
+            (HOUSE, LOCKED),
+            OwnerCommand(kind=CommandKind.BOOST, room=BATHROOM_ROOM),
+            'Санузел 2 этаж: буст до 18:40.',
+        ),
+        (
+            (LOCKED,),
+            OwnerCommand(kind=CommandKind.AUTO, room=OPEN_SPACE_ROOM),
+            'Гостиная, кухня и прихожая: снова по расписанию.',
+        ),
+    ],
+    ids=['override', 'guests', 'boost', 'auto'],
+    indirect=['f_unread_after_runner'],
+)
+def test_a_change_whose_floors_cannot_be_read_back_is_answered_with_what_it_did(
+    f_unread_after_runner: ClimateCommandRunner,
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_clear: ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO],
+    f_boost: ExecutableStub[BoostZoneInputDTO, BoostZoneOutputDTO],
+    command: OwnerCommand,
+    expected: str,
+) -> None:
+    reply = f_unread_after_runner.run(command, NOW, clock_trusted=True)
+
+    changes = len(f_guests.inputs) + len(f_override.inputs) + len(f_clear.inputs) + len(f_boost.inputs)
+    assert (changes, reply) == (1, expected)
 
 
 def test_replies_follow_the_configured_language(f_english_runner: ClimateCommandRunner) -> None:

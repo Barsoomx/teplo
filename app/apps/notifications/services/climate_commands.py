@@ -1,4 +1,4 @@
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from datetime import datetime
 
 from django.conf import settings
@@ -33,6 +33,7 @@ from apps.notifications.domain.ports import PhaseReadout, RoomStatusSource
 from apps.notifications.services.command_replies import (
     AMBIGUOUS,
     AUTO,
+    AUTO_DONE,
     AUTO_NONE,
     AUTO_OPEN,
     BOOST,
@@ -153,7 +154,8 @@ class ClimateCommandRunner:
         if not 1 <= nights <= MAX_GUEST_NIGHTS:
             return str(NIGHTS)
 
-        if not self._guest_rooms(now, clock_trusted=clock_trusted):
+        guest_rooms = self._guest_rooms(now, clock_trusted=clock_trusted)
+        if not guest_rooms:
             return str(NO_GUEST_ROOMS)
 
         try:
@@ -165,8 +167,8 @@ class ClimateCommandRunner:
         except ClockUntrustedError:
             return str(GUESTS_CLOCK)
 
-        rooms = self._guest_rooms(now, clock_trusted=clock_trusted)
-        lines = [] if until is None else [_guests_line(until, rooms, now)]
+        rooms = self._changed({room.slug for room in guest_rooms}, now, clock_trusted=clock_trusted)
+        lines = [] if until is None else [_guests_line(until, guest_rooms, now)]
         return '\n'.join([*lines, *zone_write_lines(rooms, now)])
 
     def _room_command(self, command: OwnerCommand, room: CommandRoom, now: datetime, *, clock_trusted: bool) -> str:
@@ -236,9 +238,9 @@ class ClimateCommandRunner:
         if not cleared:
             return str(AUTO_NONE) % {'room': room.name}
 
-        status = self._room(room.slug, now, clock_trusted=clock_trusted)
+        status = next(iter(self._changed({room.slug}, now, clock_trusted=clock_trusted)), None)
         if status is None:
-            return self._unknown_room(now, clock_trusted=clock_trusted)
+            return str(AUTO_DONE) % {'room': room.name}
 
         values = {'room': status.name, 'target': degrees(status.intent.target)}
         until = status.intent.until
@@ -246,8 +248,15 @@ class ClimateCommandRunner:
         return '\n'.join([reply, *zone_write_lines([status], now)])
 
     def _with_floors(self, reply: str, slug: str, now: datetime, *, clock_trusted: bool) -> str:
-        status = self._room(slug, now, clock_trusted=clock_trusted)
-        return '\n'.join([reply, *zone_write_lines([] if status is None else [status], now)])
+        return '\n'.join([reply, *zone_write_lines(self._changed({slug}, now, clock_trusted=clock_trusted), now)])
+
+    def _changed(self, slugs: Collection[str], now: datetime, *, clock_trusted: bool) -> list[RoomStatus]:
+        try:
+            rooms = self._rooms.rooms(now, clock_trusted=clock_trusted)
+        except OperationalError:
+            return []
+
+        return [room for room in rooms if room.slug in slugs]
 
     def _unknown_room(self, now: datetime, *, clock_trusted: bool) -> str:
         names = room_names(room.name for room in self._rooms.rooms(now, clock_trusted=clock_trusted))

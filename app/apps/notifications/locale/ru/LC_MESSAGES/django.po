@@ -162,6 +162,10 @@ msgid "%(room)s: no manual target to cancel."
 msgstr "%(room)s: ручной цели нет."
 
 #, python-format
+msgid "%(room)s: back to the schedule."
+msgstr "%(room)s: снова по расписанию."
+
+#, python-format
 msgid "%(room)s: boost until %(until)s."
 msgstr "%(room)s: буст до %(until)s."
 

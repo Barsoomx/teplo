@@ -133,7 +133,7 @@ class ExecutableStub[TInput, TOutput]:
 
 
 class RoomStatusSourceStub:
-    def __init__(self, readings: tuple[list[RoomStatus], ...]) -> None:
+    def __init__(self, readings: tuple[list[RoomStatus] | Exception, ...]) -> None:
         self._readings = readings
         self._reads: list[tuple[datetime, bool]] = []
 
@@ -143,7 +143,11 @@ class RoomStatusSourceStub:
 
     def rooms(self, now: datetime, *, clock_trusted: bool) -> list[RoomStatus]:
         self._reads.append((now, clock_trusted))
-        return list(self._readings[min(len(self._reads), len(self._readings)) - 1])
+        reading = self._readings[min(len(self._reads), len(self._readings)) - 1]
+        if isinstance(reading, Exception):
+            raise reading
+
+        return list(reading)
 
 
 class PhaseReadoutStub:
