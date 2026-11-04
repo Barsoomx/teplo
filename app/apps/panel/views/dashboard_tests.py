@@ -655,22 +655,22 @@ def test_dashboard_redirects_anonymous_to_login(f_anonymous_client: Client) -> N
     [
         (
             ((OPEN_SPACE,), None, SYNCED),
-            (True, 'title="Гостевые комнаты: Гостиная, кухня и прихожая"', 'Гости<', 'hx-vals=\'{"nights": 1}\''),
+            (True, 'title="Гостевые комнаты: Гостиная, кухня и прихожая"', 'Гости на<', 'hx-vals=\'{"nights": 3}\''),
         ),
         (
             ((OPEN_SPACE,), GUESTS_LEAVE, SYNCED),
-            (True, 'Гости до 14:00 завтра', 'Гости уехали', 'hx-vals=\'{"nights": 0}\''),
+            (True, 'Гости до 14:00 завтра', 'hx-vals=\'{"nights": 0}\'', 'hx-disabled-elt="this">2 ночи<'),
         ),
         (
             ((OPEN_SPACE,), None, UNSYNCED),
             (
                 True,
                 'title="Гостей можно включить, когда часы синхронизируются"',
-                'hx-disabled-elt="this" disabled>',
-                'Гости<',
+                'hx-disabled-elt="this" disabled>1 ночь<',
+                'hx-disabled-elt="this" disabled>3 ночи<',
             ),
         ),
-        (((), None, SYNCED), (False, 'Гостевые комнаты', 'Гости<', '/guests/')),
+        (((), None, SYNCED), (False, 'Гостевые комнаты', 'Гости на<', '/guests/')),
     ],
     ids=['offered', 'staying', 'waiting_for_the_clock', 'no_guest_room'],
     indirect=['m_guests_overview_use_case'],

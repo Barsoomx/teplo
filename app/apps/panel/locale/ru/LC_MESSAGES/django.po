@@ -1058,8 +1058,17 @@ msgstr "Выберите хотя бы одну комнату"
 msgid "No rooms yet. Rooms come from the site data."
 msgstr "Комнат пока нет. Они задаются данными сайта."
 
-msgid "Guests"
-msgstr "Гости"
+msgid "Guests for"
+msgstr "Гости на"
+
+msgid "1 night"
+msgstr "1 ночь"
+
+msgid "2 nights"
+msgstr "2 ночи"
+
+msgid "3 nights"
+msgstr "3 ночи"
 
 msgid "Guests have left"
 msgstr "Гости уехали"

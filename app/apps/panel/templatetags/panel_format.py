@@ -16,7 +16,13 @@ from apps.climate.domain.comfort_windows import WEEKDAY_FIELDS
 from apps.climate.domain.drive import PendingKind
 from apps.climate.domain.modes import CommandSource, ScheduleMode
 from apps.climate.domain.room_climate import ROOM
-from apps.climate.domain.room_intent import OVERRIDE_STEP, OVERRIDE_TARGET_MAX, OVERRIDE_TARGET_MIN, RoomIntent
+from apps.climate.domain.room_intent import (
+    MAX_GUEST_NIGHTS,
+    OVERRIDE_STEP,
+    OVERRIDE_TARGET_MAX,
+    OVERRIDE_TARGET_MIN,
+    RoomIntent,
+)
 from apps.climate.domain.week_plan import DayPeriod
 from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertTransition
@@ -104,6 +110,7 @@ NEXT_WRITE_AT = gettext_lazy('Thermostat set to %(setpoint)s°, %(target)s° no 
 NEXT_WRITE_SOON = gettext_lazy('Thermostat set to %(setpoint)s°, %(target)s° within the next minute')
 GUESTS_UNTIL = gettext_lazy('Guests until %(time)s')
 GUESTS_OFF = gettext_lazy('Guests mode is off')
+GUEST_NIGHTS = {1: gettext_lazy('1 night'), 2: gettext_lazy('2 nights'), 3: gettext_lazy('3 nights')}
 ROOM_OVERRIDDEN = gettext_lazy('%(name)s: manual %(target)s° until %(time)s')
 ROOM_OVERRIDE_CLEARED = gettext_lazy('%(name)s: back to the schedule')
 FROM_TELEGRAM = gettext_lazy('From Telegram')
@@ -362,6 +369,11 @@ def next_write_text(zone: ZoneOverview) -> str:
         return str(NEXT_WRITE_SOON) % values
 
     return str(NEXT_WRITE_AT) % {**values, 'time': _moment_text(pending.at)}
+
+
+@register.simple_tag
+def guest_nights() -> tuple[tuple[int, str], ...]:
+    return tuple((nights, str(GUEST_NIGHTS[nights])) for nights in range(1, MAX_GUEST_NIGHTS + 1))
 
 
 @register.filter

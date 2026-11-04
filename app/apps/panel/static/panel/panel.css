@@ -255,7 +255,8 @@ body {
   color: var(--ink);
 }
 
-.fact-guests .button {
+.fact-guests .button,
+.guest-nights {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;

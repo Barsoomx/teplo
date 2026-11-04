@@ -46,7 +46,7 @@ def m_overview_use_case(panel_overview: GetPanelOverviewOutputDTO) -> Iterator[M
 
 
 @freeze_time(NOW)
-@pytest.mark.parametrize('nights', [1, 0])
+@pytest.mark.parametrize('nights', [1, 3, 0])
 def test_guests_go_to_the_use_case_from_the_panel_and_the_dashboard_refreshes(
     f_client: Client,
     m_guests_use_case: MagicMock,

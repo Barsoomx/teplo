@@ -37,6 +37,7 @@ from apps.panel.templatetags.panel_format import (
     day_word,
     duration,
     failure_note,
+    guest_nights,
     guests_text,
     icon,
     load_amps,
@@ -1144,6 +1145,11 @@ def test_next_write_text_names_the_setpoint_and_the_earliest_write(zone: ZoneOve
 )
 def test_steps_stay_within_the_range_of_an_override(target: str, down: bool, up: bool) -> None:
     assert (steps_down(_intent(target)), steps_up(_intent(target))) == (down, up)
+
+
+@pytest.mark.usefixtures('russian')
+def test_guest_nights_offer_one_to_three_nights_in_words() -> None:
+    assert guest_nights() == ((1, '1 ночь'), (2, '2 ночи'), (3, '3 ночи'))
 
 
 @freeze_time(PANEL_NOW)
