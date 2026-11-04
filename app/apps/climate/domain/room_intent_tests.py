@@ -9,6 +9,7 @@ from apps.climate.domain.backup_heat import BackupHeat
 from apps.climate.domain.modes import CommandSource, ZoneKind
 from apps.climate.domain.room_climate import RoomClimateSettings, RoomOverride
 from apps.climate.domain.room_intent import (
+    MAX_GUEST_NIGHTS,
     IntentReason,
     OverrideChange,
     RoomIntent,
@@ -340,6 +341,8 @@ def test_override_problems_refuse_targets_outside_10_to_30(
         (datetime(2026, 11, 4, 22, 30, tzinfo=MOSCOW), 2, 14, datetime(2026, 11, 6, 14, 0, tzinfo=MOSCOW)),
         (datetime(2026, 11, 4, 1, 0, tzinfo=MOSCOW), 3, 12, datetime(2026, 11, 6, 12, 0, tzinfo=MOSCOW)),
         (datetime(2026, 11, 4, 5, 0, tzinfo=MOSCOW), 1, 3, datetime(2026, 11, 5, 3, 0, tzinfo=MOSCOW)),
+        (datetime(2026, 11, 4, 3, 0, tzinfo=MOSCOW), 2, 2, datetime(2026, 11, 6, 2, 0, tzinfo=MOSCOW)),
+        (datetime(2026, 11, 4, 3, 0, tzinfo=MOSCOW), 3, 2, datetime(2026, 11, 7, 2, 0, tzinfo=MOSCOW)),
     ],
     ids=[
         'before_six_ends_today',
@@ -348,6 +351,8 @@ def test_override_problems_refuse_targets_outside_10_to_30(
         'two_nights',
         'three_nights_before_six',
         'end_hour_already_past_today_moves_to_tomorrow',
+        'two_nights_from_an_end_hour_already_past_today',
+        'three_nights_from_an_end_hour_already_past_today',
     ],
 )
 def test_guests_end_today_before_six_and_tomorrow_after(
@@ -357,3 +362,19 @@ def test_guests_end_today_before_six_and_tomorrow_after(
     expected: datetime,
 ) -> None:
     assert guests_end(now, nights, end_hour) == expected
+
+
+@pytest.mark.parametrize(
+    ('now', 'end_hour'),
+    [
+        (datetime(2026, 11, 4, 3, 0, tzinfo=MOSCOW), 2),
+        (datetime(2026, 11, 4, 1, 0, tzinfo=MOSCOW), 2),
+        (datetime(2026, 11, 4, 5, 59, tzinfo=MOSCOW), 14),
+        (datetime(2026, 11, 4, 22, 30, tzinfo=MOSCOW), 14),
+    ],
+    ids=['end_hour_past_before_six', 'end_hour_ahead_before_six', 'before_six', 'evening'],
+)
+def test_guests_end_a_day_later_for_each_further_night(now: datetime, end_hour: int) -> None:
+    ends = [guests_end(now, nights, end_hour) for nights in range(1, MAX_GUEST_NIGHTS + 1)]
+
+    assert [end - ends[0] for end in ends] == [timedelta(days=nights) for nights in range(MAX_GUEST_NIGHTS)]

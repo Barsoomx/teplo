@@ -237,7 +237,7 @@ What a room needs now is decided by one pure function, `resolve_room_intent`, wh
 
 1. **Override**: the owner's target for the room, for 2 hours from the last press or command.
 2. **Untrusted clock**: the comfort target, as the zones hold comfort themselves (see Fallbacks).
-3. **Guests**, in a guest room: the comfort target until the guests leave at `guests_end_hour` (14:00 by default) after the coming night, today's when guests are switched on before 06:00 and tomorrow's otherwise, for 1 to 3 nights. Guests are switched on only on a trusted clock, as their end is reckoned from it, and end early on any clock.
+3. **Guests**, in a guest room: the comfort target until the guests leave at `guests_end_hour` (14:00 by default) after the coming night, today's when guests are switched on before 06:00 and tomorrow's otherwise, or the day after when that hour has already passed, as an end hour of 02:00 does at 03:00; each further night, up to 3, moves the end a day later. Guests are switched on only on a trusted clock, as their end is reckoned from it, and end early on any clock.
 4. **Schedule**: the comfort target inside one of the room's comfort windows, until it ends.
 5. **Setback**: the night target until the next comfort window.
 

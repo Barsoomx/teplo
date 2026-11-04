@@ -137,8 +137,9 @@ def override_problems(target: Decimal) -> tuple[SettingProblem, ...]:
 
 def guests_end(now: datetime, nights: int, end_hour: int) -> datetime:
     first_day = now.date() if now.hour < GUESTS_NIGHT_ENDS_HOUR else now.date() + DAY
-    end = datetime.combine(first_day + (nights - 1) * DAY, time(end_hour), tzinfo=now.tzinfo)
-    return end if end > now else end + DAY
+    first = datetime.combine(first_day, time(end_hour), tzinfo=now.tzinfo)
+    checkout = first if first > now else first + DAY
+    return checkout + (nights - 1) * DAY
 
 
 def _beneath_override(
