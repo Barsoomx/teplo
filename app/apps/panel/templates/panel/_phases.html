@@ -4,10 +4,11 @@
   <div class="phase-meter{% if meter.stale %} is-offline{% endif %}" style="--scale: {{ phases.scale_amps|unlocalize }}; --start-ceiling: {{ phases.start_ceiling_amps|unlocalize }}; --shed: {{ phases.shed_amps|unlocalize }};">
     <ul class="phase-list" role="list">
       {% for phase in meter.phases %}
-      <li class="phase"{% if not phase.stale %} style="--amps: {{ phase.amps|unlocalize }};"{% endif %}>
+      <li class="phase{% if phase.estimated %} is-estimated{% endif %}"{% if not phase.stale %} style="--amps: {{ phase.amps|unlocalize }};"{% endif %}{% if phase.estimated %} title="{{ phase|estimate_parts_text }}"{% endif %}>
         <span class="phase-name">{{ phase.phase|upper }}</span>
         <span class="phase-bar" aria-hidden="true">{% if not phase.stale %}<span class="phase-fill"></span>{% endif %}</span>
-        <span class="phase-value">{% if phase.stale %}<span class="phase-missing">—</span>{% else %}{% blocktranslate with amps=phase.amps|floatformat:1 %}{{ amps }} A{% endblocktranslate %}{% endif %}</span>
+        <span class="phase-value">{% if phase.stale %}<span class="phase-missing">—</span>{% elif phase.estimated %}{% blocktranslate with amps=phase.amps|floatformat:1 %}≈ {{ amps }} A{% endblocktranslate %}{% else %}{% blocktranslate with amps=phase.amps|floatformat:1 %}{{ amps }} A{% endblocktranslate %}{% endif %}</span>
+        {% if phase.estimated %}<span class="phase-estimate">{% translate '≈ estimate' %}</span>{% endif %}
         {% if phase.ev_amps is not None %}<span class="chip phase-ev">{% icon 'zap' %}{% blocktranslate with amps=phase.ev_amps|floatformat:0 %}EV charging: {{ amps }} A{% endblocktranslate %}</span>{% endif %}
       </li>
       {% endfor %}

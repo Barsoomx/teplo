@@ -6,8 +6,9 @@ import pytest
 from django.db import IntegrityError, connection
 from django.test.utils import CaptureQueriesContext
 
-from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
+from apps.power.domain.loads import LoadPhase
 from apps.power.factories import LoadSettingsFactory
 from apps.power.models import LoadSettings
 from apps.power.repositories.load_settings import LoadSettingsRepository
@@ -29,6 +30,16 @@ DEFAULT_CONFIG = LoadSettingsConfig(
 @pytest.fixture
 def f_live_settings() -> LoadSettings:
     return LoadSettingsFactory.create(load_management_live=True, shed_interval_seconds=2, restore_interval_seconds=90)
+
+
+@pytest.fixture
+def f_settings_estimating_l2() -> LoadSettings:
+    return LoadSettingsFactory.create(estimated_phase='l2', estimated_base_amps=Decimal('3.5'))
+
+
+@pytest.fixture
+def settings_estimating(request: pytest.FixtureRequest) -> None:
+    LoadSettingsFactory.create(estimated_phase=request.param, estimated_base_amps=Decimal('3.5'))
 
 
 @pytest.fixture
@@ -82,6 +93,31 @@ def test_control_reads_the_stored_load_settings() -> None:
             meter_lost_after=timedelta(seconds=90),
         ),
         default_amps=Decimal('7.5'),
+    )
+
+
+@pytest.mark.usefixtures('settings_estimating')
+@pytest.mark.parametrize(
+    ('settings_estimating', 'expected'),
+    [
+        ('l2', EstimateSettings(phase=LoadPhase.L2, base_amps=Decimal('3.5'))),
+        ('', EstimateSettings(phase=None, base_amps=Decimal('3.5'))),
+    ],
+    ids=['estimated_phase', 'no_estimated_phase'],
+    indirect=['settings_estimating'],
+)
+def test_control_reads_the_estimated_phase_and_its_base_current(expected: EstimateSettings) -> None:
+    assert LoadSettingsRepository.control().estimate == expected
+
+
+def test_saved_config_leaves_the_estimated_phase_and_its_base_current(f_settings_estimating_l2: LoadSettings) -> None:
+    LoadSettingsRepository.save_config(replace(DEFAULT_CONFIG, shed_amps=Decimal('25.0')), ('shed_amps',))
+
+    stored = LoadSettings.objects.get(pk=f_settings_estimating_l2.pk)
+    assert (stored.shed_amps, stored.estimated_phase, stored.estimated_base_amps) == (
+        Decimal('25.0'),
+        'l2',
+        Decimal('3.5'),
     )
 
 

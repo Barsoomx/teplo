@@ -19,6 +19,7 @@ from apps.climate.usecases.set_guests import SetGuestsInputDTO, SetGuestsOutputD
 from apps.core.domain.errors import SettingsRejectedError
 from apps.core.domain.settings import SettingProblem
 from apps.house.domain.errors import RoomNotFoundError
+from apps.notifications.domain.alerts import PhaseReading
 from apps.notifications.domain.commands import CommandKind, CommandRoom, OwnerCommand
 from apps.notifications.services.climate_commands import ClimateCommandRunner
 from apps.notifications.stubs import ExecutableStub, PhaseReadoutStub, RoomStatusSourceStub
@@ -27,7 +28,11 @@ MOSCOW = ZoneInfo('Europe/Moscow')
 NOW = datetime(2026, 11, 4, 16, 40, tzinfo=MOSCOW)
 UNTIL = NOW + timedelta(hours=2)
 GUESTS_LEAVE = datetime(2026, 11, 5, 14, 0, tzinfo=MOSCOW)
-PHASES = (('l1', Decimal('12.4')), ('l2', None), ('l3', Decimal('3.0')))
+PHASES = (
+    PhaseReading(phase='l1', amps=Decimal('12.4'), estimated=False),
+    PhaseReading(phase='l2', amps=Decimal('8.42'), estimated=True),
+    PhaseReading(phase='l3', amps=None, estimated=False),
+)
 OPEN_SPACE_ROOM = CommandRoom(slug='open-space', name='Гостиная, кухня и прихожая', level=1, stems=('гостин',))
 BATHROOM_ROOM = CommandRoom(slug='bathroom-2f', name='Санузел 2 этаж', level=2, stems=('санузел',))
 BEDROOM_ROOM = CommandRoom(slug='bedroom', name='Спальня', level=2, stems=('спальн',))
@@ -317,7 +322,7 @@ def test_status_gives_the_guests_each_room_with_its_target_and_floors_and_the_ph
         'Санузел 2 этаж: цель 22,0°, комфорт до 23:30\n'
         'Санузел 2 этаж: пол 25,0° (на термостате 28°)\n'
         'Спальня: 18,8°, цель 19,5°, ночь\n'
-        'Фазы: L1 12,4 А · L2 — · L3 3,0 А'
+        'Фазы: L1 12,4 А · L2 ≈8,4 А · L3 —'
     )
 
 

@@ -57,7 +57,14 @@ class LoadAdmin(admin.ModelAdmin):
 
 @admin.register(LoadSettings)
 class LoadSettingsAdmin(admin.ModelAdmin):
-    list_display = ('__str__', 'load_management_live', 'start_ceiling_amps', 'shed_amps', 'restore_amps')
+    list_display = (
+        '__str__',
+        'load_management_live',
+        'start_ceiling_amps',
+        'shed_amps',
+        'restore_amps',
+        'estimated_phase',
+    )
 
     def has_add_permission(self, request: HttpRequest) -> bool:  # noqa: ARG002
         return not LoadSettings.objects.exists()

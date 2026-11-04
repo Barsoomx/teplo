@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from apps.power.domain.control import LoadControl
+from apps.power.domain.estimate import PhaseEstimate
 from apps.power.domain.ev_detection import EvWatch
 from apps.power.domain.load_status import LoadReading, LoadStatus
 from apps.power.domain.loads import MEASURED_PHASES, LearnedPhase, LiveShed, LoadPhase, LoadRecord
@@ -50,6 +51,7 @@ class PhaseState:
     samples: tuple[PhaseSample, ...]
     last_currents: Mapping[LoadPhase, Decimal] = field(default_factory=dict)
     last_read_at: Mapping[LoadPhase, float] = field(default_factory=dict)
+    estimate: PhaseEstimate | None = None
 
     @property
     def silent_currents(self) -> dict[LoadPhase, Decimal]:
@@ -143,7 +145,7 @@ def load_statuses(
     return tuple(
         LoadStatus.of(
             record,
-            _usable(readings.get(record.slug), shedding.failed.get(record.slug)),
+            usable_reading(readings.get(record.slug), shedding.failed.get(record.slug)),
             shed=_shed_in_view(shedding.sheds.get(record.slug), live=live),
             default_amps=loads.control.default_amps,
         )
@@ -155,22 +157,31 @@ def relieved_currents(
     currents: Mapping[LoadPhase, Decimal],
     read_at: Mapping[LoadPhase, float],
     sheds: Iterable[Shed],
+    *,
+    estimated: LoadPhase | None = None,
 ) -> dict[LoadPhase, Decimal]:
     kept = tuple(sheds)
-    return {phase: current - relief(kept, phase, read_at[phase]) for phase, current in currents.items()}
+    return {
+        phase: current - relief(kept, phase, read_at[phase], estimated=phase is estimated)
+        for phase, current in currents.items()
+    }
 
 
 def phase_amps(
     currents: Mapping[LoadPhase, Decimal],
+    measured: Mapping[LoadPhase, Decimal],
     read_at: Mapping[LoadPhase, float],
     sheds: Iterable[Shed],
+    *,
+    estimated: LoadPhase | None,
 ) -> dict[LoadPhase, PhaseAmps]:
     kept = tuple(sheds)
-    live = relieved_currents(currents, read_at, (shed for shed in kept if in_view(shed, live=True)))
-    dry_run = relieved_currents(currents, read_at, kept)
+    live_sheds = (shed for shed in kept if in_view(shed, live=True))
+    live = relieved_currents(currents, read_at, live_sheds, estimated=estimated)
+    dry_run = relieved_currents(currents, read_at, kept, estimated=estimated)
     return {
-        phase: PhaseAmps(measured=current, live=live[phase], dry_run=dry_run[phase], read_at=read_at[phase])
-        for phase, current in currents.items()
+        phase: PhaseAmps(measured=measured[phase], live=live[phase], dry_run=dry_run[phase], read_at=read_at[phase])
+        for phase in currents
     }
 
 
@@ -180,6 +191,7 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
             state.phases.currents,
             state.phases.read_at,
             (shed for shed in shedding.sheds.values() if in_view(shed, live=live)),
+            estimated=state.loads.control.estimate.phase,
         ),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
         overloaded=overloaded_phases(state.phases.watches, live=live),
@@ -189,25 +201,31 @@ def guard_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardVi
 
 def start_view(state: GuardState, shedding: ShedState, *, live: bool) -> GuardView:
     dry_run_sheds = tuple(shed for shed in shedding.sheds.values() if not shed.live and not live)
+    estimated = state.loads.control.estimate.phase
     return GuardView(
-        currents=relieved_currents(state.phases.currents, state.phases.read_at, dry_run_sheds),
+        currents=relieved_currents(state.phases.currents, state.phases.read_at, dry_run_sheds, estimated=estimated),
         loads=load_statuses(state.loads, state.readings, shedding, live=live),
         overloaded=overloaded_phases(state.phases.watches, live=live),
         calming=calming_phases(state.phases.watches, live=live),
-        silent_currents=relieved_currents(state.phases.silent_currents, state.phases.last_read_at, dry_run_sheds),
+        silent_currents=relieved_currents(
+            state.phases.silent_currents,
+            state.phases.last_read_at,
+            dry_run_sheds,
+            estimated=estimated,
+        ),
     )
 
 
 def awaits_reading(state: GuardState, shedding: ShedState, slug: str) -> bool:
-    return slug in shedding.failed and _usable(state.readings.get(slug), shedding.failed[slug]) is None
+    return slug in shedding.failed and usable_reading(state.readings.get(slug), shedding.failed[slug]) is None
 
 
-def _shed_in_view(shed: Shed | None, *, live: bool) -> bool:
-    return shed is not None and in_view(shed, live=live)
-
-
-def _usable(seen: SeenReading | None, failed_at: float | None) -> LoadReading | None:
+def usable_reading(seen: SeenReading | None, failed_at: float | None) -> LoadReading | None:
     if seen is None or (failed_at is not None and seen.reading.read_at <= failed_at):
         return None
 
     return seen.reading
+
+
+def _shed_in_view(shed: Shed | None, *, live: bool) -> bool:
+    return shed is not None and in_view(shed, live=live)

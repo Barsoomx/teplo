@@ -7,7 +7,12 @@ from unittest.mock import MagicMock
 import pytest
 from django.test import Client
 
-from apps.panel.usecases.get_phase_currents import GetPhaseCurrentsOutputDTO, PhaseCurrent, PhaseMeterOverview
+from apps.panel.usecases.get_phase_currents import (
+    EstimatePartOverview,
+    GetPhaseCurrentsOutputDTO,
+    PhaseCurrent,
+    PhaseMeterOverview,
+)
 
 pytestmark = pytest.mark.django_db
 
@@ -29,6 +34,41 @@ def stale_phase_currents(phase_currents: GetPhaseCurrentsOutputDTO) -> GetPhaseC
             ),
         ),
     )
+
+
+@pytest.fixture
+def estimated_phase_currents(phase_currents: GetPhaseCurrentsOutputDTO) -> GetPhaseCurrentsOutputDTO:
+    return replace(
+        phase_currents,
+        meter=PhaseMeterOverview(
+            stale=False,
+            error_code=None,
+            error=None,
+            phases=(
+                PhaseCurrent(phase='l1', amps=Decimal('12.40'), stale=False, age_seconds=1),
+                PhaseCurrent(
+                    phase='l2',
+                    amps=Decimal('14.42'),
+                    stale=False,
+                    age_seconds=1,
+                    estimated=True,
+                    estimate_parts=(
+                        EstimatePartOverview(name='base', amps=Decimal('2.0')),
+                        EstimatePartOverview(name='Бойлер 2 этаж', amps=Decimal('6.42')),
+                        EstimatePartOverview(name='Санузел 1 этаж', amps=Decimal('6.0')),
+                    ),
+                ),
+                PhaseCurrent(phase='l3', amps=Decimal('3.00'), stale=False, age_seconds=2),
+            ),
+        ),
+    )
+
+
+@pytest.fixture
+def m_estimated_phases_use_case(estimated_phase_currents: GetPhaseCurrentsOutputDTO) -> Iterator[MagicMock]:
+    with mock.patch('apps.panel.views.phases_partial.GetPhaseCurrentsUseCase') as use_case:
+        use_case.init.return_value.execute.return_value = estimated_phase_currents
+        yield use_case
 
 
 @pytest.fixture
@@ -104,6 +144,26 @@ def test_phases_partial_badges_an_ev_on_its_phase_and_names_the_threshold_marks(
         'title="Порог отключения">24<' in content,
         m_phases_use_case.init.call_count,
     ) == (1, True, True, True, 1)
+
+
+def test_phases_partial_draws_the_estimated_phase_dashed_with_its_parts_in_the_title(
+    f_russian_client: Client,
+    m_estimated_phases_use_case: MagicMock,
+) -> None:
+    response = f_russian_client.get('/phases/')
+
+    content = response.content.decode()
+    l2 = content[content.index('<li class="phase is-estimated"') :]
+    l2 = l2[: l2.index('</li>')]
+    assert (
+        content.count('is-estimated'),
+        'title="база 2,0 А · Бойлер 2 этаж 6,4 А · Санузел 1 этаж 6,0 А"' in l2,
+        '≈ 14,4 А' in l2,
+        '<span class="phase-estimate">≈ оценка</span>' in l2,
+        'class="phase-fill"' in l2,
+        'is-offline' in content,
+        m_estimated_phases_use_case.init.call_count,
+    ) == (1, True, True, True, True, False, 1)
 
 
 def test_phases_partial_is_empty_without_a_phase_meter(f_client: Client, m_meterless_use_case: MagicMock) -> None:

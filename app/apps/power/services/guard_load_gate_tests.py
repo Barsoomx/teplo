@@ -6,7 +6,7 @@ import pytest
 
 from apps.climate.domain.drive import StartAnswer, ZoneStart
 from apps.core.stubs import MonotonicClockStub
-from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.control import NO_ESTIMATE, EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardLoads, GuardState, SeenReading, ShedState
 from apps.power.domain.load_status import thermostat_reading
@@ -102,10 +102,16 @@ def _remember(
     overloaded: frozenset[LoadPhase] = frozenset(),
     calming: frozenset[LoadPhase] = frozenset(),
     last_l2: str | None = None,
+    estimate: EstimateSettings = NO_ESTIMATE,
 ) -> None:
     loads = GuardLoads(
         records=(BOILER, HALLWAY, KITCHEN, LIVING_ROOM),
-        control=LoadControl(live=management_live, thresholds=THRESHOLDS, default_amps=Decimal('6.0')),
+        control=LoadControl(
+            live=management_live,
+            thresholds=THRESHOLDS,
+            default_amps=Decimal('6.0'),
+            estimate=estimate,
+        ),
         live_zones=frozenset({'hallway', 'kitchen', 'living-room'}),
         meter='phase-meter',
         read_at=AT,
@@ -172,6 +178,21 @@ def f_live_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: Guard
 @pytest.fixture
 def f_dry_run_gate(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     _remember(f_book, management_live=False, l2='13.0')
+    return f_gate
+
+
+@pytest.fixture
+def f_dry_run_gate_estimating(
+    request: pytest.FixtureRequest,
+    f_book: GuardBook,
+    f_gate: GuardLoadGate,
+) -> GuardLoadGate:
+    _remember(
+        f_book,
+        management_live=False,
+        l2='13.0',
+        estimate=EstimateSettings(phase=request.param, base_amps=Decimal('2.0')),
+    )
     return f_gate
 
 
@@ -365,6 +386,23 @@ def test_dry_run_start_that_waits_again_after_its_episode_ended_is_noted_again(f
 
     assert f_dry_run_gate.ask_starts([KITCHEN_START], NOW) == {
         'kitchen': StartAnswer(granted=True, note=_would_wait(LoadPhase.L2, '21.0', StartRefusal.NO_HEADROOM)),
+    }
+
+
+@pytest.mark.parametrize(
+    ('f_dry_run_gate_estimating', 'estimated'),
+    [(LoadPhase.L2, True), (LoadPhase.L1, False)],
+    ids=['on_the_estimated_phase', 'beside_the_estimated_phase'],
+    indirect=['f_dry_run_gate_estimating'],
+)
+def test_dry_run_start_that_would_wait_says_whether_its_phase_is_estimated(
+    f_dry_run_gate_estimating: GuardLoadGate,
+    estimated: bool,
+) -> None:
+    note = replace(_would_wait(LoadPhase.L2, '21.0', StartRefusal.NO_HEADROOM), estimated=estimated)
+
+    assert f_dry_run_gate_estimating.ask_starts([KITCHEN_START], NOW) == {
+        'kitchen': StartAnswer(granted=True, note=note),
     }
 
 

@@ -9,7 +9,7 @@ from apps.power.domain.control import starts_live
 from apps.power.domain.events import StartWouldWaitDryRun
 from apps.power.domain.guard import GuardState, start_view
 from apps.power.domain.load_status import LoadStatus
-from apps.power.domain.loads import LoadRecord
+from apps.power.domain.loads import LoadPhase, LoadRecord
 from apps.power.domain.meter_watch import meter_condition
 from apps.power.domain.start_gate import StartDecision, StartRequest
 from apps.power.services.guard_book import GuardBook, guard_book
@@ -67,6 +67,7 @@ class GuardLoadGate:
                 request,
                 decisions[request.load.slug],
                 began=request.load.slug in began,
+                estimated=state.loads.control.estimate.phase,
                 now=now,
             )
             for zone, request in requests.items()
@@ -102,6 +103,7 @@ def _answer(
     decision: StartDecision,
     *,
     began: bool,
+    estimated: LoadPhase | None,
     now: datetime,
 ) -> StartAnswer:
     refusal = decision.refusal
@@ -117,15 +119,17 @@ def _answer(
         return StartAnswer(granted=True, note=None)
 
     overrun = decision.overrun
+    phase = request.load.phase if overrun is None else overrun.phase
     return StartAnswer(
         granted=True,
         note=StartWouldWaitDryRun(
             load=record.slug,
             name=record.name,
-            phase=request.load.phase if overrun is None else overrun.phase,
+            phase=phase,
             amps=None if overrun is None else overrun.amps,
             load_amps=request.load.amps,
             reason=refusal,
+            estimated=phase is estimated,
             occurred_at=now,
         ),
     )

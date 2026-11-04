@@ -160,7 +160,9 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
 
             shed = unconfirmed.shed
             logger.info('load_shed_confirmed', load=slug, moved=moved(shed, record))
-            self._event_store.add_event(_shed_event(LoadShed, record, shed, amps=unconfirmed.amps, now=now))
+            self._event_store.add_event(
+                _shed_event(LoadShed, record, shed, amps=unconfirmed.amps, estimated=_estimated(state, shed), now=now),
+            )
             shedding = _stored(replace(shedding, sheds={**shedding.sheds, slug: shed}), slug, stored_shed(shed))
         return shedding
 
@@ -240,6 +242,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 amps=state.phases.currents.get(shed.phase),
                 cause=RestoreCause.RELEASED,
                 switched_on=handed is HandBack.SWITCHED_ON,
+                estimated=_estimated(state, shed),
                 now=now,
             ),
         )
@@ -262,7 +265,11 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             if not shed_due(watched[phase].overload(live=live), view.currents.get(phase), at, thresholds):
                 continue
 
-            load = choose_shed(phase, self._candidates(state, shedding, view, live=live))
+            load = choose_shed(
+                phase,
+                self._candidates(state, shedding, view, live=live),
+                unknown_phase=phase is not state.loads.control.estimate.phase,
+            )
             if load is None:
                 continue
 
@@ -350,7 +357,14 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
         if stamp_lost:
             shed = replace(shed, unstamped_write_at=shed.at)
         self._event_store.add_event(
-            _shed_event(LoadShed if live else LoadShedDryRun, record, shed, amps=amps, now=now),
+            _shed_event(
+                LoadShed if live else LoadShedDryRun,
+                record,
+                shed,
+                amps=amps,
+                estimated=_estimated(state, shed),
+                now=now,
+            ),
         )
         shedding = replace(shedding, sheds={**shedding.sheds, record.slug: shed})
         if not live:
@@ -402,6 +416,7 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 amps=view.currents.get(shed.phase),
                 cause=_restore_cause(meter, shed, view),
                 switched_on=live and record.kind is LoadKind.PLUG and shed.was_on is True,
+                estimated=_estimated(state, shed),
                 now=now,
             ),
         )
@@ -643,6 +658,10 @@ def _overloaded(state: GuardState, phase: LoadPhase) -> bool:
     return watch is not None and watch.live.overloaded
 
 
+def _estimated(state: GuardState, shed: Shed) -> bool:
+    return shed.phase is state.loads.control.estimate.phase
+
+
 def _restore_cause(meter: MeterCondition, shed: Shed, view: GuardView) -> RestoreCause:
     if meter is MeterCondition.LOST and shed.phase not in view.currents:
         return RestoreCause.LIMP
@@ -699,6 +718,7 @@ def _shed_event(
     shed: Shed,
     *,
     amps: Decimal | None,
+    estimated: bool,
     now: datetime,
 ) -> LoadShedEvent:
     return event_type(
@@ -709,6 +729,7 @@ def _shed_event(
         amps=amps,
         load_amps=shed.amps,
         reason=shed.reason,
+        estimated=estimated,
         occurred_at=now,
     )
 
@@ -721,6 +742,7 @@ def _restore_event(
     amps: Decimal | None,
     cause: RestoreCause,
     switched_on: bool,
+    estimated: bool,
     now: datetime,
 ) -> LoadRestoreEvent:
     return event_type(
@@ -733,5 +755,6 @@ def _restore_event(
         reason=shed.reason,
         cause=cause,
         switched_on=switched_on,
+        estimated=estimated,
         occurred_at=now,
     )

@@ -3,10 +3,12 @@ from decimal import Decimal
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
-from apps.power.domain.load_config import SECONDS_MAX, SECONDS_MIN
+from apps.power.domain.load_config import AMPS_MAX, BASE_AMPS_MIN, ESTIMATE_BASE_AMPS, SECONDS_MAX, SECONDS_MIN
+from apps.power.domain.loads import MEASURED_PHASES
 from apps.power.models.load import AMPS_VALIDATORS
 
 SECONDS_VALIDATORS = [MinValueValidator(SECONDS_MIN), MaxValueValidator(SECONDS_MAX)]
+ESTIMATED_PHASE_CHOICES = [('', '—'), *((phase.value, phase.value) for phase in MEASURED_PHASES)]
 
 
 class LoadSettings(models.Model):
@@ -40,6 +42,20 @@ class LoadSettings(models.Model):
         decimal_places=1,
         default=Decimal('6.0'),
         validators=AMPS_VALIDATORS,
+    )
+    estimated_phase = models.CharField(
+        max_length=16,
+        choices=ESTIMATED_PHASE_CHOICES,
+        blank=True,
+        default='',
+        db_default='',
+    )
+    estimated_base_amps = models.DecimalField(
+        max_digits=4,
+        decimal_places=1,
+        default=ESTIMATE_BASE_AMPS,
+        db_default=ESTIMATE_BASE_AMPS,
+        validators=[MinValueValidator(BASE_AMPS_MIN), MaxValueValidator(AMPS_MAX)],
     )
     updated_at = models.DateTimeField(auto_now=True)
 

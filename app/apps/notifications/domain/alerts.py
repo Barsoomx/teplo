@@ -47,3 +47,10 @@ class PhaseAlarm:
     alarmed: bool
     amps: Decimal | None
     began_ago: timedelta | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class PhaseReading:
+    phase: str
+    amps: Decimal | None
+    estimated: bool

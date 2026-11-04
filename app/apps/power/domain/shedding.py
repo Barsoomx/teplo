@@ -155,9 +155,9 @@ def in_view(shed: Shed, *, live: bool) -> bool:
     return shed.live or not live
 
 
-def relief(sheds: Iterable[Shed], phase: LoadPhase, read_at: float) -> Decimal:
+def relief(sheds: Iterable[Shed], phase: LoadPhase, read_at: float, *, estimated: bool = False) -> Decimal:
     return sum(
-        (shed.amps for shed in sheds if shed.phase is phase and (not shed.live or read_at < shed.settled_at)),
+        (shed.amps for shed in sheds if shed.phase is phase and _relieves(shed, read_at, estimated=estimated)),
         Decimal(0),
     )
 
@@ -181,13 +181,13 @@ def switched_back_on(shed: Shed, reading: LoadReading | None) -> bool:
     return reading.read_at > shed.at and reading.closed is True
 
 
-def choose_shed(phase: LoadPhase, loads: Sequence[LoadStatus]) -> LoadStatus | None:
+def choose_shed(phase: LoadPhase, loads: Sequence[LoadStatus], *, unknown_phase: bool = True) -> LoadStatus | None:
     drawing = sorted(
         (load for load in loads if load.available and load.drawing and not load.shed),
         key=lambda load: load.priority,
     )
     on_phase = [load for load in drawing if load.phase is phase]
-    of_unknown_phase = [load for load in drawing if load.phase is LoadPhase.UNKNOWN]
+    of_unknown_phase = [load for load in drawing if unknown_phase and load.phase is LoadPhase.UNKNOWN]
     return next(iter([*on_phase, *of_unknown_phase]), None)
 
 
@@ -233,6 +233,13 @@ def _resumed(record: LoadRecord, stored: LiveShed, *, at: float, now: datetime, 
         occurred_at=stored.at,
         settled_at=SETTLED,
     )
+
+
+def _relieves(shed: Shed, read_at: float, *, estimated: bool) -> bool:
+    if not shed.live:
+        return True
+
+    return not estimated and read_at < shed.settled_at
 
 
 def _written_after_its_hold(record: LoadRecord, stored: LiveShed, write_interval: timedelta) -> bool:

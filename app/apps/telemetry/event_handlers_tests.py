@@ -82,6 +82,7 @@ BOILER_SHED = {
     'amps': '26.4',
     'load_amps': '6.0',
     'reason': 'overload',
+    'estimated': False,
 }
 
 
@@ -335,12 +336,17 @@ def test_cleared_alert_is_journaled() -> None:
         (
             journal_phase_overload,
             PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal('26.4'), occurred_at=NOW),
-            ('phase_overload', 'l2', {'phase': 'l2', 'amps': '26.4'}, NOW),
+            ('phase_overload', 'l2', {'phase': 'l2', 'amps': '26.4', 'estimated': False}, NOW),
+        ),
+        (
+            journal_phase_overload,
+            PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal('24.6'), estimated=True, occurred_at=NOW),
+            ('phase_overload', 'l2', {'phase': 'l2', 'amps': '24.6', 'estimated': True}, NOW),
         ),
         (
             journal_phase_calm,
             PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('17.2'), occurred_at=NOW),
-            ('phase_calm', 'l2', {'phase': 'l2', 'amps': '17.2'}, NOW),
+            ('phase_calm', 'l2', {'phase': 'l2', 'amps': '17.2', 'estimated': False}, NOW),
         ),
         (
             journal_load_shed,
@@ -397,6 +403,7 @@ def test_cleared_alert_is_journaled() -> None:
                     'reason': 'overload',
                     'cause': 'calm',
                     'switched_on': False,
+                    'estimated': False,
                 },
                 NOW,
             ),
@@ -428,6 +435,7 @@ def test_cleared_alert_is_journaled() -> None:
                     'reason': 'meter_lost',
                     'cause': 'released',
                     'switched_on': False,
+                    'estimated': False,
                 },
                 NOW,
             ),
@@ -469,6 +477,7 @@ def test_cleared_alert_is_journaled() -> None:
                 amps=Decimal('21.5'),
                 load_amps=Decimal('8.0'),
                 reason=StartRefusal.NO_HEADROOM,
+                estimated=True,
                 occurred_at=NOW,
             ),
             (
@@ -481,6 +490,7 @@ def test_cleared_alert_is_journaled() -> None:
                     'amps': '21.5',
                     'load_amps': '8.0',
                     'reason': 'no_headroom',
+                    'estimated': True,
                 },
                 NOW,
             ),
@@ -515,6 +525,7 @@ def test_cleared_alert_is_journaled() -> None:
     ],
     ids=[
         'phase_overload',
+        'phase_overload_by_the_estimate',
         'phase_calm',
         'load_shed',
         'load_shed_dry_run',

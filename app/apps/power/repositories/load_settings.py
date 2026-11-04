@@ -3,8 +3,9 @@ from dataclasses import asdict
 from datetime import timedelta
 
 from apps.core.repositories.write_lock import lock_for_update
-from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.load_config import LoadSettingsConfig, LoadSettingsRecord
+from apps.power.domain.loads import MEASURED_PHASES, LoadPhase
 from apps.power.models import LoadSettings
 
 
@@ -27,6 +28,10 @@ class LoadSettingsRepository:
                 meter_lost_after=timedelta(seconds=load_settings.meter_lost_after_seconds),
             ),
             default_amps=load_settings.default_load_amps,
+            estimate=EstimateSettings(
+                phase=_estimated_phase(load_settings.estimated_phase),
+                base_amps=load_settings.estimated_base_amps,
+            ),
         )
 
     @staticmethod
@@ -66,3 +71,7 @@ class LoadSettingsRepository:
             return
 
         LoadSettings.objects.filter(pk=stored.pk).update(**changes)
+
+
+def _estimated_phase(value: str) -> LoadPhase | None:
+    return next((phase for phase in MEASURED_PHASES if phase == value), None)

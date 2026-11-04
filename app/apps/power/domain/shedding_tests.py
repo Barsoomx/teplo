@@ -161,6 +161,18 @@ def test_relief_counts_live_sheds_while_they_settle_and_dry_run_sheds_until_rest
 
 
 @pytest.mark.parametrize(
+    ('phase', 'expected'),
+    [(LoadPhase.L1, Decimal('4.0')), (LoadPhase.L2, Decimal('5.0')), (LoadPhase.L3, Decimal(0))],
+)
+def test_relief_of_an_estimated_phase_counts_only_dry_run_sheds(
+    f_sheds: list[Shed],
+    phase: LoadPhase,
+    expected: Decimal,
+) -> None:
+    assert relief(f_sheds, phase, AT, estimated=True) == expected
+
+
+@pytest.mark.parametrize(
     ('read_at', 'expected'),
     [(AT + 1.9, Decimal('6.0')), (AT + 2, Decimal(0))],
     ids=['reading_taken_while_it_settles', 'reading_taken_once_it_settled'],
@@ -526,6 +538,21 @@ def test_shed_turns_to_loads_of_unknown_phase_once_none_draws_on_the_phase() -> 
     loads = [replace(BOILER, drawing=False), replace(HALLWAY, shed=True), replace(LIVING_ROOM, available=False)]
 
     assert choose_shed(LoadPhase.L1, [*loads, KITCHEN, BATHROOM]) == BATHROOM
+
+
+@pytest.mark.parametrize(
+    ('loads', 'expected'),
+    [
+        ([replace(BOILER, drawing=False), BATHROOM, KITCHEN], None),
+        ([replace(BOILER, drawing=False), BATHROOM, HALLWAY], HALLWAY),
+    ],
+    ids=['only_a_load_of_unknown_phase_draws', 'a_load_of_the_phase_draws'],
+)
+def test_shed_for_an_estimated_phase_passes_over_loads_of_unknown_phase(
+    loads: list[LoadStatus],
+    expected: LoadStatus | None,
+) -> None:
+    assert choose_shed(LoadPhase.L1, loads, unknown_phase=False) == expected
 
 
 def test_shed_finds_nothing_when_no_load_draws_on_the_phase() -> None:

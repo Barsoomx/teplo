@@ -2,11 +2,10 @@ import io
 import urllib.request
 from collections.abc import Callable
 from datetime import datetime
-from decimal import Decimal
 
 from apps.climate.domain.room_status import RoomStatus
 from apps.core.domain.errors import DomainError
-from apps.notifications.domain.alerts import MonitoredDevice, PhaseAlarm, ZoneHeating
+from apps.notifications.domain.alerts import MonitoredDevice, PhaseAlarm, PhaseReading, ZoneHeating
 from apps.notifications.domain.bot import BotUpdate
 from apps.notifications.domain.commands import CommandRoom, OwnerCommand
 from apps.power.domain.outage import OutageCause, OutageRecord, PowerCut
@@ -151,10 +150,10 @@ class RoomStatusSourceStub:
 
 
 class PhaseReadoutStub:
-    def __init__(self, phases: tuple[tuple[str, Decimal | None], ...] | None) -> None:
+    def __init__(self, phases: tuple[PhaseReading, ...] | None) -> None:
         self._phases = phases
 
-    def phases(self) -> tuple[tuple[str, Decimal | None], ...] | None:
+    def phases(self) -> tuple[PhaseReading, ...] | None:
         return self._phases
 
 

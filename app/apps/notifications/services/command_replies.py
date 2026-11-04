@@ -10,6 +10,7 @@ from django.utils.translation import gettext_lazy
 from apps.climate.domain.drive import PendingKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.notifications.domain.alerts import PhaseReading
 
 HELP = gettext_lazy(
     'Commands:\n'
@@ -67,6 +68,7 @@ ZONE_FLOOR = gettext_lazy('%(zone)s: floor %(floor)s° (set to %(setpoint)s°)')
 ZONE_OFF = gettext_lazy('%(zone)s: floor %(floor)s°, the thermostat is off')
 PHASES = gettext_lazy('Phases: %(phases)s')
 PHASE_AMPS = gettext_lazy('%(phase)s %(amps)s A')
+ESTIMATED_PHASE_AMPS = gettext_lazy('%(phase)s ≈%(amps)s A')
 TOMORROW = gettext_lazy('tomorrow')
 OR = gettext_lazy('or')
 PENDING_LINES = {
@@ -164,12 +166,14 @@ def zone_write_lines(rooms: Iterable[RoomStatus], now: datetime) -> list[str]:
     return [zone_write_line(zone, now) for room in rooms for zone in room.zones]
 
 
-def phases_line(phases: Sequence[tuple[str, Decimal | None]]) -> str:
-    return str(PHASES) % {'phases': PHASES_SEPARATOR.join(_phase_text(phase, amps) for phase, amps in phases)}
+def phases_line(phases: Sequence[PhaseReading]) -> str:
+    return str(PHASES) % {'phases': PHASES_SEPARATOR.join(_phase_text(reading) for reading in phases)}
 
 
-def _phase_text(phase: str, amps: Decimal | None) -> str:
-    if amps is None:
-        return f'{phase.upper()} {MISSING}'
+def _phase_text(reading: PhaseReading) -> str:
+    phase = reading.phase.upper()
+    if reading.amps is None:
+        return f'{phase} {MISSING}'
 
-    return str(PHASE_AMPS) % {'phase': phase.upper(), 'amps': floatformat(amps, 1)}
+    template = ESTIMATED_PHASE_AMPS if reading.estimated else PHASE_AMPS
+    return str(template) % {'phase': phase, 'amps': floatformat(reading.amps, 1)}

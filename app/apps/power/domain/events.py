@@ -22,12 +22,14 @@ class LoadCommand(StrEnum):
 class PhaseOverloaded(DomainEvent):
     phase: LoadPhase
     amps: Decimal
+    estimated: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
 class PhaseCalmed(DomainEvent):
     phase: LoadPhase
     amps: Decimal
+    estimated: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -39,6 +41,7 @@ class LoadShedEvent(DomainEvent):
     amps: Decimal | None
     load_amps: Decimal
     reason: ShedReason
+    estimated: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -62,6 +65,7 @@ class LoadRestoreEvent(DomainEvent):
     reason: ShedReason
     cause: RestoreCause
     switched_on: bool
+    estimated: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -98,6 +102,7 @@ class StartWouldWaitDryRun(DomainEvent):
     amps: Decimal | None
     load_amps: Decimal
     reason: StartRefusal
+    estimated: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)

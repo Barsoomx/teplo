@@ -98,6 +98,28 @@ def overloads_around_a_cut() -> None:
 
 
 @pytest.fixture
+def overloads_measured_and_estimated() -> None:
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l3',
+        payload={'phase': 'l3', 'amps': '26.0', 'estimated': False},
+        created_at=NOW - timedelta(seconds=100),
+    )
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l1',
+        payload={'phase': 'l1', 'amps': '25.1'},
+        created_at=NOW - timedelta(seconds=60),
+    )
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '24.6', 'estimated': True},
+        created_at=NOW - timedelta(seconds=30),
+    )
+
+
+@pytest.fixture
 def owner_commands() -> None:
     JournalEntryFactory.create(
         kind='owner_command',
@@ -157,6 +179,25 @@ def test_latest_payload_gives_the_newest_entry_of_a_kind_within_a_window(
     expected: dict[str, object] | None,
 ) -> None:
     assert JournalRepository.latest_payload(kind, since=since, until=NOW) == expected
+
+
+@pytest.mark.usefixtures('overloads_measured_and_estimated')
+@pytest.mark.parametrize(
+    ('exclude', 'since', 'expected'),
+    [
+        (None, NOW - timedelta(minutes=2), {'phase': 'l2', 'amps': '24.6', 'estimated': True}),
+        ({'estimated': True}, NOW - timedelta(minutes=2), {'phase': 'l1', 'amps': '25.1'}),
+        ({'estimated': True}, NOW - timedelta(seconds=45), None),
+        ({'estimated': False}, NOW - timedelta(minutes=2), {'phase': 'l2', 'amps': '24.6', 'estimated': True}),
+    ],
+    ids=['nothing_excluded', 'newest_without_the_value', 'only_the_excluded_within_the_window', 'other_value'],
+)
+def test_latest_payload_passes_over_the_entries_whose_payload_holds_an_excluded_value(
+    exclude: dict[str, object] | None,
+    since: datetime,
+    expected: dict[str, object] | None,
+) -> None:
+    assert JournalRepository.latest_payload('phase_overload', since=since, until=NOW, exclude=exclude) == expected
 
 
 @pytest.mark.usefixtures('overload_without_an_object')

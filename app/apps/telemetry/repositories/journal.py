@@ -21,12 +21,17 @@ class JournalRepository:
         return list(JournalEntry.objects.all()[:limit])
 
     @staticmethod
-    def latest_payload(kind: str, *, since: datetime, until: datetime) -> dict[str, object] | None:
-        entry = (
-            JournalEntry.objects.filter(kind=kind, created_at__gte=since, created_at__lte=until)
-            .order_by('-created_at', '-id')
-            .first()
-        )
+    def latest_payload(
+        kind: str,
+        *,
+        since: datetime,
+        until: datetime,
+        exclude: Mapping[str, object] | None = None,
+    ) -> dict[str, object] | None:
+        entries = JournalEntry.objects.filter(kind=kind, created_at__gte=since, created_at__lte=until)
+        for key, value in (exclude or {}).items():
+            entries = entries.exclude(**{'payload__has_key': key, f'payload__{key}': value})
+        entry = entries.order_by('-created_at', '-id').first()
         if entry is None:
             return None
 

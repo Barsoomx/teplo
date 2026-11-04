@@ -18,6 +18,7 @@ from apps.devices.services.state_store import (
     plug_state_store,
     thermostat_state_store,
 )
+from apps.power.domain.estimate import PhaseEstimate, estimate_phase
 from apps.power.domain.ev_detection import EvWatch, detect_ev
 from apps.power.domain.events import (
     EvChargingEvent,
@@ -35,6 +36,7 @@ from apps.power.domain.guard import (
     follow_samples,
     load_statuses,
     phase_amps,
+    usable_reading,
 )
 from apps.power.domain.load_status import LoadStatus, plug_reading, thermostat_reading
 from apps.power.domain.loads import (
@@ -114,12 +116,13 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         loads = self._loads_at(previous, at)
         state = GuardState.started(loads, at) if previous is None else replace(previous, loads=loads)
         readings, changes = self._readings(state, at)
-        currents, read_at = self._currents(loads.meter)
-        phases, steps = self._watch(state, currents, read_at, at, input_dto.now)
+        measured, read_at = self._currents(loads.meter)
+        estimate = self._estimate(state, readings, measured)
+        phases, steps = self._watch(state, measured, estimate, read_at, at, input_dto.now)
         learning = follow_learning(state.learning, changes, phases.samples, at)
         learned = self._learned(loads, learning.learned, input_dto.now)
         statuses = load_statuses(learned, readings, state.shedding, live=True)
-        ev = self._follow_ev(state, phases, learning.state.changes, statuses, at, input_dto.now)
+        ev = self._follow_ev(state, phases, measured, learning.state.changes, statuses, at, input_dto.now)
         self._book.remember(
             replace(state, loads=learned, phases=phases, readings=readings, learning=learning.state, ev=ev),
         )
@@ -151,6 +154,30 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
 
         fresh = {phase: amps for phase, amps in snapshot.currents.amps.items() if phase not in snapshot.stale_phases}
         return measured_currents(fresh), {METER_PHASES[phase]: snapshot.recorded_at[phase] for phase in fresh}
+
+    def _estimate(
+        self,
+        state: GuardState,
+        readings: Mapping[str, SeenReading],
+        measured: Mapping[LoadPhase, Decimal],
+    ) -> PhaseEstimate | None:
+        control = state.loads.control
+        phase = control.estimate.phase
+        if phase is None or phase not in measured:
+            return None
+
+        return estimate_phase(
+            phase,
+            base_amps=control.estimate.base_amps,
+            records=state.loads.records,
+            readings={
+                record.slug: usable_reading(readings.get(record.slug), state.shedding.failed.get(record.slug))
+                for record in state.loads.records
+            },
+            live_sheds={slug: shed for slug, shed in state.shedding.sheds.items() if shed.live},
+            live_starts=self._book.live_starts(),
+            default_amps=control.default_amps,
+        )
 
     def _readings(self, state: GuardState, at: float) -> tuple[dict[str, SeenReading], list[LoadChange]]:
         readings: dict[str, SeenReading] = {}
@@ -214,40 +241,52 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
     def _watch(
         self,
         state: GuardState,
-        currents: dict[LoadPhase, Decimal],
+        measured: dict[LoadPhase, Decimal],
+        estimate: PhaseEstimate | None,
         read_at: dict[LoadPhase, float],
         at: float,
         now: datetime,
     ) -> tuple[PhaseState, dict[LoadPhase, PhaseWatchStep]]:
         thresholds = state.loads.control.thresholds
-        amps = phase_amps(currents, read_at, state.shedding.sheds.values())
+        estimated = None if estimate is None else estimate.phase
+        currents = measured if estimate is None else {**measured, estimate.phase: estimate.amps}
+        amps = phase_amps(currents, measured, read_at, state.shedding.sheds.values(), estimated=estimated)
         steps = {
             phase: watch_phase(state.phases.watches[phase], amps.get(phase), at, thresholds)
             for phase in MEASURED_PHASES
         }
         for phase, step in steps.items():
-            self._note(phase, step, currents.get(phase), now)
+            self._note(phase, step, currents.get(phase), now, estimated=phase is estimated)
         phases = PhaseState(
-            meter=watch_meter(state.phases.meter, fresh=_fresh(currents), at=at),
+            meter=watch_meter(state.phases.meter, fresh=_fresh(measured), at=at),
             currents=currents,
             read_at=read_at,
             watches={phase: step.watch for phase, step in steps.items()},
-            samples=follow_samples(state.phases.samples, currents, at),
+            samples=follow_samples(state.phases.samples, measured, at),
             last_currents={**state.phases.last_currents, **currents},
             last_read_at={**state.phases.last_read_at, **read_at},
+            estimate=estimate,
         )
         return phases, steps
 
-    def _note(self, phase: LoadPhase, step: PhaseWatchStep, measured: Decimal | None, now: datetime) -> None:
-        if measured is None:
+    def _note(
+        self,
+        phase: LoadPhase,
+        step: PhaseWatchStep,
+        amps: Decimal | None,
+        now: datetime,
+        *,
+        estimated: bool,
+    ) -> None:
+        if amps is None:
             return
 
         if step.overloaded:
-            logger.warning('phase_overloaded', phase=phase, amps=str(measured))
-            self._event_store.add_event(PhaseOverloaded(phase=phase, amps=measured, occurred_at=now))
+            logger.warning('phase_overloaded', phase=phase, amps=str(amps), estimated=estimated)
+            self._event_store.add_event(PhaseOverloaded(phase=phase, amps=amps, estimated=estimated, occurred_at=now))
         if step.calmed:
-            logger.info('phase_calmed', phase=phase, amps=str(measured))
-            self._event_store.add_event(PhaseCalmed(phase=phase, amps=measured, occurred_at=now))
+            logger.info('phase_calmed', phase=phase, amps=str(amps), estimated=estimated)
+            self._event_store.add_event(PhaseCalmed(phase=phase, amps=amps, estimated=estimated, occurred_at=now))
 
     def _learned(
         self,
@@ -284,12 +323,13 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         self,
         state: GuardState,
         phases: PhaseState,
+        measured: Mapping[LoadPhase, Decimal],
         changes: Sequence[LoadChange],
         loads: Sequence[LoadStatus],
         at: float,
         now: datetime,
     ) -> tuple[EvWatch, ...]:
-        if not _fresh(phases.currents):
+        if not _fresh(measured):
             return state.ev
 
         detection = detect_ev(

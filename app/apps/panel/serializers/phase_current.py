@@ -7,3 +7,4 @@ class PhaseCurrentSerializer(serializers.Serializer):
     stale = serializers.BooleanField()
     age_seconds = serializers.IntegerField(allow_null=True)
     ev_amps = serializers.DecimalField(max_digits=None, decimal_places=1, allow_null=True)
+    estimated = serializers.BooleanField()

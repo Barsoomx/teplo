@@ -137,6 +137,18 @@ def test_load_settings_admin_adds_the_settings_once_and_never_deletes_them(
     ) == (True, False)
 
 
+def test_load_settings_admin_lists_and_edits_the_estimated_phase_and_its_base_current(
+    f_load_settings_admin: LoadSettingsAdmin,
+    f_owner_request: HttpRequest,
+) -> None:
+    form = f_load_settings_admin.get_form(f_owner_request, change=True)
+
+    assert (
+        'estimated_phase' in f_load_settings_admin.list_display,
+        {'estimated_phase', 'estimated_base_amps'} <= set(form.base_fields),
+    ) == (True, True)
+
+
 @pytest.mark.usefixtures('stored_load_settings')
 def test_load_settings_admin_adds_no_second_settings(
     f_load_settings_admin: LoadSettingsAdmin,

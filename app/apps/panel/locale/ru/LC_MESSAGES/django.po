@@ -201,6 +201,13 @@ msgid "No fresh readings. Check that the phase meter has power and Wi-Fi."
 msgstr "Нет свежих показаний. Проверьте питание фазометра и Wi-Fi."
 
 #, python-format
+msgid "≈ %(amps)s A"
+msgstr "≈ %(amps)s А"
+
+msgid "≈ estimate"
+msgstr "≈ оценка"
+
+#, python-format
 msgid "EV charging: %(amps)s A"
 msgstr "Электромобиль: %(amps)s А"
 
@@ -239,6 +246,13 @@ msgstr "Перед отключением фаза %(phase)s была перег
 
 msgid "A phase was overloaded right before the cut"
 msgstr "Перед отключением была перегрузка фазы"
+
+msgid "base"
+msgstr "база"
+
+#, python-format
+msgid "%(name)s %(amps)s A"
+msgstr "%(name)s %(amps)s А"
 
 msgid "Sections"
 msgstr "Разделы"
@@ -478,6 +492,14 @@ msgid "Overload on phase %(phase)s is over: %(amps)s A"
 msgstr "Перегрузка фазы %(phase)s прошла: %(amps)s А"
 
 #, python-format
+msgid "Overload on phase %(phase)s by the estimate: %(amps)s A"
+msgstr "Перегрузка фазы %(phase)s по оценке: %(amps)s А"
+
+#, python-format
+msgid "Overload on phase %(phase)s by the estimate is over: %(amps)s A"
+msgstr "Перегрузка фазы %(phase)s по оценке прошла: %(amps)s А"
+
+#, python-format
 msgid "Phase %(phase)s: an EV seems to be charging, +%(amps)s A"
 msgstr "Фаза %(phase)s: похоже, заряжается электромобиль, +%(amps)s А"
 
@@ -525,12 +547,20 @@ msgstr "%(name)s: вернул бы термостат расписанию"
 msgid "Overload on phase %(phase)s"
 msgstr "Перегрузка фазы %(phase)s"
 
+#, python-format
+msgid "Overload on phase %(phase)s by the estimate"
+msgstr "Перегрузка фазы %(phase)s по оценке"
+
 msgid "No readings from the phase meter: one floor per phase"
 msgstr "Нет данных от фазометра: по одному полу на фазу"
 
 #, python-format
 msgid "Phase %(phase)s back to normal: %(amps)s A"
 msgstr "Фаза %(phase)s в норме: %(amps)s А"
+
+#, python-format
+msgid "Phase %(phase)s back to normal by the estimate: %(amps)s A"
+msgstr "Фаза %(phase)s по оценке в норме: %(amps)s А"
 
 msgid "Phases back to normal"
 msgstr "Фазы в норме"
@@ -576,6 +606,14 @@ msgstr "Фаза %(phase)s дошла бы до %(amps)s А"
 #, python-format
 msgid "The phase meter is silent and phase %(phase)s would reach %(amps)s A by its last reading"
 msgstr "Фазометр молчит, а фаза %(phase)s по последнему показанию дошла бы до %(amps)s А"
+
+#, python-format
+msgid "Phase %(phase)s would reach %(amps)s A by the estimate"
+msgstr "Фаза %(phase)s по оценке дошла бы до %(amps)s А"
+
+#, python-format
+msgid "The phase meter is silent and phase %(phase)s would reach %(amps)s A by its last estimate"
+msgstr "Фазометр молчит, а фаза %(phase)s по последней оценке дошла бы до %(amps)s А"
 
 msgid "Another load has just started"
 msgstr "Другая нагрузка только что включилась"

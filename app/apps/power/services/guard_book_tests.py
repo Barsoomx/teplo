@@ -101,6 +101,16 @@ def f_book_after_a_permit(f_book: GuardBook) -> GuardBook:
 
 
 @pytest.fixture
+def f_book_after_rounds_of_starts(f_book: GuardBook) -> GuardBook:
+    hallway = replace(KITCHEN, slug='hallway', priority=4)
+    living_room = replace(KITCHEN, slug='living-room', priority=7)
+    _serve(f_book, (StartRequest(load=hallway, live=True), StartRequest(load=KITCHEN, live=False)), AT)
+    _serve(f_book, (StartRequest(load=living_room, live=True),), AT + 10)
+    _permit(f_book, replace(KITCHEN, slug='boiler-1f', kind=LoadKind.PLUG, priority=1), AT + 30)
+    return f_book
+
+
+@pytest.fixture
 def f_book_with_a_waiting_load(f_book: GuardBook) -> GuardBook:
     f_book.note_waiting(frozenset({'kitchen'}))
     return f_book
@@ -171,6 +181,12 @@ def test_round_of_starts_takes_the_permit_of_its_live_start(f_book: GuardBook) -
         },
         AT,
     )
+
+
+def test_book_remembers_when_each_granted_live_start_and_restore_was_permitted(
+    f_book_after_rounds_of_starts: GuardBook,
+) -> None:
+    assert f_book_after_rounds_of_starts.live_starts() == {'hallway': AT, 'boiler-1f': AT + 30}
 
 
 def test_round_of_dry_run_starts_leaves_the_last_permit(f_book_after_a_permit: GuardBook) -> None:

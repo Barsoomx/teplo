@@ -36,6 +36,7 @@ from apps.panel.templatetags.panel_format import (
     day_minute,
     day_word,
     duration,
+    estimate_parts_text,
     failure_note,
     guest_nights,
     guests_text,
@@ -68,6 +69,7 @@ from apps.panel.templatetags.panel_format import (
 )
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.panel.usecases.get_panel_overview import LoadOverview, ZoneOverview, ZoneRegime
+from apps.panel.usecases.get_phase_currents import EstimatePartOverview, PhaseCurrent
 from apps.power.domain.load_state import LoadState
 from apps.power.domain.loads import AmpsOrigin, LoadKind, LoadPhase, PhaseOrigin
 from apps.power.domain.outage import OutageCause, OutageRecord, PrecedingOverload
@@ -110,6 +112,28 @@ BOILER_SHED: dict[str, object] = {
     'load_amps': '6.0',
     'reason': 'overload',
 }
+BATHROOM_SHED_BY_THE_ESTIMATE: dict[str, object] = {
+    'load': 'bathroom-1f',
+    'name': 'Санузел 1 этаж',
+    'kind': 'zone',
+    'phase': 'l2',
+    'amps': '24.6',
+    'load_amps': '6.0',
+    'reason': 'overload',
+    'estimated': True,
+}
+L2_ESTIMATE = PhaseCurrent(
+    phase='l2',
+    amps=Decimal('14.42'),
+    stale=False,
+    age_seconds=1,
+    estimated=True,
+    estimate_parts=(
+        EstimatePartOverview(name='base', amps=Decimal('2.0')),
+        EstimatePartOverview(name='Бойлер 2 этаж', amps=Decimal('6.42')),
+        EstimatePartOverview(name='Санузел 1 этаж', amps=Decimal('6.0')),
+    ),
+)
 KITCHEN_SHED: dict[str, object] = {
     'load': 'kitchen',
     'name': 'Кухня',
@@ -681,8 +705,29 @@ def test_load_facts_say_where_the_phase_and_the_current_come_from(
         ),
         ('phase_overload', {'phase': 'l4', 'amps': '26.4'}, 'l2: неизвестное событие'),
         ('phase_overload', {'phase': 'l2'}, 'l2: неизвестное событие'),
+        (
+            'phase_overload',
+            {'phase': 'l2', 'amps': '24.6', 'estimated': True},
+            'Перегрузка фазы L2 по оценке: 24,6 А',
+        ),
+        (
+            'phase_calm',
+            {'phase': 'l2', 'amps': '17.2', 'estimated': True},
+            'Перегрузка фазы L2 по оценке прошла: 17,2 А',
+        ),
+        ('phase_overload', {'phase': 'l2', 'amps': '26.4', 'estimated': False}, 'Перегрузка фазы L2: 26,4 А'),
     ],
-    ids=['overload', 'calm', 'ev_charging_started', 'ev_charging_stopped', 'unknown_phase', 'without_a_current'],
+    ids=[
+        'overload',
+        'calm',
+        'ev_charging_started',
+        'ev_charging_stopped',
+        'unknown_phase',
+        'without_a_current',
+        'overload_by_the_estimate',
+        'calm_by_the_estimate',
+        'overload_measured',
+    ],
 )
 def test_phase_event_text_names_the_phase_and_its_current(
     kind: str,
@@ -738,6 +783,21 @@ def test_phase_event_text_names_the_phase_and_its_current(
             ('Кухня: вернул термостат расписанию', 'Нет данных от фазометра: на этой фазе не греет другой пол'),
         ),
         ('load_shed', {}, ('Бойлер 1 этаж: выключил розетку', '')),
+        (
+            'load_shed_dry_run',
+            BATHROOM_SHED_BY_THE_ESTIMATE,
+            ('Санузел 1 этаж: выключил бы термостат', 'Перегрузка фазы L2 по оценке: 24,6 А'),
+        ),
+        (
+            'load_shed_dry_run',
+            {**BATHROOM_SHED_BY_THE_ESTIMATE, 'amps': None},
+            ('Санузел 1 этаж: выключил бы термостат', 'Перегрузка фазы L2 по оценке'),
+        ),
+        (
+            'load_restored_dry_run',
+            {**BATHROOM_SHED_BY_THE_ESTIMATE, 'amps': '17.2', 'cause': 'calm'},
+            ('Санузел 1 этаж: вернул бы термостат расписанию', 'Фаза L2 по оценке в норме: 17,2 А'),
+        ),
     ],
     ids=[
         'plug_shed',
@@ -750,6 +810,9 @@ def test_phase_event_text_names_the_phase_and_its_current(
         'zone_released_with_its_thermostat_switched_back_on',
         'zone_restored_while_the_meter_is_lost',
         'kind_from_the_device',
+        'zone_shed_by_the_estimate',
+        'zone_shed_by_the_estimate_without_a_current',
+        'zone_restored_on_calm_by_the_estimate',
     ],
 )
 def test_load_shed_text_says_what_was_switched_and_why(
@@ -814,6 +877,18 @@ def test_load_command_text_names_the_device_teplo_could_not_switch(
             'Фазометр молчит, а фаза L2 по последнему показанию дошла бы до 24,5 А',
         ),
         ({}, ''),
+        (
+            {'phase': 'l2', 'amps': '21.5', 'reason': 'no_headroom', 'estimated': True},
+            'Фаза L2 по оценке дошла бы до 21,5 А',
+        ),
+        (
+            {'phase': 'l2', 'amps': '24.5', 'reason': 'phase_would_overload', 'estimated': True},
+            'Фазометр молчит, а фаза L2 по последней оценке дошла бы до 24,5 А',
+        ),
+        (
+            {'phase': 'l2', 'amps': None, 'reason': 'too_soon', 'estimated': True},
+            'Другая нагрузка только что включилась',
+        ),
     ],
     ids=[
         'no_headroom',
@@ -824,6 +899,9 @@ def test_load_command_text_names_the_device_teplo_could_not_switch(
         'phase_not_calm',
         'phase_would_overload',
         'empty',
+        'no_headroom_by_the_estimate',
+        'phase_would_overload_by_the_last_estimate',
+        'too_soon_on_the_estimated_phase',
     ],
 )
 def test_start_wait_says_why_a_start_would_wait(payload: dict[str, object], expected: str) -> None:
@@ -856,6 +934,21 @@ def test_load_phase_learned_text_names_the_phase_and_the_current(payload: dict[s
 )
 def test_load_name_falls_back_to_the_journaled_name(name: str, payload: dict[str, object], expected: str) -> None:
     assert load_name(_load_entry('load_shed', payload, name=name)) == expected
+
+
+@pytest.mark.usefixtures('russian')
+def test_estimate_parts_text_lists_the_base_and_each_load_with_its_current() -> None:
+    assert estimate_parts_text(L2_ESTIMATE) == 'база 2,0 А · Бойлер 2 этаж 6,4 А · Санузел 1 этаж 6,0 А'
+
+
+@pytest.mark.usefixtures('english')
+def test_estimate_texts_follow_the_active_language() -> None:
+    entry = _load_entry('phase_overload', {'phase': 'l2', 'amps': '24.6', 'estimated': True}, subject='l2', name='l2')
+
+    assert (phase_event_text(entry), estimate_parts_text(L2_ESTIMATE)) == (
+        'Overload on phase L2 by the estimate: 24.6 A',
+        'base 2.0 A · Бойлер 2 этаж 6.4 A · Санузел 1 этаж 6.0 A',
+    )
 
 
 @pytest.mark.usefixtures('english')

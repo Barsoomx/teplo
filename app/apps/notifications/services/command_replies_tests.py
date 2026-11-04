@@ -10,6 +10,7 @@ from django.utils import translation
 from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, ZoneStatus
+from apps.notifications.domain.alerts import PhaseReading
 from apps.notifications.services.command_replies import (
     degrees,
     either_of,
@@ -180,10 +181,22 @@ def test_room_line_gives_the_target_and_why(room: RoomStatus, expected: str) -> 
 
 
 @pytest.mark.usefixtures('russian')
-def test_phases_line_marks_a_stale_phase() -> None:
-    assert phases_line((('l1', Decimal('12.4')), ('l2', None), ('l3', Decimal('3')))) == (
-        'Фазы: L1 12,4 А · L2 — · L3 3,0 А'
+@pytest.mark.parametrize(
+    ('l2', 'expected'),
+    [
+        (PhaseReading(phase='l2', amps=None, estimated=False), 'Фазы: L1 12,4 А · L2 — · L3 3,0 А'),
+        (PhaseReading(phase='l2', amps=Decimal('12.42'), estimated=True), 'Фазы: L1 12,4 А · L2 ≈12,4 А · L3 3,0 А'),
+    ],
+    ids=['stale_phase', 'estimated_phase'],
+)
+def test_phases_line_marks_a_stale_and_an_estimated_phase(l2: PhaseReading, expected: str) -> None:
+    readings = (
+        PhaseReading(phase='l1', amps=Decimal('12.4'), estimated=False),
+        l2,
+        PhaseReading(phase='l3', amps=Decimal('3'), estimated=False),
     )
+
+    assert phases_line(readings) == expected
 
 
 @pytest.mark.usefixtures('english')

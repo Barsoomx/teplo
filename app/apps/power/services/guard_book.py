@@ -13,6 +13,7 @@ class GuardBook:
     def __init__(self) -> None:
         self._state: GuardState | None = None
         self._last_permit_at: float | None = None
+        self._live_starts: dict[str, float] = {}
         self._waiting: frozenset[str] = frozenset()
         self._lock = threading.Lock()
 
@@ -72,7 +73,16 @@ class GuardBook:
                 thresholds=thresholds,
             )
             self._last_permit_at = served.last_permit_at
+            self._live_starts.update(
+                (request.load.slug, at)
+                for request in requests
+                if request.live and served.decisions[request.load.slug].granted
+            )
             return served.decisions
+
+    def live_starts(self) -> Mapping[str, float]:
+        with self._lock:
+            return dict(self._live_starts)
 
     def waiting(self) -> frozenset[str]:
         with self._lock:

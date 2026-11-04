@@ -286,6 +286,10 @@ msgstr "Фазы: %(phases)s"
 msgid "%(phase)s %(amps)s A"
 msgstr "%(phase)s %(amps)s А"
 
+#, python-format
+msgid "%(phase)s ≈%(amps)s A"
+msgstr "%(phase)s ≈%(amps)s А"
+
 msgid "tomorrow"
 msgstr "завтра"
 

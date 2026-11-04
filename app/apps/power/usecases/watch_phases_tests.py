@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -8,10 +8,11 @@ from django.db import OperationalError
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.kinds import DeviceKind
-from apps.devices.domain.readings import Phase, PlugState
+from apps.devices.domain.readings import Phase, PlugState, ThermostatMode, ThermostatState
 from apps.devices.services.phase_meter_store import PhaseMeterStore
 from apps.devices.services.state_store import PlugStateStore, ThermostatStateStore
-from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
+from apps.power.domain.estimate import EstimateBasis, EstimatePart, PhaseEstimate
 from apps.power.domain.events import (
     EvChargingStarted,
     EvChargingStopped,
@@ -19,7 +20,11 @@ from apps.power.domain.events import (
     PhaseCalmed,
     PhaseOverloaded,
 )
+from apps.power.domain.guard import PhaseState
+from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LearnedPhase, LoadKind, LoadPhase, LoadRecord
+from apps.power.domain.meter_watch import MeterCondition
+from apps.power.domain.view import GuardView
 from apps.power.services.guard_book import GuardBook
 from apps.power.stubs import DeviceDirectoryStub, LoadSettingsStoreStub, LoadStoreStub
 from apps.power.usecases.watch_phases import WatchPhasesInputDTO, WatchPhasesOutputDTO, WatchPhasesUseCase
@@ -55,10 +60,44 @@ BOILER = LoadRecord(
     live=False,
     shed=None,
 )
+BOILER_2F = replace(
+    BOILER,
+    slug='boiler-2f',
+    name='Бойлер 2 этаж',
+    device_slug='plug-boiler-2f',
+    priority=2,
+    phase=LoadPhase.L2,
+)
+BATHROOM = LoadRecord(
+    slug='bathroom-1f',
+    name='Санузел 1 этаж',
+    kind=LoadKind.ZONE,
+    zone_slug='bathroom-1f',
+    device_slug='thermostat-bathroom-1f',
+    priority=3,
+    phase=LoadPhase.L2,
+    nominal_amps=Decimal('16.0'),
+    learned=None,
+    live=False,
+    shed=None,
+)
+ESTIMATING_L2 = replace(CONTROL, estimate=EstimateSettings(phase=LoadPhase.L2, base_amps=Decimal('2.0')))
+ESTIMATE_BASE = EstimatePart(load=None, amps=Decimal('2.0'), basis=EstimateBasis.BASE)
+BATHROOM_START = LoadStatus(
+    slug='bathroom-1f',
+    kind=LoadKind.ZONE,
+    priority=3,
+    phase=LoadPhase.L2,
+    amps=Decimal('6.0'),
+    available=True,
+    drawing=False,
+    shed=False,
+)
 BOILER_SWITCHED_ON = (range(25, 55), range(85, 141))
 BOILER_POLLS = {10: False, 40: True, 70: False, 100: True}
 EV_CHARGING = range(20, 320)
 QUIET = {LoadPhase.L1: '8.0', LoadPhase.L2: '5.0', LoadPhase.L3: '4.0'}
+WITHOUT_AN_L2_CLAMP = {LoadPhase.L2: '0.2'}
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -66,6 +105,7 @@ class GuardRig:
     clock: MonotonicClockStub
     meter: PhaseMeterStore
     plugs: PlugStateStore
+    thermostats: ThermostatStateStore
     loads: LoadStoreStub
     book: GuardBook
     events: list[DomainEvent]
@@ -108,6 +148,23 @@ def _switch_boiler_three_times(rig: GuardRig) -> list[WatchPhasesOutputDTO]:
     return outputs
 
 
+def _phases(rig: GuardRig) -> PhaseState:
+    state = rig.book.state()
+    assert state is not None
+    return state.phases
+
+
+def _bathroom(*, heating: bool, second: int) -> ThermostatState:
+    return ThermostatState(
+        power=True,
+        mode=ThermostatMode.HOLD,
+        setpoint=Decimal('18.0'),
+        floor_temperature=Decimal('16.5') if heating else Decimal('18.5'),
+        heating=heating,
+        read_at=_at(second),
+    )
+
+
 def _boiler(on: bool, second: int) -> PlugState:
     return PlugState(
         on=on,
@@ -118,7 +175,7 @@ def _boiler(on: bool, second: int) -> PlugState:
     )
 
 
-def _rig(write_errors: tuple[Exception, ...]) -> GuardRig:
+def _rig(write_errors: tuple[Exception, ...], records: list[LoadRecord], control: LoadControl) -> GuardRig:
     clock = MonotonicClockStub(now=START)
     events: list[DomainEvent] = []
     dispatcher = EventDispatcher()
@@ -126,21 +183,23 @@ def _rig(write_errors: tuple[Exception, ...]) -> GuardRig:
         dispatcher.register(event_type, events.append)
     meter = PhaseMeterStore(stale_after=timedelta(seconds=10), unavailable_after=timedelta(minutes=10), clock=clock)
     plugs = PlugStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
-    loads = LoadStoreStub(records=[BOILER], live_zones=frozenset(), write_errors=write_errors)
+    thermostats = ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    loads = LoadStoreStub(records=records, live_zones=frozenset(), write_errors=write_errors)
     book = GuardBook()
     return GuardRig(
         clock=clock,
         meter=meter,
         plugs=plugs,
+        thermostats=thermostats,
         loads=loads,
         book=book,
         events=events,
         use_case=WatchPhasesUseCase(
             loads=loads,
-            load_settings=LoadSettingsStoreStub(control=CONTROL),
+            load_settings=LoadSettingsStoreStub(control=control),
             devices=DeviceDirectoryStub(slugs={DeviceKind.PHASE_METER: [METER]}),
             meter=meter,
-            thermostats=ThermostatStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+            thermostats=thermostats,
             plugs=plugs,
             book=book,
             clock=clock,
@@ -149,14 +208,62 @@ def _rig(write_errors: tuple[Exception, ...]) -> GuardRig:
     )
 
 
+def _rig_on_l2(control: LoadControl) -> GuardRig:
+    rig = _rig((), [BOILER, BOILER_2F, BATHROOM], control)
+    rig.plugs.record_state('plug-boiler-2f', _boiler(True, 0))
+    rig.thermostats.record_state('thermostat-bathroom-1f', _bathroom(heating=True, second=0))
+    return rig
+
+
 @pytest.fixture
 def f_rig() -> GuardRig:
-    return _rig(())
+    return _rig((), [BOILER], CONTROL)
 
 
 @pytest.fixture
 def f_rig_whose_database_fails() -> GuardRig:
-    return _rig((OperationalError('database is locked'),))
+    return _rig((OperationalError('database is locked'),), [BOILER], CONTROL)
+
+
+@pytest.fixture
+def f_rig_estimating_l2() -> GuardRig:
+    return _rig_on_l2(ESTIMATING_L2)
+
+
+@pytest.fixture
+def f_rig_measuring_l2() -> GuardRig:
+    return _rig_on_l2(CONTROL)
+
+
+@pytest.fixture
+def f_rig_estimating_an_empty_l2() -> GuardRig:
+    return _rig((), [BOILER], ESTIMATING_L2)
+
+
+@pytest.fixture
+def f_rig_whose_l2_went_silent(f_rig_estimating_l2: GuardRig) -> GuardRig:
+    _seconds(f_rig_estimating_l2, 2, WITHOUT_AN_L2_CLAMP)
+    _seconds_without(f_rig_estimating_l2, 15, LoadPhase.L2)
+    return f_rig_estimating_l2
+
+
+@pytest.fixture
+def f_rig_whose_bathroom_floor_was_granted_a_start() -> GuardRig:
+    rig = _rig((), [BOILER, BOILER_2F, replace(BATHROOM, nominal_amps=None)], ESTIMATING_L2)
+    rig.plugs.record_state('plug-boiler-2f', _boiler(False, 0))
+    rig.thermostats.record_state('thermostat-bathroom-1f', _bathroom(heating=False, second=0))
+    _seconds(rig, 1, WITHOUT_AN_L2_CLAMP)
+    rig.book.permit_start(
+        BATHROOM_START,
+        meter=MeterCondition.FRESH,
+        view=GuardView(
+            currents={LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal('2.0'), LoadPhase.L3: Decimal('4.0')},
+            loads=(),
+        ),
+        at=rig.clock(),
+        thresholds=CONTROL.thresholds,
+    )
+    return rig
 
 
 @pytest.fixture
@@ -255,3 +362,99 @@ def test_phase_that_goes_silent_keeps_its_last_reading_however_long_it_stays_sil
 
     state = f_rig_whose_l2_read_nineteen_amperes.book.state()
     assert (None if state is None else state.phases.silent_currents) == {LoadPhase.L2: Decimal('19.0')}
+
+
+def test_estimate_takes_the_place_of_the_unclamped_phase_while_the_samples_keep_the_meter(
+    f_rig_estimating_l2: GuardRig,
+) -> None:
+    _seconds(f_rig_estimating_l2, 2, WITHOUT_AN_L2_CLAMP)
+
+    phases = _phases(f_rig_estimating_l2)
+    assert (phases.currents, phases.samples[-1].amps, phases.estimate) == (
+        {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal('24.02'), LoadPhase.L3: Decimal('4.0')},
+        {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal('0.2'), LoadPhase.L3: Decimal('4.0')},
+        PhaseEstimate(
+            phase=LoadPhase.L2,
+            amps=Decimal('24.02'),
+            parts=(
+                ESTIMATE_BASE,
+                EstimatePart(load='boiler-2f', amps=Decimal('6.02'), basis=EstimateBasis.MEASURED),
+                EstimatePart(load='bathroom-1f', amps=Decimal('16.0'), basis=EstimateBasis.DRAWING),
+            ),
+        ),
+    )
+
+
+def test_phase_is_measured_while_no_phase_is_estimated(f_rig_measuring_l2: GuardRig) -> None:
+    _seconds(f_rig_measuring_l2, 2, WITHOUT_AN_L2_CLAMP)
+
+    phases = _phases(f_rig_measuring_l2)
+    assert (phases.currents[LoadPhase.L2], phases.estimate) == (Decimal('0.2'), None)
+
+
+def test_estimated_phase_that_goes_silent_has_no_estimate_and_keeps_the_last_one_as_its_last_reading(
+    f_rig_whose_l2_went_silent: GuardRig,
+) -> None:
+    phases = _phases(f_rig_whose_l2_went_silent)
+
+    assert (LoadPhase.L2 in phases.currents, phases.estimate, phases.silent_currents) == (
+        False,
+        None,
+        {LoadPhase.L2: Decimal('24.02')},
+    )
+
+
+def test_overload_by_the_estimate_is_journaled_as_estimated_and_raises_no_alarm(f_rig_estimating_l2: GuardRig) -> None:
+    outputs = _seconds(f_rig_estimating_l2, 4, WITHOUT_AN_L2_CLAMP)
+
+    watch = _phases(f_rig_estimating_l2).watches[LoadPhase.L2]
+    assert (
+        [output.overloaded for output in outputs],
+        f_rig_estimating_l2.events,
+        (watch.measured_above_since, watch.alarmed),
+    ) == (
+        [(), (), (), (LoadPhase.L2,)],
+        [PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal('24.02'), estimated=True, occurred_at=_at(4))],
+        (None, False),
+    )
+
+
+def test_estimate_counts_a_start_the_book_granted_until_a_poll_reads_the_load(
+    f_rig_whose_bathroom_floor_was_granted_a_start: GuardRig,
+) -> None:
+    rig = f_rig_whose_bathroom_floor_was_granted_a_start
+    _seconds(rig, 1, WITHOUT_AN_L2_CLAMP)
+    started = _phases(rig).estimate
+    rig.thermostats.record_state('thermostat-bathroom-1f', _bathroom(heating=False, second=2))
+    _seconds(rig, 1, WITHOUT_AN_L2_CLAMP)
+
+    assert (started, _phases(rig).estimate) == (
+        PhaseEstimate(
+            phase=LoadPhase.L2,
+            amps=Decimal('8.00'),
+            parts=(
+                ESTIMATE_BASE,
+                EstimatePart(load='bathroom-1f', amps=Decimal('6.0'), basis=EstimateBasis.STARTED),
+            ),
+        ),
+        PhaseEstimate(phase=LoadPhase.L2, amps=Decimal('2.00'), parts=(ESTIMATE_BASE,)),
+    )
+
+
+def test_learning_follows_the_meter_of_the_estimated_phase(f_rig_estimating_an_empty_l2: GuardRig) -> None:
+    outputs = _switch_boiler_three_times(f_rig_estimating_an_empty_l2)
+
+    assert (
+        [second for second, output in enumerate(outputs, start=1) if output.learned],
+        f_rig_estimating_an_empty_l2.loads.writes,
+    ) == ([135], [('save_learned', 'boiler-1f', LearnedPhase(phase=LoadPhase.L2, amps=Decimal('6.0'), samples=3))])
+
+
+def test_ev_detection_follows_the_meter_of_the_estimated_phase(f_rig_estimating_an_empty_l2: GuardRig) -> None:
+    for second in range(1, 361):
+        _second(f_rig_estimating_an_empty_l2, {LoadPhase.L2: '20.0' if second in EV_CHARGING else '4.0'})
+
+    assert f_rig_estimating_an_empty_l2.events == [
+        EvChargingStarted(phase=LoadPhase.L2, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(306)),
+        EvChargingStopped(phase=LoadPhase.L2, amps=Decimal('16.0'), before=Decimal('4.0'), occurred_at=_at(357)),
+    ]

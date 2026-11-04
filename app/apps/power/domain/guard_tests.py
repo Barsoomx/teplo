@@ -4,7 +4,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.guard import (
     GuardLoads,
     GuardState,
@@ -27,6 +27,7 @@ from apps.power.domain.shedding import Shed
 AT = 1000.0
 POLLED_AT = datetime(2026, 11, 2, 18, 40, tzinfo=UTC)
 CURRENTS = {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: Decimal('26.0'), LoadPhase.L3: Decimal('4.0')}
+METER_WITHOUT_AN_L2_CLAMP = {**CURRENTS, LoadPhase.L2: Decimal('0.2')}
 READ_AT = {LoadPhase.L1: AT, LoadPhase.L2: AT, LoadPhase.L3: AT}
 CONTROL = LoadControl(
     live=False,
@@ -67,6 +68,7 @@ KITCHEN = replace(
     nominal_amps=Decimal('8.0'),
 )
 LOADS = GuardLoads(records=(BOILER, KITCHEN), control=CONTROL, live_zones=frozenset(), meter='phase-meter', read_at=AT)
+ESTIMATING_L2 = EstimateSettings(phase=LoadPhase.L2, base_amps=Decimal('2.0'))
 SHED = Shed(
     load='kitchen',
     phase=LoadPhase.L2,
@@ -117,6 +119,15 @@ def f_state_with_a_live_and_a_dry_run_shed() -> GuardState:
         phases=replace(started.phases, currents=CURRENTS, read_at=READ_AT),
         readings={'boiler-1f': BOILER_ON, 'kitchen': KITCHEN_HEATING},
         shedding=ShedState(sheds={'boiler-1f': BOILER_DRY_RUN_SHED, 'kitchen': SHED}),
+    )
+
+
+@pytest.fixture
+def f_state_estimating_l2(f_state_with_a_live_and_a_dry_run_shed: GuardState) -> GuardState:
+    loads = f_state_with_a_live_and_a_dry_run_shed.loads
+    return replace(
+        f_state_with_a_live_and_a_dry_run_shed,
+        loads=replace(loads, control=replace(loads.control, estimate=ESTIMATING_L2)),
     )
 
 
@@ -221,6 +232,20 @@ def test_relieved_currents_take_the_relief_of_the_sheds_from_their_phase() -> No
 
 
 @pytest.mark.parametrize(
+    ('estimated', 'l2'),
+    [(LoadPhase.L2, Decimal('20.0')), (LoadPhase.L1, Decimal('12.0')), (None, Decimal('12.0'))],
+    ids=['estimated_phase', 'another_phase_estimated', 'no_phase_estimated'],
+)
+def test_relieved_currents_take_no_live_relief_from_the_estimated_phase(
+    estimated: LoadPhase | None,
+    l2: Decimal,
+) -> None:
+    currents = relieved_currents(CURRENTS, READ_AT, [SHED, BOILER_DRY_RUN_SHED], estimated=estimated)
+
+    assert currents == {LoadPhase.L1: Decimal('12.0'), LoadPhase.L2: l2, LoadPhase.L3: Decimal('4.0')}
+
+
+@pytest.mark.parametrize(
     ('live', 'l2'),
     [(True, Decimal('18.0')), (False, Decimal('12.0'))],
     ids=['live_view_takes_only_live_sheds', 'dry_run_view_takes_every_shed'],
@@ -304,11 +329,43 @@ def test_views_name_the_phases_overloaded_and_calming_in_their_view(
 
 
 def test_phase_amps_give_each_phase_as_measured_and_as_each_view_sees_it_with_the_moment_it_was_read() -> None:
-    assert phase_amps(CURRENTS, READ_AT, [SHED, BOILER_DRY_RUN_SHED]) == {
+    assert phase_amps(CURRENTS, CURRENTS, READ_AT, [SHED, BOILER_DRY_RUN_SHED], estimated=None) == {
         LoadPhase.L1: PhaseAmps(measured=Decimal('12.0'), live=Decimal('12.0'), dry_run=Decimal('12.0'), read_at=AT),
         LoadPhase.L2: PhaseAmps(measured=Decimal('26.0'), live=Decimal('18.0'), dry_run=Decimal('12.0'), read_at=AT),
         LoadPhase.L3: PhaseAmps(measured=Decimal('4.0'), live=Decimal('4.0'), dry_run=Decimal('4.0'), read_at=AT),
     }
+
+
+def test_phase_amps_of_the_estimated_phase_keep_the_meter_as_measured_and_the_estimate_in_each_view() -> None:
+    amps = phase_amps(
+        CURRENTS,
+        METER_WITHOUT_AN_L2_CLAMP,
+        READ_AT,
+        [SHED, BOILER_DRY_RUN_SHED],
+        estimated=LoadPhase.L2,
+    )
+
+    assert amps == {
+        LoadPhase.L1: PhaseAmps(measured=Decimal('12.0'), live=Decimal('12.0'), dry_run=Decimal('12.0'), read_at=AT),
+        LoadPhase.L2: PhaseAmps(measured=Decimal('0.2'), live=Decimal('26.0'), dry_run=Decimal('20.0'), read_at=AT),
+        LoadPhase.L3: PhaseAmps(measured=Decimal('4.0'), live=Decimal('4.0'), dry_run=Decimal('4.0'), read_at=AT),
+    }
+
+
+@pytest.mark.parametrize(
+    ('live', 'l2'),
+    [(True, Decimal('26.0')), (False, Decimal('20.0'))],
+    ids=['live_view_counts_the_estimate_as_it_is', 'dry_run_view_takes_the_dry_run_sheds_off_the_estimate'],
+)
+def test_views_of_the_estimated_phase_take_off_only_the_dry_run_sheds(
+    f_state_estimating_l2: GuardState,
+    live: bool,
+    l2: Decimal,
+) -> None:
+    view = guard_view(f_state_estimating_l2, f_state_estimating_l2.shedding, live=live)
+    starting = start_view(f_state_estimating_l2, f_state_estimating_l2.shedding, live=live)
+
+    assert (view.currents[LoadPhase.L2], starting.currents[LoadPhase.L2]) == (l2, l2)
 
 
 @pytest.mark.parametrize(

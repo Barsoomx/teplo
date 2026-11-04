@@ -21,7 +21,7 @@ from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.phase_meter_store import PhaseMeterStore
 from apps.devices.services.state_store import PlugStateStore, ThermostatStateStore
 from apps.devices.stubs import SwitchablePlugProviderStub, SwitchablePlugStub
-from apps.power.domain.control import LoadControl, PhaseThresholds
+from apps.power.domain.control import EstimateSettings, LoadControl, PhaseThresholds
 from apps.power.domain.events import (
     EvChargingStarted,
     EvChargingStopped,
@@ -155,6 +155,8 @@ POWER_EVENTS = (
 )
 NOTHING = ShedPhaseLoadsOutputDTO(shed=(), restored=())
 PLUG_POLL_SECONDS = 30
+L2_ESTIMATE = EstimateSettings(phase=LoadPhase.L2, base_amps=Decimal('12.0'))
+WITHOUT_AN_L2_CLAMP = '0.2'
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -828,6 +830,27 @@ def f_dry_run_floors_after_an_overload(f_dry_run_floors_house: House) -> House:
 def f_dry_run_floors_after_the_meter_reported(f_dry_run_floors_house: House) -> House:
     _seconds(f_dry_run_floors_house.guard, 3, '10.0')
     return f_dry_run_floors_house
+
+
+@pytest.fixture
+def f_live_house_estimating_l2() -> House:
+    return _house(_live(BOILER, KITCHEN), replace(LIVE_CONTROL, estimate=L2_ESTIMATE), LIVE_ZONES)
+
+
+@pytest.fixture
+def f_live_house_after_an_estimated_shed(f_live_house_estimating_l2: House) -> House:
+    _seconds(f_live_house_estimating_l2.guard, 10, WITHOUT_AN_L2_CLAMP)
+    _thermostat_read_off(f_live_house_estimating_l2, 'thermostat-kitchen', 10)
+    return f_live_house_estimating_l2
+
+
+@pytest.fixture
+def f_dry_run_house_estimating_l2_above_its_floors() -> House:
+    return _house(
+        [BATHROOM, KITCHEN],
+        replace(DRY_RUN_CONTROL, estimate=replace(L2_ESTIMATE, base_amps=Decimal('22.0'))),
+        frozenset(),
+    )
 
 
 @pytest.fixture
@@ -2538,6 +2561,92 @@ def test_zone_shed_whose_zone_points_at_another_thermostat_switches_the_one_it_s
                 cause=RestoreCause.RELEASED,
                 switched_on=True,
                 occurred_at=_moment(1804),
+            ),
+        ],
+    )
+
+
+def test_overload_by_the_estimate_sheds_a_load_of_its_phase_counted_off_until_a_poll_reads_it(
+    f_live_house_estimating_l2: House,
+) -> None:
+    outputs = _seconds(f_live_house_estimating_l2.guard, 15, WITHOUT_AN_L2_CLAMP)
+
+    assert (
+        _shed_at(outputs, 1),
+        f_live_house_estimating_l2.boiler.switches,
+        f_live_house_estimating_l2.zones.switched_off,
+        f_live_house_estimating_l2.events,
+    ) == (
+        [(4, ('boiler-1f',))],
+        [False],
+        [],
+        [
+            PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal('26.02'), estimated=True, occurred_at=_moment(4)),
+            LoadShed(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('26.02'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                estimated=True,
+                occurred_at=_moment(4),
+            ),
+        ],
+    )
+
+
+def test_restore_on_the_calm_of_the_estimate_is_journaled_as_estimated(
+    f_live_house_after_an_estimated_shed: House,
+) -> None:
+    outputs = _seconds(f_live_house_after_an_estimated_shed.guard, 125, WITHOUT_AN_L2_CLAMP)
+
+    assert (
+        _restored_at(outputs, 11),
+        f_live_house_after_an_estimated_shed.boiler.switches,
+        f_live_house_after_an_estimated_shed.events[2:],
+    ) == (
+        [(131, ('boiler-1f',))],
+        [False, True],
+        [
+            PhaseCalmed(phase=LoadPhase.L2, amps=Decimal('12.00'), estimated=True, occurred_at=_moment(131)),
+            LoadRestored(
+                load='boiler-1f',
+                name='Бойлер 1 этаж',
+                kind=LoadKind.PLUG,
+                phase=LoadPhase.L2,
+                amps=Decimal('12.00'),
+                load_amps=Decimal('6.0'),
+                reason=ShedReason.OVERLOAD,
+                cause=RestoreCause.CALM,
+                switched_on=True,
+                estimated=True,
+                occurred_at=_moment(131),
+            ),
+        ],
+    )
+
+
+def test_overload_by_the_estimate_never_sheds_a_load_of_unknown_phase(
+    f_dry_run_house_estimating_l2_above_its_floors: House,
+) -> None:
+    outputs = _seconds(f_dry_run_house_estimating_l2_above_its_floors.guard, 10, WITHOUT_AN_L2_CLAMP)
+
+    assert (_shed_at(outputs, 1), f_dry_run_house_estimating_l2_above_its_floors.events) == (
+        [(4, ('kitchen',))],
+        [
+            PhaseOverloaded(phase=LoadPhase.L2, amps=Decimal('30.00'), estimated=True, occurred_at=_moment(4)),
+            LoadShedDryRun(
+                load='kitchen',
+                name='Кухня',
+                kind=LoadKind.ZONE,
+                phase=LoadPhase.L2,
+                amps=Decimal('30.00'),
+                load_amps=Decimal('8.0'),
+                reason=ShedReason.OVERLOAD,
+                estimated=True,
+                occurred_at=_moment(4),
             ),
         ],
     )

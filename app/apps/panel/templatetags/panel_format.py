@@ -29,6 +29,7 @@ from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
 from apps.panel.usecases.get_panel_overview import LoadOverview, ZoneOverview
+from apps.panel.usecases.get_phase_currents import ESTIMATE_BASE, EstimatePartOverview, PhaseCurrent
 from apps.power.domain.loads import MEASURED_PHASES, AmpsOrigin, LoadKind, PhaseOrigin
 from apps.power.domain.outage import OutageRecord
 from apps.system.domain.clock import ClockStatusCode
@@ -127,10 +128,15 @@ LOAD_AMPS = {
     AmpsOrigin.DEFAULT: gettext_lazy('%(amps)s A by default'),
 }
 PHASE_OVERLOAD = gettext_lazy('Overload on phase %(phase)s: %(amps)s A')
+ESTIMATED_PHASE_OVERLOAD = gettext_lazy('Overload on phase %(phase)s by the estimate: %(amps)s A')
 PHASE_EVENTS = {
     'phase_overload': PHASE_OVERLOAD,
     'phase_calm': gettext_lazy('Overload on phase %(phase)s is over: %(amps)s A'),
     'ev_charging_started': gettext_lazy('Phase %(phase)s: an EV seems to be charging, +%(amps)s A'),
+}
+ESTIMATED_PHASE_EVENTS = {
+    'phase_overload': ESTIMATED_PHASE_OVERLOAD,
+    'phase_calm': gettext_lazy('Overload on phase %(phase)s by the estimate is over: %(amps)s A'),
 }
 EV_CHARGING_STOPPED = gettext_lazy('Phase %(phase)s: the EV is no longer charging')
 LOAD_SHEDS = {
@@ -147,8 +153,10 @@ LOAD_SHEDS = {
 }
 ZONE_SWITCHED_BACK_ON = gettext_lazy('%(name)s: switched the thermostat back on')
 SHED_UNMEASURED_OVERLOAD = gettext_lazy('Overload on phase %(phase)s')
+ESTIMATED_SHED_UNMEASURED_OVERLOAD = gettext_lazy('Overload on phase %(phase)s by the estimate')
 SHED_ON_METER_LOST = gettext_lazy('No readings from the phase meter: one floor per phase')
 RESTORED_ON_CALM = gettext_lazy('Phase %(phase)s back to normal: %(amps)s A')
+ESTIMATED_RESTORED_ON_CALM = gettext_lazy('Phase %(phase)s back to normal by the estimate: %(amps)s A')
 RESTORED_ON_CALM_PHASES = gettext_lazy('Phases back to normal')
 RESTORED_ON_RELEASE = gettext_lazy('Load management was switched in the settings')
 RESTORED_WHILE_METER_LOST = gettext_lazy('No readings from the phase meter: no other floor heats on this phase')
@@ -166,6 +174,12 @@ START_WAITS_FOR_ROOM = {
         'The phase meter is silent and phase %(phase)s would reach %(amps)s A by its last reading',
     ),
 }
+ESTIMATED_START_WAITS_FOR_ROOM = {
+    'no_headroom': gettext_lazy('Phase %(phase)s would reach %(amps)s A by the estimate'),
+    'phase_would_overload': gettext_lazy(
+        'The phase meter is silent and phase %(phase)s would reach %(amps)s A by its last estimate',
+    ),
+}
 START_REFUSALS = {
     'too_soon': gettext_lazy('Another load has just started'),
     'meter_stale': gettext_lazy('No fresh readings from the phase meter'),
@@ -179,6 +193,9 @@ LOAD_PHASE_LEARNED = gettext_lazy('%(name)s: learned phase %(phase)s, %(amps)s A
 OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut: %(amps)s A')
 UNMEASURED_OVERLOAD_BEFORE_CUT = gettext_lazy('Phase %(phase)s was overloaded right before the cut')
 ANY_OVERLOAD_BEFORE_CUT = gettext_lazy('A phase was overloaded right before the cut')
+ESTIMATE_BASE_NAME = gettext_lazy('base')
+ESTIMATE_PART = gettext_lazy('%(name)s %(amps)s A')
+ESTIMATE_PARTS_SEPARATOR = ' · '
 DEVICE_LOAD_KINDS = {DeviceKind.PLUG: LoadKind.PLUG, DeviceKind.THERMOSTAT: LoadKind.ZONE}
 DAY_PERIODS = {
     ScheduleMode.COMFORT: gettext_lazy('Comfort %(start)s–%(end)s'),
@@ -554,6 +571,11 @@ def outage_overload_note(outage: OutageRecord) -> str:
 
 
 @register.filter
+def estimate_parts_text(current: PhaseCurrent) -> str:
+    return ESTIMATE_PARTS_SEPARATOR.join(_estimate_part_text(part) for part in current.estimate_parts)
+
+
+@register.filter
 def load_phase(load: LoadOverview) -> str:
     template = LOAD_PHASES.get(load.phase_origin)
     phase = PHASE_LABELS.get(load.phase)
@@ -587,6 +609,8 @@ def phase_event_text(entry: TimelineEntry) -> str:
         return str(EV_CHARGING_STOPPED) % {'phase': phase}
 
     template = PHASE_EVENTS.get(entry.kind)
+    if _estimated(entry):
+        template = ESTIMATED_PHASE_EVENTS.get(entry.kind, template)
     amps = floatformat(entry.payload.get('amps'), 1)
     if template is None or not amps:
         return _unknown_event(entry)
@@ -627,10 +651,11 @@ def load_shed_note(entry: TimelineEntry) -> str:
         return ''
 
     amps = floatformat(entry.payload.get('amps'), 1)
+    estimated = _estimated(entry)
     if not amps:
-        return str(SHED_UNMEASURED_OVERLOAD) % {'phase': phase}
+        return str(ESTIMATED_SHED_UNMEASURED_OVERLOAD if estimated else SHED_UNMEASURED_OVERLOAD) % {'phase': phase}
 
-    return str(PHASE_OVERLOAD) % {'phase': phase, 'amps': amps}
+    return str(ESTIMATED_PHASE_OVERLOAD if estimated else PHASE_OVERLOAD) % {'phase': phase, 'amps': amps}
 
 
 @register.filter
@@ -648,7 +673,7 @@ def start_wait_text(entry: TimelineEntry) -> str:
 @register.filter
 def start_wait_note(entry: TimelineEntry) -> str:
     reason = str(entry.payload.get('reason'))
-    template = START_WAITS_FOR_ROOM.get(reason)
+    template = (ESTIMATED_START_WAITS_FOR_ROOM if _estimated(entry) else START_WAITS_FOR_ROOM).get(reason)
     if template is None:
         return str(START_REFUSALS.get(reason, ''))
 
@@ -763,7 +788,17 @@ def _calm_note(entry: TimelineEntry) -> str:
     if phase is None or not amps:
         return str(RESTORED_ON_CALM_PHASES)
 
-    return str(RESTORED_ON_CALM) % {'phase': phase, 'amps': amps}
+    template = ESTIMATED_RESTORED_ON_CALM if _estimated(entry) else RESTORED_ON_CALM
+    return str(template) % {'phase': phase, 'amps': amps}
+
+
+def _estimated(entry: TimelineEntry) -> bool:
+    return entry.payload.get('estimated') is True
+
+
+def _estimate_part_text(part: EstimatePartOverview) -> str:
+    name = str(ESTIMATE_BASE_NAME) if part.name == ESTIMATE_BASE else part.name
+    return str(ESTIMATE_PART) % {'name': name, 'amps': floatformat(part.amps, 1)}
 
 
 def _load_kind(entry: TimelineEntry) -> LoadKind | None:

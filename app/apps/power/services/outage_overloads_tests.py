@@ -56,3 +56,45 @@ def test_outage_notes_an_overload_journaled_within_two_minutes_before_it_began(
 
 def test_outage_without_an_overload_in_the_journal_notes_none(f_overloads: OutageOverloads) -> None:
     assert f_overloads.noted(OUTAGE) == OUTAGE
+
+
+@pytest.fixture
+def overloads_measured_and_estimated_before_the_cut(request: pytest.FixtureRequest) -> None:
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l3',
+        payload={'phase': 'l3', 'amps': '26.0', 'estimated': False},
+        created_at=CUT - timedelta(seconds=90),
+    )
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '24.6', 'estimated': True},
+        created_at=CUT - request.param,
+    )
+
+
+@pytest.mark.usefixtures('overloads_measured_and_estimated_before_the_cut')
+@pytest.mark.parametrize(
+    'overloads_measured_and_estimated_before_the_cut',
+    [timedelta(seconds=30), timedelta(minutes=2)],
+    ids=['estimate_after_the_measured_overload', 'estimate_before_the_measured_overload'],
+    indirect=True,
+)
+def test_outage_puts_forward_a_measured_overload_and_never_one_by_the_estimate(f_overloads: OutageOverloads) -> None:
+    assert f_overloads.noted(OUTAGE).overload == PrecedingOverload(phase=LoadPhase.L3, amps=Decimal('26.0'))
+
+
+@pytest.fixture
+def overload_by_the_estimate_before_the_cut() -> None:
+    JournalEntryFactory.create(
+        kind='phase_overload',
+        subject='l2',
+        payload={'phase': 'l2', 'amps': '24.6', 'estimated': True},
+        created_at=CUT - timedelta(seconds=30),
+    )
+
+
+@pytest.mark.usefixtures('overload_by_the_estimate_before_the_cut')
+def test_outage_after_an_overload_only_by_the_estimate_notes_none(f_overloads: OutageOverloads) -> None:
+    assert f_overloads.noted(OUTAGE).overload is None
