@@ -8,7 +8,7 @@ from django.utils import translation
 
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.core.services.secrets import TelegramSecret
-from apps.notifications.domain.bot import BotUpdate, accepted
+from apps.notifications.domain.bot import BotUpdate, PollFailure, accepted
 from apps.notifications.domain.commands import OwnerCommand, parse_command
 from apps.notifications.domain.errors import AlertDeliveryError, AlertRejectedError, CommandPollError
 from apps.notifications.domain.ports import CommandBot, CommandLedger, CommandRooms, OwnerCommandRunner
@@ -36,6 +36,7 @@ class ReceiveCommandsInputDTO:
 class ReceiveCommandsOutputDTO:
     offset: int | None
     answered: int
+    failure: PollFailure | None = None
 
 
 class ReceiveCommandsUseCase(BaseUseCase[ReceiveCommandsInputDTO, ReceiveCommandsOutputDTO]):
@@ -68,9 +69,18 @@ class ReceiveCommandsUseCase(BaseUseCase[ReceiveCommandsInputDTO, ReceiveCommand
         )
 
     def _execute(self, input_dto: ReceiveCommandsInputDTO) -> ReceiveCommandsOutputDTO:
-        offset = self._offset(input_dto)
+        try:
+            offset = self._offset(input_dto)
+            updates = self._bot.updates(offset, POLL_SECONDS)
+        except CommandPollError as error:
+            return ReceiveCommandsOutputDTO(
+                offset=input_dto.offset,
+                answered=0,
+                failure=PollFailure(error_code=error.error_code, detail=error.detail),
+            )
+
         answered = 0
-        for update in self._bot.updates(offset, POLL_SECONDS):
+        for update in updates:
             offset = update.update_id + 1
             if accepted(update, self._chat_id, input_dto.now):
                 self._answer(update, input_dto)
@@ -84,8 +94,7 @@ class ReceiveCommandsUseCase(BaseUseCase[ReceiveCommandsInputDTO, ReceiveCommand
         try:
             last = self._ledger.last_update_id()
         except OperationalError as error:
-            logger.warning('owner_commands_offset_unread', error=str(error))
-            raise CommandPollError(UNREAD_OFFSET) from None
+            raise CommandPollError(f'{UNREAD_OFFSET}: {error}') from None
 
         return None if last is None else last + 1
 

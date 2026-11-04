@@ -5,7 +5,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from apps.core.services.secrets import TelegramSecret
-from apps.notifications.domain.errors import CommandPollError
+from apps.notifications.domain.bot import PollFailure
 from apps.notifications.services.command_listener import CommandListener, Receive
 from apps.notifications.stubs import ExecutableStub, StartThreadStub, StopSignalStub
 from apps.notifications.usecases.receive_commands import ReceiveCommandsInputDTO, ReceiveCommandsOutputDTO
@@ -16,8 +16,12 @@ pytestmark = pytest.mark.django_db
 
 NOW = datetime(2026, 11, 4, 13, 40, tzinfo=UTC)
 SECRET = TelegramSecret(token='123456:telegram-token', chat_id='-1001234', proxy=None, commands=True)
-TIMED_OUT = CommandPollError('telegram unreachable: timed out')
 STARTED = {'event': 'owner_commands_started', 'log_level': 'info'}
+TIMED_OUT = ReceiveCommandsOutputDTO(
+    offset=None,
+    answered=0,
+    failure=PollFailure(error_code='owner_commands_unreachable', detail='telegram unreachable: timed out'),
+)
 TRUSTED = ClockReading(now=NOW, monotonic=0.0, trusted=True)
 UNTRUSTED = ClockReading(now=NOW - timedelta(hours=5), monotonic=0.0, trusted=False)
 POLL_FAILED = {

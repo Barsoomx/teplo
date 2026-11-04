@@ -4,7 +4,7 @@ import pytest
 from django.db import OperationalError
 from structlog.testing import capture_logs
 
-from apps.notifications.domain.bot import BotUpdate
+from apps.notifications.domain.bot import BotUpdate, PollFailure
 from apps.notifications.domain.commands import CommandKind, CommandRoom, OwnerCommand
 from apps.notifications.domain.errors import AlertDeliveryError, CommandPollError
 from apps.notifications.stubs import CommandBotStub, CommandLedgerStub, CommandRoomsStub, OwnerCommandRunnerStub
@@ -231,11 +231,22 @@ def test_a_reply_telegram_does_not_take_is_logged_and_the_offset_moves_on(
 
 
 @pytest.mark.parametrize('f_bot', [CommandPollError('telegram unreachable: timed out')], indirect=True)
-def test_a_failed_poll_propagates(f_use_case: ReceiveCommandsUseCase, f_runner: OwnerCommandRunnerStub) -> None:
-    with pytest.raises(CommandPollError, match='telegram unreachable: timed out'):
-        f_use_case.execute(RESUME)
+def test_a_failed_poll_is_handed_to_the_listener_without_a_log_line_of_its_own(
+    f_use_case: ReceiveCommandsUseCase,
+    f_runner: OwnerCommandRunnerStub,
+) -> None:
+    with capture_logs() as logs:
+        output = f_use_case.execute(RESUME)
 
-    assert f_runner.runs == []
+    assert (output, f_runner.runs, logs) == (
+        ReceiveCommandsOutputDTO(
+            offset=None,
+            answered=0,
+            failure=PollFailure(error_code='owner_commands_unreachable', detail='telegram unreachable: timed out'),
+        ),
+        [],
+        [],
+    )
 
 
 @pytest.mark.parametrize(
@@ -247,11 +258,14 @@ def test_a_resume_that_cannot_read_the_journal_skips_the_poll(
     f_fresh_use_case: ReceiveCommandsUseCase,
     f_bot: CommandBotStub,
 ) -> None:
-    with capture_logs() as logs, pytest.raises(CommandPollError) as raised:
-        f_fresh_use_case.execute(RESUME)
+    with capture_logs() as logs:
+        output = f_fresh_use_case.execute(RESUME)
 
-    assert (raised.value.detail, f_bot.asked, logs[0]) == (
-        'the journal could not be read to resume the commands',
+    assert (output.failure, f_bot.asked, logs) == (
+        PollFailure(
+            error_code='owner_commands_unreachable',
+            detail='the journal could not be read to resume the commands: database is locked',
+        ),
         [],
-        {'event': 'owner_commands_offset_unread', 'error': 'database is locked', 'log_level': 'warning'},
+        [],
     )

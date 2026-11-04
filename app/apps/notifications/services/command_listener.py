@@ -10,7 +10,7 @@ from django.db import close_old_connections
 
 from apps.core.domain.ports import Executable
 from apps.core.services.secrets import SecretsFile, TelegramSecret
-from apps.notifications.domain.errors import CommandPollError
+from apps.notifications.domain.bot import PollFailure
 from apps.notifications.usecases.receive_commands import (
     ReceiveCommandsInputDTO,
     ReceiveCommandsOutputDTO,
@@ -89,12 +89,6 @@ class CommandListener:
 
                 waiting = False
                 output = self._receive(receive, reading, offset, resume=resume)
-            except CommandPollError as error:
-                if not failing:
-                    logger.warning('owner_commands_poll_failed', error_code=error.error_code, detail=error.detail)
-                failing = True
-                self._stop_signal.wait(self._retry_after)
-                continue
             except Exception:
                 # An exception raised here would end the listener thread, and with it every later command.
                 logger.exception('owner_commands_failed')
@@ -102,9 +96,19 @@ class CommandListener:
                 self._stop_signal.wait(self._retry_after)
                 continue
 
+            if output.failure is not None:
+                failing = self._poll_failed(output.failure, failing=failing)
+                continue
+
             if failing:
                 logger.info('owner_commands_poll_recovered')
             offset, resume, failing = output.offset, False, False
+
+    def _poll_failed(self, failure: PollFailure, *, failing: bool) -> bool:
+        if not failing:
+            logger.warning('owner_commands_poll_failed', error_code=failure.error_code, detail=failure.detail)
+        self._stop_signal.wait(self._retry_after)
+        return True
 
     def _wait_for_clock(self, *, waiting: bool) -> bool:
         if not waiting:

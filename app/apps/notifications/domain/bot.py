@@ -5,6 +5,12 @@ STALE_AFTER = timedelta(minutes=10)
 
 
 @dataclass(frozen=True, kw_only=True)
+class PollFailure:
+    error_code: str
+    detail: str
+
+
+@dataclass(frozen=True, kw_only=True)
 class BotUpdate:
     update_id: int
     chat_id: str
