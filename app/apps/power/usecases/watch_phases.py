@@ -122,7 +122,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         state = GuardState.started(loads, at) if previous is None else replace(previous, loads=loads)
         readings, changes = self._readings(state, at)
         measured, read_at = self._currents(loads.meter)
-        estimate = self._estimate(state, readings, measured)
+        estimate = self._estimate(state, readings, measured, at)
         phases, steps = self._watch(state, measured, estimate, read_at, at, input_dto.now)
         learning = follow_learning(state.learning, changes, phases.samples, at)
         learned = self._learned(loads, learning.learned, input_dto.now)
@@ -166,6 +166,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
         state: GuardState,
         readings: Mapping[str, SeenReading],
         measured: Mapping[LoadPhase, Decimal],
+        at: float,
     ) -> PhaseEstimate | None:
         control = state.loads.control
         phase = control.estimate.phase
@@ -181,7 +182,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
                 for record in state.loads.records
             },
             live_sheds={slug: shed for slug, shed in state.shedding.sheds.items() if shed.live},
-            live_starts=self._book.live_starts(),
+            live_starts=self._book.live_starts(at),
             default_amps=control.default_amps,
         )
 

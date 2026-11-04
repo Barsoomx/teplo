@@ -233,6 +233,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
             if handed is HandBack.WAITING:
                 return shedding
 
+            if handed is HandBack.SWITCHED_ON:
+                self._book.note_switched_on(record.slug, at)
             logger.info('load_released', load=record.slug, switched_on=handed is HandBack.SWITCHED_ON)
             shedding = _stored(shedding, record.slug, None)
         self._event_store.add_event(
@@ -407,6 +409,8 @@ class ShedPhaseLoadsUseCase(BaseUseCase[ShedPhaseLoadsInputDTO, ShedPhaseLoadsOu
                 return self._lookup_failed(restored, record, LoadCommand.RESTORE, error)
 
             logger.info('load_restored', load=record.slug)
+            if record.kind is LoadKind.PLUG and shed.was_on is True:
+                self._book.note_switched_on(record.slug, at)
             restored = _handed_back(restored, record, shed)
 
         self._event_store.add_event(

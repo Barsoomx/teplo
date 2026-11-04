@@ -1,3 +1,4 @@
+import math
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -7,6 +8,7 @@ import pytest
 from apps.power.domain.control import LoadControl, PhaseThresholds
 from apps.power.domain.guard import GuardLoads, GuardState, ShedState
 from apps.power.domain.headroom import PhaseOverrun
+from apps.power.domain.live_start import PENDING_START_LIMIT
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.loads import LoadKind, LoadPhase, LoadRecord, ShedReason
 from apps.power.domain.meter_watch import MeterCondition
@@ -223,18 +225,22 @@ def test_round_of_starts_takes_the_permit_of_its_live_start(f_book: GuardBook) -
     )
 
 
-def test_book_remembers_when_each_granted_live_start_and_restore_was_permitted(
+def test_book_counts_each_granted_live_start_and_restore_until_its_command_goes_out(
     f_book_after_rounds_of_starts: GuardBook,
 ) -> None:
-    assert f_book_after_rounds_of_starts.live_starts() == {'hallway': AT, 'boiler-1f': AT + 30}
+    assert f_book_after_rounds_of_starts.live_starts(AT + 31) == {'hallway': math.inf, 'boiler-1f': math.inf}
+
+
+def test_book_forgets_a_permit_whose_command_never_went_out(f_book_after_rounds_of_starts: GuardBook) -> None:
+    assert f_book_after_rounds_of_starts.live_starts(AT + 30 + PENDING_START_LIMIT) == {}
 
 
 @pytest.mark.parametrize(
     ('load', 'at', 'live_starts'),
     [
-        ('hallway', AT + 12, {'hallway': AT + 12, 'boiler-1f': AT + 30}),
-        ('boiler-1f', AT + 20, {'hallway': AT, 'boiler-1f': AT + 30}),
-        ('kitchen', AT + 12, {'hallway': AT, 'boiler-1f': AT + 30}),
+        ('hallway', AT + 12, {'hallway': AT + 12, 'boiler-1f': math.inf}),
+        ('boiler-1f', AT + 20, {'hallway': math.inf, 'boiler-1f': math.inf}),
+        ('kitchen', AT + 12, {'hallway': math.inf, 'boiler-1f': math.inf}),
     ],
     ids=['after_its_permit', 'never_before_its_permit', 'without_a_live_permit'],
 )
@@ -246,7 +252,13 @@ def test_live_start_counts_from_the_moment_its_command_went_out(
 ) -> None:
     f_book_after_rounds_of_starts.note_started(load, at)
 
-    assert f_book_after_rounds_of_starts.live_starts() == live_starts
+    assert f_book_after_rounds_of_starts.live_starts(AT + 31) == live_starts
+
+
+def test_book_counts_a_load_switched_on_without_a_permit_from_that_moment(f_book: GuardBook) -> None:
+    f_book.note_switched_on('boiler-2f', AT + 5)
+
+    assert f_book.live_starts(AT + 300) == {'boiler-2f': AT + 5}
 
 
 def test_round_of_dry_run_starts_leaves_the_last_permit(f_book_after_a_permit: GuardBook) -> None:

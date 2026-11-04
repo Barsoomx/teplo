@@ -1,3 +1,4 @@
+import math
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -388,7 +389,7 @@ def test_gate_counts_a_floor_s_live_start_from_the_moment_its_command_went_out(
 ) -> None:
     f_gate_seconds_after_live_starts.note_started('kitchen')
 
-    assert f_book.live_starts() == {'kitchen': AT + 35, 'convector-office': AT + 30}
+    assert f_book.live_starts(AT + 35) == {'kitchen': AT + 35, 'convector-office': math.inf}
 
 
 def test_gate_counts_a_heat_source_s_live_start_from_the_moment_its_command_went_out(
@@ -397,7 +398,7 @@ def test_gate_counts_a_heat_source_s_live_start_from_the_moment_its_command_went
 ) -> None:
     f_gate_seconds_after_live_starts.note_source_started('convector-office')
 
-    assert f_book.live_starts() == {'kitchen': AT, 'convector-office': AT + 35}
+    assert f_book.live_starts(AT + 35) == {'kitchen': math.inf, 'convector-office': AT + 35}
 
 
 @pytest.mark.parametrize(

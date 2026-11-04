@@ -3,6 +3,7 @@ from collections.abc import Mapping, Sequence
 
 from apps.power.domain.control import PhaseThresholds
 from apps.power.domain.guard import GuardState
+from apps.power.domain.live_start import LiveStart
 from apps.power.domain.load_status import LoadStatus
 from apps.power.domain.meter_watch import MeterCondition
 from apps.power.domain.start_gate import StartDecision, StartRequest, decide_starts
@@ -13,7 +14,7 @@ class GuardBook:
     def __init__(self) -> None:
         self._state: GuardState | None = None
         self._last_permit_at: float | None = None
-        self._live_starts: dict[str, float] = {}
+        self._live_starts: dict[str, LiveStart] = {}
         self._waiting: frozenset[str] = frozenset()
         self._lock = threading.Lock()
 
@@ -78,21 +79,27 @@ class GuardBook:
             )
             self._last_permit_at = served.last_permit_at
             self._live_starts.update(
-                (request.load.slug, at)
+                (request.load.slug, LiveStart(permitted_at=at, sent_at=None))
                 for request in requests
                 if request.live and served.decisions[request.load.slug].granted
             )
             return served.decisions
 
-    def live_starts(self) -> Mapping[str, float]:
+    def live_starts(self, at: float) -> Mapping[str, float]:
         with self._lock:
-            return dict(self._live_starts)
+            starts = dict(self._live_starts)
+        counted = {load: start.counted_until_read_after(at) for load, start in starts.items()}
+        return {load: until for load, until in counted.items() if until is not None}
 
     def note_started(self, load: str, at: float) -> None:
         with self._lock:
-            started_at = self._live_starts.get(load)
-            if started_at is not None and started_at < at:
-                self._live_starts[load] = at
+            start = self._live_starts.get(load)
+            if start is not None:
+                self._live_starts[load] = start.sent_by(at)
+
+    def note_switched_on(self, load: str, at: float) -> None:
+        with self._lock:
+            self._live_starts[load] = LiveStart.sent(at)
 
     def waiting(self) -> frozenset[str]:
         with self._lock:

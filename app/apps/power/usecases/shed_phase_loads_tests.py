@@ -1164,6 +1164,14 @@ def test_restores_wait_two_minutes_of_calm_and_return_one_load_a_minute_most_imp
     )
 
 
+def test_plug_a_restore_switched_back_on_counts_as_started_until_its_next_reading(
+    f_live_house_after_two_sheds: House,
+) -> None:
+    _seconds(f_live_house_after_two_sheds.guard, 181, '10.0')
+
+    assert f_live_house_after_two_sheds.book.live_starts(START + 186) == {'boiler-1f': START + 186}
+
+
 def test_restore_on_a_meter_that_drops_out_every_minute_waits_for_two_minutes_of_calm_readings(
     f_live_house_after_a_shed: House,
 ) -> None:
@@ -1437,6 +1445,16 @@ def test_teplo_in_dry_run_switches_nothing_and_leaves_a_stored_shed_alone(f_tepl
         [],
         [],
     )
+
+
+def test_plug_a_release_switched_back_on_counts_as_started_until_its_next_reading(
+    f_boiler_shed_live: House,
+) -> None:
+    _seconds(f_boiler_shed_live.guard, 1, '15.0')
+    _load_off(f_boiler_shed_live)
+    _seconds(f_boiler_shed_live.guard, 56, '15.0')
+
+    assert f_boiler_shed_live.book.live_starts(START + 61) == {'boiler-1f': START + 61}
 
 
 @pytest.mark.parametrize('switch_off', [_load_off, _load_management_off], ids=['load', 'load_management'])

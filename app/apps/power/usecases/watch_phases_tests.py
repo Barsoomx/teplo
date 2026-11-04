@@ -482,24 +482,30 @@ def test_overload_by_the_estimate_is_journaled_as_estimated_and_raises_no_alarm(
     )
 
 
-def test_estimate_counts_a_start_the_book_granted_until_a_poll_reads_the_load(
+def test_estimate_counts_a_granted_start_until_a_poll_after_its_command_reads_the_load(
     f_rig_whose_bathroom_floor_was_granted_a_start: GuardRig,
 ) -> None:
     rig = f_rig_whose_bathroom_floor_was_granted_a_start
+    rig.thermostats.record_state('thermostat-bathroom-1f', _bathroom(heating=False, second=1))
     _seconds(rig, 1, WITHOUT_AN_L2_CLAMP)
-    started = _phases(rig).estimate
-    rig.thermostats.record_state('thermostat-bathroom-1f', _bathroom(heating=False, second=2))
+    before_its_command = _phases(rig).estimate
+    rig.book.note_started('bathroom-1f', rig.clock())
     _seconds(rig, 1, WITHOUT_AN_L2_CLAMP)
-
-    assert (started, _phases(rig).estimate) == (
-        PhaseEstimate(
-            phase=LoadPhase.L2,
-            amps=Decimal('8.00'),
-            parts=(
-                ESTIMATE_BASE,
-                EstimatePart(load='bathroom-1f', amps=Decimal('6.0'), basis=EstimateBasis.STARTED),
-            ),
+    after_its_command = _phases(rig).estimate
+    rig.thermostats.record_state('thermostat-bathroom-1f', _bathroom(heating=False, second=3))
+    _seconds(rig, 1, WITHOUT_AN_L2_CLAMP)
+    started = PhaseEstimate(
+        phase=LoadPhase.L2,
+        amps=Decimal('8.00'),
+        parts=(
+            ESTIMATE_BASE,
+            EstimatePart(load='bathroom-1f', amps=Decimal('6.0'), basis=EstimateBasis.STARTED),
         ),
+    )
+
+    assert (before_its_command, after_its_command, _phases(rig).estimate) == (
+        started,
+        started,
         PhaseEstimate(phase=LoadPhase.L2, amps=Decimal('2.00'), parts=(ESTIMATE_BASE,)),
     )
 
