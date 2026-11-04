@@ -31,7 +31,7 @@ from apps.climate.domain.learning import (
     learn_morning,
 )
 from apps.climate.domain.memory import ZoneMemory, fenced
-from apps.climate.domain.modes import ZoneCycleOutcome
+from apps.climate.domain.modes import COMMAND_SENT, ZoneCycleOutcome
 from apps.climate.domain.morning_cap import morning_rate_cap
 from apps.climate.domain.observation import StopWatch
 from apps.climate.domain.ports import LoadGate, WriteGate, ZoneLearningStore, ZoneStore
@@ -393,7 +393,10 @@ class RunHeatingCycleUseCase(BaseUseCase[RunHeatingCycleInputDTO, RunHeatingCycl
         if not run.conditions.writes_live:
             return self._journal_dry_run(run.zone, run.drive.change, now)
 
-        return self._issue(run.zone, run.drive.change, now, read_at=read_at)
+        outcome = self._issue(run.zone, run.drive.change, now, read_at=read_at)
+        if run.drive.starts and outcome in COMMAND_SENT:
+            self._gate.note_started(run.zone.slug)
+        return outcome
 
     def _journal_dry_run(self, zone: ZoneSettings, change: ThermostatChange, now: datetime) -> ZoneCycleOutcome:
         self._zones.mark_dry_run(zone.slug, now)

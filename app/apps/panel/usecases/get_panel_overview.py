@@ -658,10 +658,10 @@ def _commanded_source(source: SourceStatus) -> SourceOverview:
 
 
 def _source_drawing(source: SourceOverview) -> bool | None:
-    if not source.available or source.on is None or source.setpoint is None:
+    if not source.available:
         return None
 
-    return source.on and source.temperature is not None and source.temperature < source.setpoint
+    return source.on
 
 
 def _with_climate(room: RoomOverview, climate: RoomClimateSettings | None, intent: RoomIntent | None) -> RoomOverview:

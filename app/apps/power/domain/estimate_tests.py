@@ -245,21 +245,21 @@ def test_parts_of_no_current_are_left_out_and_the_sum_is_rounded_to_hundredths()
     ('reading', 'live_sheds', 'parts'),
     [
         (
-            source_reading(on=True, heating=True, read_at=AT - 10),
+            source_reading(on=True, read_at=AT - 10),
             {},
             (BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING)),
         ),
-        (source_reading(on=True, heating=False, read_at=AT - 10), {}, (BASE,)),
-        (source_reading(on=True, heating=True, read_at=AT - 10), {'convector-office': CONVECTOR_SHED}, (BASE,)),
+        (source_reading(on=False, read_at=AT - 10), {}, (BASE,)),
+        (source_reading(on=True, read_at=AT - 10), {'convector-office': CONVECTOR_SHED}, (BASE,)),
         (
-            source_reading(on=True, heating=True, read_at=AT - 4),
+            source_reading(on=True, read_at=AT - 4),
             {'convector-office': CONVECTOR_SHED},
             (BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING)),
         ),
     ],
-    ids=['heating', 'at_its_setpoint', 'shed_live_and_unread_since', 'switched_back_on_after_the_shed'],
+    ids=['on', 'off', 'shed_live_and_unread_since', 'switched_back_on_after_the_shed'],
 )
-def test_heat_source_counts_its_rated_current_while_it_heats_and_nothing_after_a_live_shed_until_read_again(
+def test_heat_source_counts_its_rated_current_while_it_is_on_and_nothing_after_a_live_shed_until_read_again(
     reading: LoadReading,
     live_sheds: Mapping[str, Shed],
     parts: tuple[EstimatePart, ...],

@@ -186,11 +186,11 @@ def _bathroom(*, heating: bool, second: int) -> ThermostatState:
     )
 
 
-def _convector(*, room_temperature: int, second: int) -> ClimateUnitState:
+def _convector(*, on: bool, second: int) -> ClimateUnitState:
     return ClimateUnitState(
-        mode=ClimateMode.HEAT,
+        mode=ClimateMode.HEAT if on else ClimateMode.OFF,
         target=Decimal(22),
-        room_temperature=Decimal(room_temperature),
+        room_temperature=Decimal(23),
         read_at=_at(second),
         level='High',
     )
@@ -272,7 +272,7 @@ def f_rig_measuring_l2() -> GuardRig:
 @pytest.fixture
 def f_rig_with_a_convector(request: pytest.FixtureRequest) -> GuardRig:
     rig = _rig((), [BOILER, CONVECTOR], ESTIMATING_L2)
-    rig.climate_units.record_state('heater-office', _convector(room_temperature=request.param, second=0))
+    rig.climate_units.record_state('heater-office', _convector(on=request.param, second=0))
     return rig
 
 
@@ -429,13 +429,16 @@ def test_estimate_takes_the_place_of_the_unclamped_phase_while_the_samples_keep_
 @pytest.mark.parametrize(
     ('f_rig_with_a_convector', 'parts'),
     [
-        (21, (ESTIMATE_BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING))),
-        (22, (ESTIMATE_BASE,)),
+        (
+            True,
+            (ESTIMATE_BASE, EstimatePart(load='convector-office', amps=Decimal('8.7'), basis=EstimateBasis.DRAWING)),
+        ),
+        (False, (ESTIMATE_BASE,)),
     ],
-    ids=['heating_below_its_setpoint', 'idle_at_its_setpoint'],
+    ids=['on_though_its_own_temperature_reads_above_its_setpoint', 'off'],
     indirect=['f_rig_with_a_convector'],
 )
-def test_estimate_counts_a_heat_source_at_its_rated_current_while_it_heats(
+def test_estimate_counts_a_heat_source_at_its_rated_current_while_it_is_on(
     f_rig_with_a_convector: GuardRig,
     parts: tuple[EstimatePart, ...],
 ) -> None:

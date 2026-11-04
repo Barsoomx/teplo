@@ -59,7 +59,9 @@ class GuardLoadGate:
         return frozenset(
             record.source_slug
             for record in state.loads.records
-            if record.source_slug is not None and starts_live(state.loads.control, record, writes_live=True)
+            if record.source_slug is not None
+            and record.source_slug in state.loads.live_sources
+            and starts_live(state.loads.control, record, writes_live=True)
         )
 
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]:
@@ -79,6 +81,24 @@ class GuardLoadGate:
         records = {record.source_slug: record for record in state.loads.records if record.source_slug is not None}
         keyed = [KeyedStart(key=start.source, writes_live=start.writes_live) for start in starts]
         return self._ask(state, keyed, records, now)
+
+    def note_started(self, zone: str) -> None:
+        state = self._book.state()
+        if state is None:
+            return
+
+        self._note(next((record for record in state.loads.records if record.zone_slug == zone), None))
+
+    def note_source_started(self, source: str) -> None:
+        state = self._book.state()
+        if state is None:
+            return
+
+        self._note(next((record for record in state.loads.records if record.source_slug == source), None))
+
+    def _note(self, record: LoadRecord | None) -> None:
+        if record is not None:
+            self._book.note_started(record.slug, self._clock())
 
     def _ask(
         self,

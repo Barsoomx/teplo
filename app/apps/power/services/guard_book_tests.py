@@ -229,6 +229,26 @@ def test_book_remembers_when_each_granted_live_start_and_restore_was_permitted(
     assert f_book_after_rounds_of_starts.live_starts() == {'hallway': AT, 'boiler-1f': AT + 30}
 
 
+@pytest.mark.parametrize(
+    ('load', 'at', 'live_starts'),
+    [
+        ('hallway', AT + 12, {'hallway': AT + 12, 'boiler-1f': AT + 30}),
+        ('boiler-1f', AT + 20, {'hallway': AT, 'boiler-1f': AT + 30}),
+        ('kitchen', AT + 12, {'hallway': AT, 'boiler-1f': AT + 30}),
+    ],
+    ids=['after_its_permit', 'never_before_its_permit', 'without_a_live_permit'],
+)
+def test_live_start_counts_from_the_moment_its_command_went_out(
+    f_book_after_rounds_of_starts: GuardBook,
+    load: str,
+    at: float,
+    live_starts: dict[str, float],
+) -> None:
+    f_book_after_rounds_of_starts.note_started(load, at)
+
+    assert f_book_after_rounds_of_starts.live_starts() == live_starts
+
+
 def test_round_of_dry_run_starts_leaves_the_last_permit(f_book_after_a_permit: GuardBook) -> None:
     decisions = _serve(f_book_after_a_permit, (StartRequest(load=KITCHEN, live=False),), AT + 30)
 

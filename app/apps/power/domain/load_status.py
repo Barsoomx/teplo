@@ -76,5 +76,5 @@ def thermostat_reading(
     return LoadReading(read_at=read_at, drawing=drawing, closed=power and heating, current=None)
 
 
-def source_reading(*, on: bool, heating: bool, read_at: float) -> LoadReading:
-    return LoadReading(read_at=read_at, drawing=heating, closed=on, current=None)
+def source_reading(*, on: bool, read_at: float) -> LoadReading:
+    return LoadReading(read_at=read_at, drawing=on, closed=on, current=None)

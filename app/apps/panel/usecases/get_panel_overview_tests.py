@@ -92,6 +92,13 @@ pytestmark = pytest.mark.django_db
 
 MOSCOW = ZoneInfo('Europe/Moscow')
 MORNING = datetime(2026, 10, 29, 7, 0, tzinfo=MOSCOW)
+CONVECTOR_AT_THE_APPS_SETPOINT = ClimateUnitState(
+    mode=ClimateMode.HEAT,
+    target=Decimal(35),
+    room_temperature=Decimal(21),
+    read_at=MORNING,
+    level='High',
+)
 NIGHT = datetime(2026, 10, 29, 1, 0, tzinfo=MOSCOW)
 WARM_UP = datetime(2026, 10, 29, 4, 0, tzinfo=MOSCOW)
 LATE_WARM_UP = datetime(2026, 10, 29, 4, 30, tzinfo=MOSCOW)
@@ -807,7 +814,7 @@ def f_fireplace_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseC
 
 
 @pytest.fixture
-def f_office_use_case() -> GetPanelOverviewUseCase:
+def f_office_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase:
     office = RoomClimateFactory.create(
         room=RoomFactory.create(
             slug='office',
@@ -841,16 +848,7 @@ def f_office_use_case() -> GetPanelOverviewUseCase:
         phase=LoadPhase.L2,
     )
     units = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10))
-    units.record_state(
-        'heater-office',
-        ClimateUnitState(
-            mode=ClimateMode.HEAT,
-            target=Decimal(35),
-            room_temperature=Decimal(21),
-            read_at=MORNING,
-            level='High',
-        ),
-    )
+    units.record_state('heater-office', getattr(request, 'param', CONVECTOR_AT_THE_APPS_SETPOINT))
     book = ControlBook()
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
@@ -1730,7 +1728,7 @@ def test_overview_shows_the_office_card_with_its_convector_and_target(
     )
 
 
-def test_overview_lists_the_convector_s_load_at_its_rated_current_and_drawing_while_it_heats(
+def test_overview_lists_the_convector_s_load_at_its_rated_current_and_drawing_while_it_is_on(
     f_office_use_case: GetPanelOverviewUseCase,
 ) -> None:
     loads = f_office_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).loads
@@ -1755,3 +1753,21 @@ def test_overview_lists_the_convector_s_load_at_its_rated_current_and_drawing_wh
             live=False,
         ),
     )
+
+
+@pytest.mark.parametrize(
+    ('f_office_use_case', 'state'),
+    [
+        (replace(CONVECTOR_AT_THE_APPS_SETPOINT, target=Decimal(22), room_temperature=Decimal(23)), LoadState.DRAWING),
+        (replace(CONVECTOR_AT_THE_APPS_SETPOINT, mode=ClimateMode.OFF), LoadState.IDLE),
+    ],
+    ids=['on_though_it_reads_warmer_than_its_setpoint', 'off'],
+    indirect=['f_office_use_case'],
+)
+def test_overview_counts_the_convector_s_load_drawing_whenever_it_is_on(
+    f_office_use_case: GetPanelOverviewUseCase,
+    state: LoadState,
+) -> None:
+    loads = f_office_use_case.execute(GetPanelOverviewInputDTO(now=MORNING)).loads
+
+    assert [load.state for load in loads] == [state]

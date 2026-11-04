@@ -88,6 +88,12 @@ class GuardBook:
         with self._lock:
             return dict(self._live_starts)
 
+    def note_started(self, load: str, at: float) -> None:
+        with self._lock:
+            started_at = self._live_starts.get(load)
+            if started_at is not None and started_at < at:
+                self._live_starts[load] = at
+
     def waiting(self) -> frozenset[str]:
         with self._lock:
             return self._waiting

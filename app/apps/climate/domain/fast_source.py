@@ -99,17 +99,8 @@ def plan_source_change(target: SourceTarget, state: ClimateUnitState) -> SourceC
     return SourceChange(power=None if state.on else True, setpoint=setpoint)
 
 
-def source_starts(change: SourceChange, state: ClimateUnitState) -> bool:
-    if change.power:
-        return True
-
-    if change.setpoint is None or state.heating:
-        return False
-
-    if state.room_temperature is None:
-        return change.setpoint > state.target
-
-    return change.setpoint > state.room_temperature
+def source_starts(change: SourceChange) -> bool:
+    return change.power is True
 
 
 def plan_source_drive(
@@ -139,7 +130,7 @@ def plan_source_drive(
     if not slot_free or not write_allowed(last_write_at, now, interval):
         return _settled(ZoneCycleOutcome.THROTTLED)
 
-    return SourceDrive(change=change, outcome=None, starts=source_starts(change, state))
+    return SourceDrive(change=change, outcome=None, starts=source_starts(change))
 
 
 def pending_source_write(

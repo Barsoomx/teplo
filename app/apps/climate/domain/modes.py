@@ -41,4 +41,5 @@ class ZoneCycleOutcome(StrEnum):
 
 
 FOLLOWED = frozenset({ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.APPLIED, ZoneCycleOutcome.DRY_RUN})
+COMMAND_SENT = frozenset({ZoneCycleOutcome.APPLIED, ZoneCycleOutcome.FAILED})
 UNREACHED = frozenset({ZoneCycleOutcome.DEVICE_UNAVAILABLE, ZoneCycleOutcome.FAILED})

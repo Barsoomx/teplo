@@ -5127,6 +5127,36 @@ def test_floor_changed_on_its_thermostat_takes_no_write_and_asks_no_permit_while
     )
 
 
+@pytest.fixture
+def f_started_cycle(
+    store: ThermostatStateStore,
+    temperatures: TemperatureStateStore,
+    book: ControlBook,
+    f_thermostat: FloorThermostatStub,
+    f_permits: LoadGateStub,
+    dispatcher: EventDispatcher,
+) -> RunHeatingCycleUseCase:
+    _floor_zone('kitchen', KITCHEN)
+    ClimateSettingsFactory.create()
+    store.record_state(KITCHEN, _state('22.0', heating=False))
+    return _use_case(store, temperatures, {KITCHEN: f_thermostat}, book, dispatcher, gate=f_permits)
+
+
+def test_live_start_tells_load_management_once_its_command_went_out(
+    f_started_cycle: RunHeatingCycleUseCase,
+    f_thermostat: FloorThermostatStub,
+    f_permits: LoadGateStub,
+) -> None:
+    output = f_started_cycle.execute(_at(MORNING))
+
+    assert (output.outcomes, f_thermostat.commands, f_permits.asked, f_permits.started) == (
+        {'kitchen': ZoneCycleOutcome.APPLIED},
+        [('setpoint', Decimal('28.0'))],
+        [(ZoneStart(zone='kitchen', writes_live=True),)],
+        ['kitchen'],
+    )
+
+
 def test_floor_shed_under_a_hold_by_hand_stays_shed(
     f_shed_held_by_hand_cycle: RunHeatingCycleUseCase,
     f_thermostat: FloorThermostatStub,

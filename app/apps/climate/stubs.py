@@ -236,10 +236,15 @@ class SourceLoadGateStub:
         self._gated = gated
         self._answers = answers
         self._asked: list[tuple[SourceStart, ...]] = []
+        self._started: list[str] = []
 
     @property
     def asked(self) -> list[tuple[SourceStart, ...]]:
         return self._asked
+
+    @property
+    def started(self) -> list[str]:
+        return self._started
 
     def held_sources(self) -> frozenset[str]:
         return self._held
@@ -250,6 +255,9 @@ class SourceLoadGateStub:
     def ask_source_starts(self, starts: Sequence[SourceStart], now: datetime) -> dict[str, StartAnswer]:  # noqa: ARG002
         self._asked.append(tuple(starts))
         return {start.source: self._answers[start.source] for start in starts if start.source in self._answers}
+
+    def note_source_started(self, source: str) -> None:
+        self._started.append(source)
 
 
 class ClimateSensorsStoreStub:
@@ -266,10 +274,15 @@ class LoadGateStub:
         self._gated = gated
         self._answers = answers
         self._asked: list[tuple[ZoneStart, ...]] = []
+        self._started: list[str] = []
 
     @property
     def asked(self) -> list[tuple[ZoneStart, ...]]:
         return self._asked
+
+    @property
+    def started(self) -> list[str]:
+        return self._started
 
     def hold(self, zone: str) -> None:
         self._held = self._held | {zone}
@@ -286,6 +299,9 @@ class LoadGateStub:
     def ask_starts(self, starts: Sequence[ZoneStart], now: datetime) -> dict[str, StartAnswer]:  # noqa: ARG002
         self._asked.append(tuple(starts))
         return {start.zone: self._answers[start.zone] for start in starts if start.zone in self._answers}
+
+    def note_started(self, zone: str) -> None:
+        self._started.append(zone)
 
 
 class ZoneConfigStoreStub:

@@ -22,7 +22,7 @@ from apps.climate.domain.fast_source import (
     room_targets,
 )
 from apps.climate.domain.heat_sources import SourceSettings
-from apps.climate.domain.modes import ZoneCycleOutcome
+from apps.climate.domain.modes import COMMAND_SENT, ZoneCycleOutcome
 from apps.climate.domain.ports import ClimateSensorsStore, HeatSourceStore, SourceLoadGate, SourceWrites
 from apps.climate.domain.room_intent import RoomIntents
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
@@ -124,14 +124,23 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             return RunSourceCycleOutputDTO(outcomes={})
 
         held = self._gate.held_sources()
+        gated = self._gate.gated_sources()
         outdoor = self._temperature(outdoor_slug)
         runs: list[SourceRun] = []
         for room, room_sources in _by_room(sources).items():
-            runs.extend(self._plan_room(room, room_sources, intents, held, outdoor, now, read_at=input_dto.monotonic))
-        permits = StartPermits(
-            answers=self._gate.ask_source_starts(_starts(runs), now),
-            gated=self._gate.gated_sources(),
-        )
+            runs.extend(
+                self._plan_room(
+                    room,
+                    room_sources,
+                    intents,
+                    held,
+                    outdoor,
+                    now,
+                    gated=gated,
+                    read_at=input_dto.monotonic,
+                ),
+            )
+        permits = StartPermits(answers=self._gate.ask_source_starts(_starts(runs), now), gated=gated)
         return RunSourceCycleOutputDTO(
             outcomes={run.source.slug: self._run(run, permits, now, read_at=input_dto.monotonic) for run in runs},
         )
@@ -145,6 +154,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         outdoor: Decimal | None,
         now: datetime,
         *,
+        gated: frozenset[str],
         read_at: float,
     ) -> list[SourceRun]:
         intent = intents.of(room)
@@ -167,7 +177,14 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         hands_off = room_held_by_hand(sources, now)
         return [
             self._plan(
-                source, targets[source.slug], states[source.slug], held, now, hands_off=hands_off, read_at=read_at
+                source,
+                targets[source.slug],
+                states[source.slug],
+                held,
+                now,
+                hands_off=hands_off,
+                gated=gated,
+                read_at=read_at,
             )
             for source in sources
         ]
@@ -181,6 +198,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         now: datetime,
         *,
         hands_off: bool,
+        gated: frozenset[str],
         read_at: float,
     ) -> SourceRun:
         writes_live = source.writes_live(dry_run=self._dry_run)
@@ -194,6 +212,9 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             hands_off=hands_off,
             slot_free=self._slot_free(source, now, writes_live=writes_live, read_at=read_at),
         )
+        if writes_live and drive.outcome is None and source.slug not in gated:
+            logger.info('source_waits_for_load_management', source=source.slug)
+            drive = SourceDrive(change=SourceChange(), outcome=ZoneCycleOutcome.WAITING, starts=False)
         if not writes_live and self._journaled(source, target, drive):
             drive = SourceDrive(change=SourceChange(), outcome=ZoneCycleOutcome.UNCHANGED, starts=False)
         return SourceRun(source=source, target=target, drive=drive, writes_live=writes_live)
@@ -247,7 +268,10 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         if not run.writes_live:
             return self._journal_dry_run(run.source, run.target, run.drive.change, now)
 
-        return self._issue(run.source, run.target, run.drive.change, now, read_at=read_at)
+        outcome = self._issue(run.source, run.target, run.drive.change, now, read_at=read_at)
+        if run.drive.starts and outcome in COMMAND_SENT:
+            self._gate.note_source_started(run.source.slug)
+        return outcome
 
     def _journal_dry_run(
         self,
@@ -348,10 +372,10 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
 
 
 def _apply(unit: ControllableClimateUnit, change: SourceChange) -> None:
-    if change.power is not None:
-        unit.set_power(change.power)
     if change.setpoint is not None:
         unit.set_setpoint(change.setpoint)
+    if change.power is not None:
+        unit.set_power(change.power)
 
 
 def _by_room(sources: Sequence[SourceSettings]) -> dict[str, list[SourceSettings]]:

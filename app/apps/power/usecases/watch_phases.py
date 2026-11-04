@@ -257,11 +257,7 @@ class WatchPhasesUseCase(BaseUseCase[WatchPhasesInputDTO, WatchPhasesOutputDTO])
 
         return SeenReading(
             polled_at=unit.state.read_at,
-            reading=source_reading(
-                on=unit.state.on,
-                heating=unit.state.heating,
-                read_at=at - unit.age.total_seconds(),
-            ),
+            reading=source_reading(on=unit.state.on, read_at=at - unit.age.total_seconds()),
         )
 
     def _watch(

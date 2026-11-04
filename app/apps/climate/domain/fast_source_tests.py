@@ -64,7 +64,6 @@ HEATING = ClimateUnitState(
 )
 OFF = replace(HEATING, mode=ClimateMode.OFF)
 COOLING = replace(HEATING, mode=ClimateMode.COOL)
-AT_ITS_SETPOINT = replace(HEATING, room_temperature=Decimal(22))
 ON_AT_22 = SourceTarget(power=True, setpoint=Decimal(22))
 SWITCHED_OFF = SourceTarget(power=False, setpoint=None)
 
@@ -280,30 +279,18 @@ def test_change_writes_only_what_differs_and_leaves_the_owners_modes_alone(
 
 
 @pytest.mark.parametrize(
-    ('change', 'state', 'starts'),
+    ('change', 'starts'),
     [
-        (SourceChange(power=True), OFF, True),
-        (SourceChange(setpoint=Decimal(24)), AT_ITS_SETPOINT, True),
-        (SourceChange(setpoint=Decimal(22)), replace(AT_ITS_SETPOINT, target=Decimal(19)), False),
-        (SourceChange(setpoint=Decimal(24)), HEATING, False),
-        (SourceChange(setpoint=Decimal(19)), AT_ITS_SETPOINT, False),
-        (SourceChange(power=False), HEATING, False),
+        (SourceChange(power=True, setpoint=Decimal(22)), True),
+        (SourceChange(power=True), True),
+        (SourceChange(setpoint=Decimal(24)), False),
+        (SourceChange(setpoint=Decimal(19)), False),
+        (SourceChange(power=False), False),
     ],
-    ids=[
-        'switched_on',
-        'raised_above_its_own_temperature',
-        'raised_to_its_own_temperature',
-        'raised_while_it_heats',
-        'lowered',
-        'switched_off',
-    ],
+    ids=['switched_on_with_a_setpoint', 'switched_on', 'raised_while_on', 'lowered_while_on', 'switched_off'],
 )
-def test_change_starts_a_source_when_it_switches_it_on_or_raises_it_above_its_own_temperature(
-    change: SourceChange,
-    state: ClimateUnitState,
-    starts: bool,
-) -> None:
-    assert source_starts(change, state) is starts
+def test_change_starts_a_source_only_when_it_switches_it_on(change: SourceChange, starts: bool) -> None:
+    assert source_starts(change) is starts
 
 
 @pytest.mark.parametrize(

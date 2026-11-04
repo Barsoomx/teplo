@@ -117,6 +117,7 @@ def _remember(
     calming: frozenset[LoadPhase] = frozenset(),
     last_l2: str | None = None,
     estimate: EstimateSettings = NO_ESTIMATE,
+    live_sources: frozenset[str] = frozenset({'convector-office'}),
 ) -> None:
     loads = GuardLoads(
         records=(BOILER, HALLWAY, KITCHEN, LIVING_ROOM, CONVECTOR),
@@ -129,7 +130,7 @@ def _remember(
         live_zones=frozenset({'hallway', 'kitchen', 'living-room'}),
         meter='phase-meter',
         read_at=AT,
-        live_sources=frozenset({'convector-office'}),
+        live_sources=live_sources,
     )
     started = GuardState.started(loads, AT)
     measured = {LoadPhase.L1: Decimal('8.0'), LoadPhase.L2: Decimal(l2), LoadPhase.L3: Decimal('4.0')}
@@ -188,6 +189,24 @@ def f_gate(f_book: GuardBook) -> GuardLoadGate:
 def f_live_gate(request: pytest.FixtureRequest, f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
     _remember(f_book, management_live=True, l2=request.param)
     return f_gate
+
+
+@pytest.fixture
+def f_gate_before_the_source_is_live(f_book: GuardBook, f_gate: GuardLoadGate) -> GuardLoadGate:
+    _remember(f_book, management_live=True, live_sources=frozenset())
+    return f_gate
+
+
+@pytest.fixture
+def f_gate_seconds_after_live_starts(f_book: GuardBook) -> GuardLoadGate:
+    _remember(f_book, management_live=True)
+    clock = MonotonicClockStub(now=AT)
+    gate = GuardLoadGate(book=f_book, clock=clock)
+    gate.ask_starts([KITCHEN_START], NOW)
+    clock.advance(30)
+    gate.ask_source_starts([CONVECTOR_START], NOW)
+    clock.advance(5)
+    return gate
 
 
 @pytest.fixture
@@ -355,6 +374,30 @@ def test_gate_holds_the_heat_sources_of_live_sheds(f_shed_source_gate: GuardLoad
 @pytest.mark.parametrize('f_live_gate', ['10.0'], indirect=True)
 def test_gate_names_the_heat_sources_whose_live_starts_need_a_permit(f_live_gate: GuardLoadGate) -> None:
     assert f_live_gate.gated_sources() == frozenset({'convector-office'})
+
+
+def test_gate_names_no_heat_source_before_the_guard_reads_it_live(
+    f_gate_before_the_source_is_live: GuardLoadGate,
+) -> None:
+    assert f_gate_before_the_source_is_live.gated_sources() == frozenset()
+
+
+def test_gate_counts_a_floor_s_live_start_from_the_moment_its_command_went_out(
+    f_gate_seconds_after_live_starts: GuardLoadGate,
+    f_book: GuardBook,
+) -> None:
+    f_gate_seconds_after_live_starts.note_started('kitchen')
+
+    assert f_book.live_starts() == {'kitchen': AT + 35, 'convector-office': AT + 30}
+
+
+def test_gate_counts_a_heat_source_s_live_start_from_the_moment_its_command_went_out(
+    f_gate_seconds_after_live_starts: GuardLoadGate,
+    f_book: GuardBook,
+) -> None:
+    f_gate_seconds_after_live_starts.note_source_started('convector-office')
+
+    assert f_book.live_starts() == {'kitchen': AT, 'convector-office': AT + 35}
 
 
 @pytest.mark.parametrize(

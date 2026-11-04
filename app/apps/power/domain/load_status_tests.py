@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from apps.power.domain.load_status import LoadReading, LoadStatus, plug_reading, thermostat_reading
+from apps.power.domain.load_status import LoadReading, LoadStatus, plug_reading, source_reading, thermostat_reading
 from apps.power.domain.loads import LearnedPhase, LoadKind, LoadPhase, LoadRecord
 
 READ_AT = 1000.0
@@ -84,6 +84,11 @@ def test_thermostat_draws_while_powered_and_heating_or_set_above_its_floor(
     )
 
     assert reading == LoadReading(read_at=READ_AT, drawing=drawing, closed=closed, current=None)
+
+
+@pytest.mark.parametrize('on', [True, False], ids=['on', 'off'])
+def test_heat_source_draws_whenever_it_is_on(on: bool) -> None:
+    assert source_reading(on=on, read_at=READ_AT) == LoadReading(read_at=READ_AT, drawing=on, closed=on, current=None)
 
 
 def test_status_of_a_load_with_a_reading_takes_its_effective_phase_and_amps(f_heating_reading: LoadReading) -> None:

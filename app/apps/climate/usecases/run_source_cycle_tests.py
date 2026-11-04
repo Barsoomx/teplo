@@ -109,6 +109,7 @@ AT_THE_APPS_SETPOINT = ClimateUnitState(
     level='High',
 )
 AT_NINETEEN = replace(AT_THE_APPS_SETPOINT, target=Decimal(19), room_temperature=Decimal(19))
+OFF_AT_NINETEEN = replace(AT_NINETEEN, mode=ClimateMode.OFF)
 GRANTED = {
     'convector-office': StartAnswer(granted=True, note=None),
     'heater-bedroom': StartAnswer(granted=True, note=None),
@@ -175,8 +176,8 @@ def f_sources(request: pytest.FixtureRequest) -> HeatSourceStoreStub:
 
 @pytest.fixture
 def f_gate(request: pytest.FixtureRequest) -> SourceLoadGateStub:
-    held, answers = getattr(request, 'param', (frozenset(), GRANTED))
-    return SourceLoadGateStub(held=held, gated=frozenset(GRANTED), answers=answers)
+    held, gated, answers = getattr(request, 'param', (frozenset(), frozenset(GRANTED), GRANTED))
+    return SourceLoadGateStub(held=held, gated=gated, answers=answers)
 
 
 @pytest.fixture
@@ -288,7 +289,7 @@ def test_watched_source_journals_no_sooner_than_its_interval_after_its_last_entr
     [(([LIVE_CONVECTOR], {}), AT_NINETEEN)],
     indirect=True,
 )
-def test_live_source_gets_its_setpoint_stamped_first_with_a_start_permit(
+def test_live_source_that_is_on_gets_its_setpoint_stamped_first_without_a_start_permit(
     f_use_case: RunSourceCycleUseCase,
     f_sources: HeatSourceStoreStub,
     f_unit: ControllableClimateUnitStub,
@@ -297,13 +298,97 @@ def test_live_source_gets_its_setpoint_stamped_first_with_a_start_permit(
 ) -> None:
     output = f_use_case.execute(_cycle(COMFORT_AT))
 
-    assert (output, f_sources.stamps, f_sources.commanded, f_unit.commands, f_gate.asked, f_events) == (
+    assert (output, f_sources.stamps, f_sources.commanded, f_unit.commands, f_gate.asked, f_gate.started, f_events) == (
         RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.APPLIED}),
         [('last_command_at', 'convector-office', COMFORT_AT)],
         [('convector-office', True, Decimal(22))],
         [('setpoint', Decimal(22))],
-        [(SourceStart(source='convector-office', writes_live=True),)],
+        [()],
+        [],
         [_issued(Decimal(22), COMFORT_AT, dry_run=False)],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units'),
+    [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN)],
+    indirect=True,
+)
+def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_before_its_power(
+    f_use_case: RunSourceCycleUseCase,
+    f_sources: HeatSourceStoreStub,
+    f_unit: ControllableClimateUnitStub,
+    f_gate: SourceLoadGateStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_sources.commanded, f_unit.commands, f_gate.asked, f_gate.started, f_events) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.APPLIED}),
+        [('convector-office', True, Decimal(22))],
+        [('setpoint', Decimal(22)), ('power', True)],
+        [(SourceStart(source='convector-office', writes_live=True),)],
+        ['convector-office'],
+        [
+            SourceCommandIssued(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=True,
+                setpoint=Decimal(22),
+                dry_run=False,
+                occurred_at=COMFORT_AT,
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'f_unit'),
+    [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, (DeviceUnavailableError('timeout'),))],
+    indirect=True,
+)
+def test_source_whose_setpoint_is_refused_is_not_switched_on(
+    f_use_case: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands, f_events) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.FAILED}),
+        [],
+        [
+            SourceCommandFailed(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=True,
+                setpoint=Decimal(22),
+                error='timeout',
+                error_code='device_unavailable',
+                occurred_at=COMFORT_AT,
+            ),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'f_gate'),
+    [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, (frozenset(), frozenset(), GRANTED))],
+    indirect=True,
+)
+def test_live_source_waits_until_load_management_serves_its_load_live(
+    f_use_case: RunSourceCycleUseCase,
+    f_sources: HeatSourceStoreStub,
+    f_unit: ControllableClimateUnitStub,
+    f_gate: SourceLoadGateStub,
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_sources.stamps, f_unit.commands, f_gate.asked) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.WAITING}),
+        [],
+        [],
+        [()],
     )
 
 
@@ -331,8 +416,8 @@ def test_live_source_is_written_no_sooner_than_its_interval_after_its_last_write
     [
         (
             ([LIVE_CONVECTOR], {}),
-            AT_NINETEEN,
-            (frozenset(), {'convector-office': StartAnswer(granted=False, note=None)}),
+            OFF_AT_NINETEEN,
+            (frozenset(), frozenset(GRANTED), {'convector-office': StartAnswer(granted=False, note=None)}),
         ),
     ],
     indirect=True,
@@ -341,11 +426,13 @@ def test_live_source_whose_start_is_refused_waits_and_writes_nothing(
     f_use_case: RunSourceCycleUseCase,
     f_sources: HeatSourceStoreStub,
     f_unit: ControllableClimateUnitStub,
+    f_gate: SourceLoadGateStub,
 ) -> None:
     output = f_use_case.execute(_cycle(COMFORT_AT))
 
-    assert (output, f_sources.stamps, f_unit.commands) == (
+    assert (output, f_sources.stamps, f_unit.commands, f_gate.started) == (
         RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.WAITING}),
+        [],
         [],
         [],
     )
@@ -353,7 +440,7 @@ def test_live_source_whose_start_is_refused_waits_and_writes_nothing(
 
 @pytest.mark.parametrize(
     ('f_sources', 'units', 'f_gate'),
-    [(([LIVE_CONVECTOR], {}), AT_NINETEEN, (frozenset({'convector-office'}), {}))],
+    [(([LIVE_CONVECTOR], {}), AT_NINETEEN, (frozenset({'convector-office'}), frozenset(GRANTED), {}))],
     indirect=True,
 )
 def test_source_load_management_holds_shed_gets_no_write(
