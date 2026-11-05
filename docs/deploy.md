@@ -489,6 +489,8 @@ teplo ships the driver of the bedroom's Ballu, `esphome_climate`, and the firmwa
 
 An older release does not know the migrations of a newer one, so undo them before it runs, from the release you leave and the newest first.
 
+The release you leave runs on while its migrations are undone, and from `migrate devices 0004` on, past presence, its reads fail on the columns they drop: it controls nothing, load management included, and its dashboard, journal and admin pages fail until the restart. So do every admin step of the rollbacks you are going to run first, while it still runs whole: untick the convector's `live` and wait until no load reads «Отключена», untick `load management live` and wait the same way when you go back past load management, and delete what would stop a rollback, the air conditioner's load, heat source and device, presence sources besides the office computer and heaters besides the convector, as each rollback below says. Then run the rollbacks' commands, the switch of `current` and the restart as one ssh command, as the end of this section shows, so the gap lasts seconds, as in a deploy.
+
 Rolling back past the air conditioner driver takes one step, and one check first: delete in the admin the air conditioner's load, heat source and device, `ac-bedroom` and any other with the driver `esphome_climate`, as an older release knows no such driver. While one exists, `migrate devices 0005` stops before it changes anything and names it. Otherwise it drops the driver and puts the constraint on commanding drivers back to the plugs and `tuya_heater`:
 
 ```sh
@@ -560,9 +562,15 @@ Rolling back past load management takes two steps first:
 
    A deploy that fails after its migrate step, e.g. in `collectstatic`, leaves `current` on the older release with the newer migrations applied: run the same command with `releases/<commit>` of the failed deploy in place of `current`, or deploy again.
 
-Then switch `current` back and restart:
+Find the release to go back to, then run the commands of every rollback it needs, newest first, with the switch of `current` and the restart at the end of the same ssh command, e.g. back past presence:
 
 ```sh
 ssh -p 222 root@192.168.1.1 'ls -1t /opt/share/teplo/releases'
-ssh -p 222 root@192.168.1.1 'ln -sfn /opt/share/teplo/releases/<previous> /opt/share/teplo/current && /opt/etc/init.d/S90teplo restart'
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; manage="/opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py"; $manage migrate devices 0005 && $manage migrate devices 0004 && $manage migrate climate 0014 && ln -sfn /opt/share/teplo/releases/<previous> /opt/share/teplo/current && /opt/etc/init.d/S90teplo restart'
+```
+
+A rollback that stops anyway, on a row the admin steps missed, ends the command before `current` moves, and the release you leave runs on with the migrations undone so far. Migrate it forward again and restart it, which brings back its control and its admin, delete there what the rollback named, then run the command again:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate && /opt/etc/init.d/S90teplo restart'
 ```
