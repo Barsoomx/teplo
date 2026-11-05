@@ -765,7 +765,7 @@ password = '...'
 - **Entware packages:** python3, python3-pip, python3-sqlite3, python3-asyncio, python3-cryptography, mosquitto-nossl, and mosquitto-client-nossl for checking the broker.
 - **Paths:** code `/opt/share/teplo`, settings and secrets `/opt/etc/teplo`, database `/opt/var/lib/teplo`, logs `/opt/var/log/teplo`.
 - **Install:** a virtualenv with system site packages, so the Entware build of `cryptography` is reused.
-- **Deploy:** from the workstation over SSH (port 222): ship the code, install dependencies, run migrations, restart the service.
+- **Deploy:** from the workstation over SSH (port 222): ship the code, install dependencies, collect static files and update the panel's owner account, then run migrations, switch the release and restart the service in one command, so only a failed migration can leave the running release on a schema it does not know (`docs/deploy.md`).
 
 ## 13. Testing and rollout
 

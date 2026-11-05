@@ -22,21 +22,24 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
 sh deploy/deploy.sh
 ```
 
-The script installs pinned requirements into `/opt/share/teplo/venv` (Entware provides `cryptography`), migrates, collects static files, creates or updates the `owner` panel account from `secrets.toml`, switches `/opt/share/teplo/current` and restarts the service. The panel is at `http://192.168.1.1:8088/`.
+The script installs pinned requirements into `/opt/share/teplo/venv` (Entware provides `cryptography`), collects static files and creates or updates the `owner` panel account from `secrets.toml`; only then does it migrate, switch `/opt/share/teplo/current` and restart the service. The panel is at `http://192.168.1.1:8088/`.
 
 ```mermaid
 flowchart LR
     archive["git archive HEAD<br/>app, deploy"] -->|ssh| release["releases/commit"]
-    release --> prepare["pip install --no-deps<br/>migrate, collectstatic<br/>owner account"]
-    prepare --> switch["current → releases/commit"]
+    release --> prepare["pip install --no-deps<br/>collectstatic<br/>owner account"]
+    prepare --> migrate["migrate"]
+    migrate --> switch["current → releases/commit"]
     switch --> restart["S90teplo restart"]
 ```
 
-A failed step stops the script before `current` moves, so the running release stays in place.
+A failed step stops the script before `current` moves, so the running release stays in place. The steps that cannot change the schema come first: `pip install`, `collectstatic`, which opens no database, and the owner account, which writes only Django's user table, there since the first install. So a failure in any of them leaves the running release on the schema it knows. `migrate` comes last, and the switch of `current` and the restart follow it in the same ssh command, so only a failure of `migrate` itself leaves the running release on the new schema for longer than the seconds until the restart.
 
 Between `migrate` and the restart the running release works on the new schema. The release that brings the office convector adds a load of kind `source`, which the releases before it do not know: until the restart, a few seconds, their settings page and the save of the shedding order fail on it, while the dashboard, the heating cycle and load management run on. Open `/settings/` once the new release runs, and never start an older release on that schema before undoing its migrations (see [Roll back](#roll-back)).
 
-The release that brings presence adds the device `pc-office` of kind `presence_sensor`, which the releases before it do not know: until the restart, a few seconds, their dashboard, journal and device-lost alert check fail on it, while the heating cycle, the source cycle and load management run on.
+The release that brings presence adds the device `pc-office` of kind `presence_sensor`, which the releases before it do not know: until the restart, a few seconds, their dashboard and journal fail on it, and so does their whole alert check, so no device, zone-off or phase alert is raised or cleared, while the heating cycle, the source cycle and load management run on.
+
+A `migrate` that fails stops the script before `current` moves. Each migration is applied whole or not at all, so those before the failing one stay applied, and the running release works on them, as above, until you act: either fix the cause and deploy again, which migrates on from where it stopped, switches `current` and restarts, or undo the migrations it applied as [Roll back](#roll-back) says, with `releases/<commit>` of the failed deploy in place of `current`, as the running release does not know them, then restart the running release with `/opt/etc/init.d/S90teplo restart`.
 
 The release that brings the panel's settings pages adds two checks to the database: every zone's idle floor setpoint below its floor limit, and the climate settings' air start offset at or above the minimum band, 0.20 °C as the migration seeds it. The admin of earlier releases checked neither, so before that deploy look for a value that breaks them:
 
@@ -560,7 +563,7 @@ Rolling back past load management takes two steps first:
    ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py migrate devices 0001'
    ```
 
-   A deploy that fails after its migrate step, e.g. in `collectstatic`, leaves `current` on the older release with the newer migrations applied: run the same command with `releases/<commit>` of the failed deploy in place of `current`, or deploy again.
+   A deploy whose `migrate` fails partway leaves `current` on the older release with the newer migrations applied so far: run the same command with `releases/<commit>` of the failed deploy in place of `current`, or deploy again.
 
 Find the release to go back to, then run the commands of every rollback it needs, newest first, with the switch of `current` and the restart at the end of the same ssh command, e.g. back past presence:
 
