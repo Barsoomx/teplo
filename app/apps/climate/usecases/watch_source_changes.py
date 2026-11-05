@@ -91,6 +91,7 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
             'source_manual_change',
             source=source.slug,
             power=None if change.power is None else list(change.power),
+            mode=None if change.mode is None else list(change.mode),
             setpoint=None if change.setpoint is None else [str(setpoint) for setpoint in change.setpoint],
             until=until.isoformat(),
             live=live,
@@ -103,6 +104,7 @@ class WatchSourceChangesUseCase(BaseUseCase[WatchSourceChangesInputDTO, WatchSou
                 setpoint=change.setpoint,
                 until=until,
                 dry_run=not live,
+                mode=change.mode,
                 occurred_at=now,
             ),
         )

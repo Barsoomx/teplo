@@ -68,6 +68,7 @@ class SourceManualChange(DomainEvent):
     setpoint: tuple[Decimal, Decimal] | None
     until: datetime
     dry_run: bool
+    mode: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

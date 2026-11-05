@@ -4,6 +4,11 @@
 # whose collector, pulled up by 10 kΩ to the unit's 5 V, feeds plug pin 3 (D+), the unit's RX, through 1 kΩ: the
 # transistor inverts, so the pin is inverted too. A Schottky diode passes the unit's 5 V to the board's 5V pin, which is
 # its USB-C VBUS. The unit's slot is rated for the vendor's 300 mA dongle, so the radio stays below full power.
+# teplo reads the climate's mode, target_temperature and current_temperature state topics and commands mode and
+# target_temperature. The component publishes a state only when the unit's answer changes it, so an interval republishes
+# the whole climate state every 30 s, as the sensor nodes report: teplo takes a state older than 90 s for a lost node.
+# A call that switches the unit from off to heat turns its display off 5 s later, once the unit has taken the call; the
+# toggle goes over UART only when the unit reports light control, otherwise the component only logs a warning.
 substitutions:
   node_name: teplo-ac-bedroom
   friendly_name: Bedroom air conditioner
@@ -58,6 +63,27 @@ climate:
       state_topic: teplo/${node_name}/sensor/power_usage/state
       retain: false
       qos: 0
+    # on_control runs before the call is applied, so the climate still holds the mode the call switches it from.
+    on_control:
+      - if:
+          condition:
+            lambda: >-
+              return id(air_conditioner).mode == CLIMATE_MODE_OFF && x.get_mode().has_value() &&
+              *x.get_mode() == CLIMATE_MODE_HEAT;
+          then:
+            - script.execute: display_off_after_start
+
+script:
+  - id: display_off_after_start
+    mode: restart
+    then:
+      - delay: 5s
+      - midea_ac.display_toggle:
+
+interval:
+  - interval: 30s
+    then:
+      - lambda: 'id(air_conditioner).publish_state();'
 
 # Works over UART only when the unit reports light control; otherwise the component logs a warning and does nothing.
 button:

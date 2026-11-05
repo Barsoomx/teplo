@@ -13,6 +13,7 @@ from apps.climate.domain.drive import StartPermits
 from apps.climate.domain.errors import HeatSourceNotFoundError
 from apps.climate.domain.events import OccupancyDryRun, SourceCommandFailed, SourceCommandIssued
 from apps.climate.domain.fast_source import (
+    OUTDOOR_READING_FOR,
     SourceChange,
     SourceDrive,
     SourceStart,
@@ -20,6 +21,7 @@ from apps.climate.domain.fast_source import (
     plan_source_drive,
     room_held_by_hand,
     room_targets,
+    source_lockouts,
 )
 from apps.climate.domain.heat_sources import SourceSettings
 from apps.climate.domain.modes import COMMAND_SENT, ZoneCycleOutcome
@@ -126,7 +128,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
 
         held = self._gate.held_sources()
         gated = self._gate.gated_sources()
-        outdoor = self._temperature(outdoor_slug)
+        locked_out = self._lockouts(sources, self._outdoor(outdoor_slug))
         runs: list[SourceRun] = []
         for room, room_sources in _by_room(sources).items():
             runs.extend(
@@ -135,7 +137,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
                     room_sources,
                     intents,
                     held,
-                    outdoor,
+                    locked_out,
                     now,
                     gated=gated,
                     read_at=input_dto.monotonic,
@@ -146,13 +148,28 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             outcomes={run.source.slug: self._run(run, permits, now, read_at=input_dto.monotonic) for run in runs},
         )
 
+    def _lockouts(self, sources: Sequence[SourceSettings], outdoor: Decimal | None) -> frozenset[str]:
+        lockouts = source_lockouts(sources, outdoor, self._book.source_locked_out)
+        for slug, locked in lockouts.items():
+            if locked == self._book.source_locked_out(slug):
+                continue
+
+            self._book.remember_lockout(slug, locked)
+            logger.info(
+                'source_outdoor_lockout',
+                source=slug,
+                locked=locked,
+                outdoor=None if outdoor is None else str(outdoor),
+            )
+        return frozenset(slug for slug, locked in lockouts.items() if locked)
+
     def _plan_room(
         self,
         room: str,
         sources: Sequence[SourceSettings],
         intents: RoomIntents,
         held: frozenset[str],
-        outdoor: Decimal | None,
+        locked_out: frozenset[str],
         now: datetime,
         *,
         gated: frozenset[str],
@@ -171,9 +188,9 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             sources,
             states,
             shed=held,
+            locked_out=locked_out,
             air=air,
             target=intent.target,
-            outdoor=outdoor,
             now=now,
         )
         self._watch_occupancy(
@@ -183,8 +200,8 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             targets,
             intents,
             held=held,
+            locked_out=locked_out,
             air=air,
-            outdoor=outdoor,
             now=now,
         )
         hands_off = room_held_by_hand(sources, now)
@@ -211,8 +228,8 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         intents: RoomIntents,
         *,
         held: frozenset[str],
+        locked_out: frozenset[str],
         air: Decimal | None,
-        outdoor: Decimal | None,
         now: datetime,
     ) -> None:
         would_be = intents.would_be_of(climate.slug)
@@ -220,7 +237,15 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         if would_be is None or occupancy is None:
             return
 
-        would = room_targets(sources, states, shed=held, air=air, target=would_be.target, outdoor=outdoor, now=now)
+        would = room_targets(
+            sources,
+            states,
+            shed=held,
+            locked_out=locked_out,
+            air=air,
+            target=would_be.target,
+            now=now,
+        )
         for source in sources:
             target = would[source.slug]
             if target is None or target == targets[source.slug]:
@@ -421,6 +446,16 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
 
         snapshot = self._temperatures.snapshot(slug)
         if not snapshot.available or snapshot.state is None:
+            return None
+
+        return snapshot.state.temperature
+
+    def _outdoor(self, slug: str | None) -> Decimal | None:
+        if slug is None:
+            return None
+
+        snapshot = self._temperatures.snapshot(slug)
+        if snapshot.state is None or snapshot.age is None or snapshot.age > OUTDOOR_READING_FOR:
             return None
 
         return snapshot.state.temperature

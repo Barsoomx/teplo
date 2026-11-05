@@ -147,6 +147,7 @@ def f_misconfigured_use_case(
         presence_sensor_factories={},
         climate_unit_factories={},
         controllable_climate_unit_factories={},
+        mqtt_climate_unit_factories={},
     )
     return PollPlugsUseCase(devices=DeviceRepository(), provider=registry, store=f_store, dispatcher=dispatcher)
 
@@ -170,6 +171,7 @@ def f_switchable_use_case(
         presence_sensor_factories={},
         climate_unit_factories={},
         controllable_climate_unit_factories={},
+        mqtt_climate_unit_factories={},
     )
     return PollPlugsUseCase(devices=DeviceRepository(), provider=registry, store=f_store, dispatcher=dispatcher)
 

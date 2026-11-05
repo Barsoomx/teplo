@@ -5,6 +5,7 @@ from decimal import Decimal
 from apps.climate.domain.drive import PendingWrite
 from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.room_intent import RoomIntent
+from apps.devices.domain.readings import ClimateMode
 from apps.presence.domain.occupancy import Occupancy
 
 
@@ -44,6 +45,9 @@ class SourceStatus:
     held_until: datetime | None
     shed: bool
     pending: PendingWrite | None
+    mode: ClimateMode | None = None
+    locked_out: bool = False
+    outdoor: Decimal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

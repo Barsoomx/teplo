@@ -158,8 +158,12 @@ def test_get_raises_for_unknown_slug() -> None:
 
 @pytest.mark.parametrize(
     ('kind', 'driver'),
-    [(DeviceKind.PLUG, DeviceDriver.TUYA_SWITCHABLE_PLUG), (DeviceKind.CLIMATE_UNIT, DeviceDriver.TUYA_HEATER)],
-    ids=['switchable_plug', 'heater'],
+    [
+        (DeviceKind.PLUG, DeviceDriver.TUYA_SWITCHABLE_PLUG),
+        (DeviceKind.CLIMATE_UNIT, DeviceDriver.TUYA_HEATER),
+        (DeviceKind.CLIMATE_UNIT, DeviceDriver.ESPHOME_CLIMATE),
+    ],
+    ids=['switchable_plug', 'heater', 'air_conditioner'],
 )
 def test_database_refuses_a_monitor_only_device_with_a_commanding_driver(
     kind: DeviceKind, driver: DeviceDriver

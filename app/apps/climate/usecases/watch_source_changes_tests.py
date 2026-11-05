@@ -220,6 +220,32 @@ def test_source_switched_off_by_hand_is_held_too(
     assert f_events == [replace(_manual_change(dry_run=False), power=(True, False), setpoint=None)]
 
 
+def test_mode_changed_on_a_unit_is_held_and_journaled_with_both_modes(
+    f_live_use_case: WatchSourceChangesUseCase,
+    f_holds: SourceHoldStoreStub,
+    f_events: list[DomainEvent],
+) -> None:
+    with capture_logs() as logs:
+        f_live_use_case.execute(_changed(replace(AT_22, mode=ClimateMode.COOL)))
+
+    assert (f_holds.holds, f_events, [log for log in logs if log['event'] == 'source_manual_change']) == (
+        [('convector-office', HOLD_ENDS)],
+        [replace(_manual_change(dry_run=False), setpoint=None, mode=('heat', 'cool'))],
+        [
+            {
+                'event': 'source_manual_change',
+                'source': 'convector-office',
+                'power': None,
+                'mode': ['heat', 'cool'],
+                'setpoint': None,
+                'until': HOLD_ENDS.isoformat(),
+                'live': True,
+                'log_level': 'info',
+            },
+        ],
+    )
+
+
 @pytest.mark.parametrize(
     'use_case',
     ['f_watching_use_case', 'f_dry_run_use_case'],

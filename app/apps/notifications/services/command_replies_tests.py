@@ -11,6 +11,7 @@ from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.heat_sources import HeatSourceKind
 from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, SourceStatus, ZoneStatus
+from apps.devices.domain.readings import ClimateMode
 from apps.notifications.domain.alerts import PhaseReading
 from apps.notifications.services.command_replies import (
     FIREPLACE_LIT,
@@ -100,6 +101,20 @@ CONVECTOR = SourceStatus(
     held_until=None,
     shed=False,
     pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=12)),
+)
+AIR_CONDITIONER = replace(
+    CONVECTOR,
+    slug='ac-bedroom',
+    name='Кондиционер: спальня',
+    kind=HeatSourceKind.AIR_CONDITIONER,
+    room='bedroom',
+    device='ac-bedroom',
+    setpoint=Decimal(24),
+    level=None,
+    temperature=Decimal('18.5'),
+    target_setpoint=Decimal('20.5'),
+    pending=None,
+    mode=ClimateMode.COOL,
 )
 
 
@@ -375,6 +390,15 @@ def test_fireplace_replies_and_the_command_list_name_the_fireplace() -> None:
             'Конвектор: кабинет: нет связи',
         ),
         (replace(CONVECTOR, pending=None), None),
+        (
+            replace(
+                AIR_CONDITIONER,
+                mode=ClimateMode.AUTO,
+                pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=12)),
+            ),
+            'Кондиционер: спальня: 20,5° не раньше 16:52',
+        ),
+        (AIR_CONDITIONER, None),
     ],
     ids=[
         'next_write',
@@ -387,6 +411,8 @@ def test_fireplace_replies_and_the_command_list_name_the_fireplace() -> None:
         'switch_off',
         'unreached',
         'not_driven',
+        'taken_back_from_auto',
+        'cooled_by_the_owner',
     ],
 )
 def test_source_write_line_names_the_setpoint_and_when_it_reaches_the_unit(
@@ -403,8 +429,35 @@ def test_source_write_line_names_the_setpoint_and_when_it_reaches_the_unit(
         (CONVECTOR, 'Конвектор: кабинет: включён на 19°, у прибора 21°'),
         (replace(CONVECTOR, on=False), 'Конвектор: кабинет: выключен, у прибора 21°'),
         (replace(CONVECTOR, available=False), 'Конвектор: кабинет: нет связи'),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.HEAT, setpoint=Decimal('20.5'), temperature=None),
+            'Кондиционер: спальня: включён на 20,5°',
+        ),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.OFF, on=False, temperature=None), 'Кондиционер: спальня: выключен'),
+        (AIR_CONDITIONER, 'Кондиционер: спальня: охлаждение, 24°, teplo не трогает'),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.AUTO), 'Кондиционер: спальня: авто, 24°'),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.OTHER), 'Кондиционер: спальня: другой режим, 24°'),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.OFF, on=False, locked_out=True, outdoor=Decimal('-17.0')),
+            'Кондиционер: спальня: выключен, у прибора 18,5°; блокировка морозом, на улице -17°',
+        ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.HEAT, setpoint=Decimal('20.5'), locked_out=True, outdoor=None),
+            'Кондиционер: спальня: включён на 20,5°, у прибора 18,5°; блокировка: нет показаний с улицы',
+        ),
     ],
-    ids=['on', 'off', 'unreached'],
+    ids=[
+        'on',
+        'off',
+        'unreached',
+        'on_without_its_own_temperature',
+        'off_without_its_own_temperature',
+        'cooled_by_the_owner',
+        'auto',
+        'another_mode',
+        'frost_lockout',
+        'locked_out_without_an_outdoor_reading',
+    ],
 )
 def test_source_state_line_gives_what_the_unit_reads(source: SourceStatus, expected: str) -> None:
     assert source_state_line(source) == expected

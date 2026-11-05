@@ -1,5 +1,6 @@
 import threading
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 
 from django.conf import settings
@@ -21,6 +22,7 @@ from apps.devices.domain.errors import (
     PlugNotSwitchableError,
 )
 from apps.devices.domain.kinds import DeviceDriver
+from apps.devices.drivers.esphome_climate import EsphomeClimateDriver
 from apps.devices.drivers.esphome_phase_meter import EsphomePhaseMeterDriver
 from apps.devices.drivers.esphome_presence import EsphomePresenceDriver
 from apps.devices.drivers.esphome_temperature import EsphomeTemperatureDriver
@@ -38,6 +40,7 @@ PhaseMeterFactory = Callable[[str], PhaseMeter]
 PresenceSensorFactory = Callable[[str], PresenceSensor]
 ClimateUnitFactory = Callable[[DeviceSecret], ClimateUnit]
 ControllableClimateUnitFactory = Callable[[DeviceSecret], ControllableClimateUnit]
+MqttClimateUnitFactory = Callable[[str, str], ControllableClimateUnit]
 
 
 class DriverRegistry:
@@ -53,6 +56,7 @@ class DriverRegistry:
         presence_sensor_factories: dict[DeviceDriver, PresenceSensorFactory],
         climate_unit_factories: dict[DeviceDriver, ClimateUnitFactory],
         controllable_climate_unit_factories: dict[DeviceDriver, ControllableClimateUnitFactory],
+        mqtt_climate_unit_factories: dict[DeviceDriver, MqttClimateUnitFactory],
     ) -> None:
         self._devices = devices
         self._secrets = secrets
@@ -64,6 +68,7 @@ class DriverRegistry:
         self._presence_sensor_factories = presence_sensor_factories
         self._climate_unit_factories = climate_unit_factories
         self._controllable_climate_unit_factories = controllable_climate_unit_factories
+        self._mqtt_climate_unit_factories = mqtt_climate_unit_factories
         self._thermostats: dict[str, FloorThermostat] = {}
         self._plugs: dict[str, MeteredPlug] = {}
         self._switchable_plugs: dict[str, SwitchablePlug] = {}
@@ -88,6 +93,7 @@ class DriverRegistry:
             presence_sensor_factories={DeviceDriver.ESPHOME_PRESENCE: EsphomePresenceDriver.init},
             climate_unit_factories={},
             controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: TuyaHeaterDriver.init},
+            mqtt_climate_unit_factories={DeviceDriver.ESPHOME_CLIMATE: EsphomeClimateDriver.init},
         )
 
     def thermostat(self, slug: str) -> FloorThermostat:
@@ -147,25 +153,40 @@ class DriverRegistry:
         if device.monitor_only:
             raise ClimateUnitNotControllableError(slug, 'it is monitor-only')
 
-        factory = self._controllable_climate_unit_factories.get(DeviceDriver(device.driver))
-        if factory is None:
+        build = self._controllable_builder(device)
+        if build is None:
             raise ClimateUnitNotControllableError(slug, f'driver {device.driver} only reads')
 
         with self._climate_unit_lock:
-            unit = self._controllable(slug, factory)
+            unit = self._controllable(slug, build)
             self._climate_units[slug] = unit
             return unit
 
     def _new_climate_unit(self, device: Device) -> ClimateUnit:
-        controllable = self._controllable_climate_unit_factories.get(DeviceDriver(device.driver))
-        if controllable is not None:
-            return self._controllable(device.slug, controllable)
+        build = self._controllable_builder(device)
+        if build is not None:
+            return self._controllable(device.slug, build)
 
         return self._factory_of(device, self._climate_unit_factories)(self._secrets.device(device.slug))
 
-    def _controllable(self, slug: str, factory: ControllableClimateUnitFactory) -> ControllableClimateUnit:
+    def _controllable_builder(self, device: Device) -> Callable[[], ControllableClimateUnit] | None:
+        driver = DeviceDriver(device.driver)
+        mqtt_factory = self._mqtt_climate_unit_factories.get(driver)
+        if mqtt_factory is not None:
+            return partial(mqtt_factory, device.slug, device.node or device.slug)
+
+        factory = self._controllable_climate_unit_factories.get(driver)
+        if factory is None:
+            return None
+
+        return partial(self._with_secret, factory, device.slug)
+
+    def _with_secret(self, factory: ControllableClimateUnitFactory, slug: str) -> ControllableClimateUnit:
+        return factory(self._secrets.device(slug))
+
+    def _controllable(self, slug: str, build: Callable[[], ControllableClimateUnit]) -> ControllableClimateUnit:
         if slug not in self._controllable_climate_units:
-            self._controllable_climate_units[slug] = factory(self._secrets.device(slug))
+            self._controllable_climate_units[slug] = build()
 
         return self._controllable_climate_units[slug]
 

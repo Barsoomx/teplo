@@ -35,9 +35,11 @@ SOURCE_FIELDS = ('slug', 'name', 'room', 'kind', 'device', 'priority', 'live')
 FIREPLACE_FIELDS = ('slug', 'name', 'room', 'kind', 'priority', 'live', 'lit_until')
 SOURCE_COMMAND_FIELDS = ('setpoint_bias', 'max_setpoint', 'min_outdoor', 'min_write_minutes', 'rated_watts')
 SOURCE_STAMP_FIELDS = ('manual_until', 'last_command_at', 'last_dry_run_at', 'commanded_power', 'commanded_setpoint')
-AIR_CONDITIONER_LATER = gettext_lazy('teplo has no driver for an air conditioner yet')
 SOURCE_BESIDE_A_FLOOR = gettext_lazy('This room has a heated floor: teplo commands no heat source beside it')
-HEATER_DRIVER_ONLY_READS = gettext_lazy('A heater needs a climate unit whose driver commands it, such as tuya_heater')
+CLIMATE_SOURCE_DRIVER_ONLY_READS = gettext_lazy(
+    'A heater or an air conditioner needs a climate unit whose driver commands it, such as tuya_heater or '
+    'esphome_climate',
+)
 COMMANDS_REACH_THE_DEVICE = gettext_lazy('Reach the device')
 COMMANDS_HELD_BACK = gettext_lazy('Held back by: %(gates)s')
 SOURCE_GATE = gettext_lazy('the source’s live')
@@ -239,18 +241,15 @@ class ZoneLearningAdmin(admin.ModelAdmin):
 class HeatSourceAdminForm(forms.ModelForm):
     def clean(self) -> dict[str, Any]:
         super().clean()
-        kind = self.cleaned_data.get('kind')
-        if kind == HeatSourceKind.AIR_CONDITIONER:
-            self.add_error('kind', AIR_CONDITIONER_LATER)
-        if kind not in COMMANDED_KINDS:
+        if self.cleaned_data.get('kind') not in COMMANDED_KINDS:
             return self.cleaned_data
 
         room = self.cleaned_data.get('room')
         if room is not None and Zone.objects.filter(room=room).exists():
             self.add_error('room', SOURCE_BESIDE_A_FLOOR)
         device = self.cleaned_data.get('device')
-        if kind == HeatSourceKind.HEATER and device is not None and not _commands_climate_units(device.driver):
-            self.add_error('device', HEATER_DRIVER_ONLY_READS)
+        if device is not None and not _commands_climate_units(device.driver):
+            self.add_error('device', CLIMATE_SOURCE_DRIVER_ONLY_READS)
         return self.cleaned_data
 
 

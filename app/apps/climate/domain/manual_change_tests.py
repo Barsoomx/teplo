@@ -26,12 +26,23 @@ CONVECTOR = ClimateUnitState(
     read_at=NOW,
     level='High',
 )
+AIR_CONDITIONER = ClimateUnitState(
+    mode=ClimateMode.HEAT,
+    target=Decimal('20.5'),
+    room_temperature=Decimal('19.5'),
+    read_at=NOW,
+)
 
 
-def _source_pair(after: ClimateUnitState, *, span: float = 30.0) -> ReadingPair[ClimateUnitState]:
+def _source_pair(
+    after: ClimateUnitState,
+    *,
+    span: float = 30.0,
+    before: ClimateUnitState = CONVECTOR,
+) -> ReadingPair[ClimateUnitState]:
     return ReadingPair(
         slug='heater-office',
-        before=CONVECTOR,
+        before=before,
         after=after,
         before_moment=FIRST_POLL,
         after_moment=FIRST_POLL + span,
@@ -144,3 +155,42 @@ def test_level_and_own_temperature_of_a_heat_source_never_count(after: ClimateUn
 
 def test_change_of_a_heat_source_counts_only_between_polls_at_most_ninety_seconds_apart() -> None:
     assert source_change(_source_pair(replace(CONVECTOR, target=Decimal(25)), span=90.5)) is None
+
+
+@pytest.mark.parametrize(
+    ('before', 'after', 'expected'),
+    [
+        (
+            AIR_CONDITIONER,
+            replace(AIR_CONDITIONER, mode=ClimateMode.COOL),
+            ManualChange(power=None, mode=('heat', 'cool'), setpoint=None),
+        ),
+        (
+            AIR_CONDITIONER,
+            replace(AIR_CONDITIONER, mode=ClimateMode.OTHER, target=Decimal(24)),
+            ManualChange(power=None, mode=('heat', 'other'), setpoint=(Decimal('20.5'), Decimal(24))),
+        ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.AUTO),
+            AIR_CONDITIONER,
+            ManualChange(power=None, mode=('auto', 'heat'), setpoint=None),
+        ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.OFF),
+            AIR_CONDITIONER,
+            ManualChange(power=(False, True), mode=None, setpoint=None),
+        ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.COOL),
+            replace(AIR_CONDITIONER, mode=ClimateMode.OFF),
+            ManualChange(power=(True, False), mode=None, setpoint=None),
+        ),
+    ],
+    ids=['heat_to_cool', 'heat_to_dry_and_set', 'auto_to_heat', 'switched_on_in_heat', 'cool_switched_off'],
+)
+def test_mode_changed_on_an_air_conditioner_counts_between_two_modes_it_runs_in(
+    before: ClimateUnitState,
+    after: ClimateUnitState,
+    expected: ManualChange,
+) -> None:
+    assert source_change(_source_pair(after, before=before)) == expected

@@ -11,6 +11,7 @@ from django.test import Client
 
 from apps.climate.domain.drive import PendingKind, PendingWrite
 from apps.climate.domain.heat_sources import HeatSourceKind
+from apps.devices.domain.readings import ClimateMode
 from apps.panel.usecases.get_panel_overview import GetPanelOverviewOutputDTO, SourceOverview
 
 pytestmark = pytest.mark.django_db
@@ -54,8 +55,28 @@ def sources_overview(panel_overview: GetPanelOverviewOutputDTO) -> GetPanelOverv
         held_until=HELD_UNTIL,
         shed=False,
         pending=PendingWrite(kind=PendingKind.HANDS_OFF, at=HELD_UNTIL),
+        mode=ClimateMode.HEAT,
     )
-    return replace(panel_overview, sources=(fireplace, convector))
+    air_conditioner = SourceOverview(
+        slug='ac-bedroom',
+        name='Кондиционер: спальня',
+        kind=HeatSourceKind.AIR_CONDITIONER,
+        live=False,
+        lit_until=None,
+        burning=False,
+        room='bedroom',
+        device='ac-bedroom',
+        priority=1,
+        available=True,
+        on=True,
+        setpoint=Decimal('24.0'),
+        temperature=Decimal('18.5'),
+        target_on=False,
+        mode=ClimateMode.COOL,
+        locked_out=True,
+        outdoor=Decimal('-17.0'),
+    )
+    return replace(panel_overview, sources=(fireplace, convector, air_conditioner))
 
 
 @pytest.fixture
@@ -81,12 +102,14 @@ def test_sources_api_lists_every_heat_source_in_room_order(f_client: Client, m_o
                 'live': False,
                 'available': False,
                 'on': None,
+                'mode': None,
                 'setpoint': None,
                 'level': None,
                 'temperature': None,
                 'target_setpoint': None,
                 'manual_until': None,
                 'shed': False,
+                'locked_out': False,
                 'lit_until': '2026-11-04T22:10:00+03:00',
                 'burning': True,
             },
@@ -100,12 +123,35 @@ def test_sources_api_lists_every_heat_source_in_room_order(f_client: Client, m_o
                 'live': True,
                 'available': True,
                 'on': True,
+                'mode': 'heat',
                 'setpoint': '25.0',
                 'level': 'High',
                 'temperature': '21.0',
                 'target_setpoint': '22.0',
                 'manual_until': '2026-11-04T18:40:00+03:00',
                 'shed': False,
+                'locked_out': False,
+                'lit_until': None,
+                'burning': False,
+            },
+            {
+                'slug': 'ac-bedroom',
+                'name': 'Кондиционер: спальня',
+                'room': 'bedroom',
+                'kind': 'air_conditioner',
+                'device': 'ac-bedroom',
+                'priority': 1,
+                'live': False,
+                'available': True,
+                'on': True,
+                'mode': 'cool',
+                'setpoint': '24.0',
+                'level': None,
+                'temperature': '18.5',
+                'target_setpoint': None,
+                'manual_until': None,
+                'shed': False,
+                'locked_out': True,
                 'lit_until': None,
                 'burning': False,
             },

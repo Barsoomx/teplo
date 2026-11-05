@@ -39,7 +39,7 @@ from apps.climate.usecases.run_source_cycle import (
 from apps.core.domain.events import DomainEvent, EventDispatcher
 from apps.core.stubs import MonotonicClockStub, TransactionStub
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
-from apps.devices.domain.readings import ClimateMode, ClimateUnitState
+from apps.devices.domain.readings import ClimateMode, ClimateUnitState, TemperatureReading
 from apps.devices.services.state_store import ClimateUnitStateStore, TemperatureStateStore
 from apps.devices.stubs import ControllableClimateUnitProviderStub, ControllableClimateUnitStub
 from apps.power.domain.events import StartWouldWaitDryRun
@@ -123,6 +123,35 @@ OVERRIDDEN_OFFICE = replace(
     OFFICE,
     override=RoomOverride(target=Decimal('23.0'), until=OVERRIDE_ENDS, source=CommandSource.PANEL),
 )
+BEDROOM_IN_COMFORT = replace(BEDROOM, windows=OFFICE.windows)
+AIR_CONDITIONER = replace(
+    WATCHED_CONVECTOR,
+    slug='ac-bedroom',
+    name='Кондиционер: спальня',
+    room_slug='bedroom',
+    room_name='Спальня',
+    kind=HeatSourceKind.AIR_CONDITIONER,
+    device_slug='ac-bedroom',
+    min_outdoor=Decimal('-15.0'),
+    write_interval=timedelta(minutes=10),
+    rated_watts=None,
+    manual_until=COMFORT_AT - timedelta(minutes=1),
+    load='ac-bedroom',
+)
+DRYING = ClimateUnitState(
+    mode=ClimateMode.OTHER,
+    target=Decimal(24),
+    room_temperature=Decimal('19.0'),
+    read_at=SETBACK_AT,
+)
+BACK_TO_HEAT = SourceCommandIssued(
+    source='ac-bedroom',
+    name='Кондиционер: спальня',
+    power=True,
+    setpoint=Decimal('20.5'),
+    dry_run=True,
+    occurred_at=COMFORT_AT,
+)
 
 
 def _issued(setpoint: Decimal, at: datetime, *, dry_run: bool) -> SourceCommandIssued:
@@ -172,6 +201,24 @@ def clock() -> MonotonicClockStub:
 
 
 @pytest.fixture
+def outdoor_clock() -> MonotonicClockStub:
+    return MonotonicClockStub(now=MONOTONIC)
+
+
+@pytest.fixture
+def f_temperatures(outdoor_clock: MonotonicClockStub, request: pytest.FixtureRequest) -> TemperatureStateStore:
+    store = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=outdoor_clock)
+    outdoor, age = getattr(request, 'param', (None, 0))
+    if outdoor is not None:
+        store.record_state(
+            'outdoor',
+            TemperatureReading(temperature=Decimal(outdoor), humidity=None, read_at=SETBACK_AT),
+        )
+    outdoor_clock.advance(age)
+    return store
+
+
+@pytest.fixture
 def f_unit(request: pytest.FixtureRequest) -> ControllableClimateUnitStub:
     errors = getattr(request, 'param', ())
     return ControllableClimateUnitStub(state=None, command_errors=errors)
@@ -187,6 +234,7 @@ def units(clock: MonotonicClockStub, request: pytest.FixtureRequest) -> ClimateU
     store = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
     store.record_state('heater-office', getattr(request, 'param', AT_THE_APPS_SETPOINT))
     store.record_state('heater-bedroom', AT_NINETEEN)
+    store.record_state('ac-bedroom', DRYING)
     return store
 
 
@@ -229,8 +277,9 @@ def f_use_case(
     book: ControlBook,
     rooms: RoomClimateStoreStub,
     occupancy: OccupancyBook,
-    clock: MonotonicClockStub,
+    f_temperatures: TemperatureStateStore,
     dispatcher: EventDispatcher,
+    clock: MonotonicClockStub,
 ) -> RunSourceCycleUseCase:
     return RunSourceCycleUseCase(
         sources=f_sources,
@@ -242,9 +291,9 @@ def f_use_case(
             book=book,
             occupancy=occupancy,
         ),
-        climate_settings=ClimateSensorsStoreStub(sensors=ClimateSensors(outdoor_slug=None)),
+        climate_settings=ClimateSensorsStoreStub(sensors=ClimateSensors(outdoor_slug='outdoor')),
         units=units,
-        temperatures=TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
+        temperatures=f_temperatures,
         provider=ControllableClimateUnitProviderStub(units={'heater-office': f_unit, 'heater-bedroom': f_bedroom_unit}),
         book=book,
         gate=f_gate,
@@ -760,5 +809,113 @@ def test_room_held_by_hand_journals_nothing_for_occupancy(
 
     assert (output, f_events) == (
         RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.HANDS_OFF}),
+        [],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'rooms', 'f_temperatures', 'outcome', 'events', 'lockouts'),
+    [
+        (
+            ([AIR_CONDITIONER], {}),
+            [OFFICE, BEDROOM_IN_COMFORT],
+            ('-15.5', 0),
+            ZoneCycleOutcome.UNCHANGED,
+            [],
+            [{'event': 'source_outdoor_lockout', 'source': 'ac-bedroom', 'locked': True, 'outdoor': '-15.5'}],
+        ),
+        (
+            ([AIR_CONDITIONER], {}),
+            [OFFICE, BEDROOM_IN_COMFORT],
+            ('-5.0', 3601),
+            ZoneCycleOutcome.UNCHANGED,
+            [],
+            [{'event': 'source_outdoor_lockout', 'source': 'ac-bedroom', 'locked': True, 'outdoor': None}],
+        ),
+        (
+            ([AIR_CONDITIONER], {}),
+            [OFFICE, BEDROOM_IN_COMFORT],
+            ('-5.0', 3600),
+            ZoneCycleOutcome.DRY_RUN,
+            [BACK_TO_HEAT],
+            [],
+        ),
+    ],
+    ids=['below_the_limit', 'outdoor_reading_older_than_an_hour', 'outdoor_reading_an_hour_old'],
+    indirect=['f_sources', 'rooms', 'f_temperatures'],
+)
+def test_air_conditioner_is_locked_out_below_its_outdoor_limit_or_without_an_outdoor_reading_from_the_last_hour(
+    f_use_case: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+    outcome: ZoneCycleOutcome,
+    events: list[DomainEvent],
+    lockouts: list[dict[str, object]],
+) -> None:
+    with capture_logs() as logs:
+        output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_events, [log for log in logs if log['event'] == 'source_outdoor_lockout']) == (
+        RunSourceCycleOutputDTO(outcomes={'ac-bedroom': outcome}),
+        events,
+        [{**log, 'log_level': 'info'} for log in lockouts],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'rooms'),
+    [(([AIR_CONDITIONER], {}), [OFFICE, BEDROOM_IN_COMFORT])],
+    indirect=True,
+)
+def test_air_conditioner_locked_out_stays_so_until_a_degree_above_its_limit(
+    f_use_case: RunSourceCycleUseCase,
+    f_temperatures: TemperatureStateStore,
+    f_events: list[DomainEvent],
+) -> None:
+    outcomes: list[ZoneCycleOutcome] = []
+    with capture_logs() as logs:
+        for outdoor in ('-15.5', '-14.5', '-14.0'):
+            f_temperatures.record_state(
+                'outdoor',
+                TemperatureReading(temperature=Decimal(outdoor), humidity=None, read_at=COMFORT_AT),
+            )
+            outcomes.append(f_use_case.execute(_cycle(COMFORT_AT)).outcomes['ac-bedroom'])
+
+    assert (outcomes, f_events, [log['locked'] for log in logs if log['event'] == 'source_outdoor_lockout']) == (
+        [ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.UNCHANGED, ZoneCycleOutcome.DRY_RUN],
+        [BACK_TO_HEAT],
+        [True, False],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'rooms', 'f_temperatures'),
+    [(([AIR_CONDITIONER], {}), [OFFICE, BEDROOM_IN_COMFORT], ('-3.0', 0))],
+    indirect=True,
+)
+def test_air_conditioner_left_in_another_mode_after_its_hold_would_be_taken_back_to_heat(
+    f_use_case: RunSourceCycleUseCase,
+    f_sources: HeatSourceStoreStub,
+    f_events: list[DomainEvent],
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_sources.stamps, f_events) == (
+        RunSourceCycleOutputDTO(outcomes={'ac-bedroom': ZoneCycleOutcome.DRY_RUN}),
+        [('last_dry_run_at', 'ac-bedroom', COMFORT_AT)],
+        [BACK_TO_HEAT],
+    )
+
+
+@pytest.mark.parametrize('f_temperatures', [('-30.0', 0)], indirect=True)
+def test_convector_without_an_outdoor_limit_heats_whatever_the_outdoor_reading(
+    f_use_case: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    with capture_logs() as logs:
+        output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_events, [log for log in logs if log['event'] == 'source_outdoor_lockout']) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.DRY_RUN}),
+        [_issued(Decimal(22), COMFORT_AT, dry_run=True)],
         [],
     )

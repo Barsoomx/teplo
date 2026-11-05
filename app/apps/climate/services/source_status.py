@@ -3,13 +3,20 @@ from decimal import Decimal
 
 from django.conf import settings
 
-from apps.climate.domain.fast_source import SourceTarget, pending_source_write, room_targets
+from apps.climate.domain.fast_source import (
+    OUTDOOR_READING_FOR,
+    SourceTarget,
+    pending_source_write,
+    room_targets,
+    source_lockouts,
+)
 from apps.climate.domain.heat_sources import SourceSettings
 from apps.climate.domain.ports import ClimateSensorsStore, HeatSourceStore, SourceLoadGate
 from apps.climate.domain.room_intent import RoomIntents
 from apps.climate.domain.room_status import SourceStatus
 from apps.climate.repositories.climate_settings import ClimateSettingsRepository
 from apps.climate.repositories.heat_source import HeatSourceRepository
+from apps.climate.services.control_book import ControlBook, control_book
 from apps.devices.services.state_store import (
     ClimateUnitSnapshot,
     ClimateUnitStateStore,
@@ -28,6 +35,7 @@ class SourceStatusReader:
         temperatures: TemperatureStateStore,
         climate_settings: ClimateSensorsStore,
         gate: SourceLoadGate,
+        book: ControlBook,
         dry_run: bool,
     ) -> None:
         self._sources = sources
@@ -35,6 +43,7 @@ class SourceStatusReader:
         self._temperatures = temperatures
         self._climate_settings = climate_settings
         self._gate = gate
+        self._book = book
         self._dry_run = dry_run
 
     @classmethod
@@ -45,6 +54,7 @@ class SourceStatusReader:
             temperatures=temperature_state_store,
             climate_settings=ClimateSettingsRepository(),
             gate=GuardLoadGate.init(),
+            book=control_book,
             dry_run=settings.TEPLO_DRY_RUN,
         )
 
@@ -54,11 +64,16 @@ class SourceStatusReader:
             return {}
 
         held = self._gate.held_sources()
-        outdoor = self._temperature(self._climate_settings.sensors().outdoor_slug)
+        outdoor = self._outdoor(self._climate_settings.sensors().outdoor_slug)
+        lockouts = source_lockouts(sources, outdoor, self._book.source_locked_out)
+        locked_out = frozenset(slug for slug, locked in lockouts.items() if locked)
         rooms: dict[str, list[SourceSettings]] = {}
         for source in sources:
             rooms.setdefault(source.room_slug, []).append(source)
-        return {room: self._room(room, room_sources, intents, held, outdoor) for room, room_sources in rooms.items()}
+        return {
+            room: self._room(room, room_sources, intents, held, locked_out, outdoor)
+            for room, room_sources in rooms.items()
+        }
 
     def _room(
         self,
@@ -66,6 +81,7 @@ class SourceStatusReader:
         sources: Sequence[SourceSettings],
         intents: RoomIntents,
         held: frozenset[str],
+        locked_out: frozenset[str],
         outdoor: Decimal | None,
     ) -> tuple[SourceStatus, ...]:
         snapshots = {source.slug: self._units.snapshot(source.device_slug) for source in sources}
@@ -77,13 +93,22 @@ class SourceStatusReader:
                 sources,
                 {slug: snapshot.state if snapshot.available else None for slug, snapshot in snapshots.items()},
                 shed=held,
+                locked_out=locked_out,
                 air=self._temperature(climate.air_sensor_slug),
                 target=intent.target,
-                outdoor=outdoor,
                 now=intents.now,
             )
         return tuple(
-            self._status(source, snapshots[source.slug], targets[source.slug], intents, held=held) for source in sources
+            self._status(
+                source,
+                snapshots[source.slug],
+                targets[source.slug],
+                intents,
+                held=held,
+                locked_out=locked_out,
+                outdoor=outdoor,
+            )
+            for source in sources
         )
 
     def _status(
@@ -94,6 +119,8 @@ class SourceStatusReader:
         intents: RoomIntents,
         *,
         held: frozenset[str],
+        locked_out: frozenset[str],
+        outdoor: Decimal | None,
     ) -> SourceStatus:
         state = snapshot.state
         commands_live = source.writes_live(dry_run=self._dry_run)
@@ -128,6 +155,9 @@ class SourceStatusReader:
                 hands_off_until=held_until,
                 writes_live=commands_live,
             ),
+            mode=None if state is None else state.mode,
+            locked_out=source.slug in locked_out,
+            outdoor=None if source.min_outdoor is None else outdoor,
         )
 
     def _temperature(self, slug: str | None) -> Decimal | None:
@@ -136,6 +166,16 @@ class SourceStatusReader:
 
         snapshot = self._temperatures.snapshot(slug)
         if not snapshot.available or snapshot.state is None:
+            return None
+
+        return snapshot.state.temperature
+
+    def _outdoor(self, slug: str | None) -> Decimal | None:
+        if slug is None:
+            return None
+
+        snapshot = self._temperatures.snapshot(slug)
+        if snapshot.state is None or snapshot.age is None or snapshot.age > OUTDOOR_READING_FOR:
             return None
 
         return snapshot.state.temperature

@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from decimal import Decimal
 
 from apps.core.domain.errors import DomainError
@@ -300,3 +301,22 @@ class MqttReceiverStub:
 
     def connection_lost(self, detail: str) -> None:
         self._lost.append(detail)
+
+
+class CommandPublisherStub:
+    def __init__(self, error: DomainError | None = None, echo: Callable[[str, bytes], None] | None = None) -> None:
+        self._error = error
+        self._echo = echo
+        self._published: list[tuple[str, bytes]] = []
+
+    @property
+    def published(self) -> list[tuple[str, bytes]]:
+        return self._published
+
+    def publish(self, topic: str, payload: bytes) -> None:
+        if self._error is not None:
+            raise self._error
+
+        self._published.append((topic, payload))
+        if self._echo is not None:
+            self._echo(topic, payload)

@@ -358,6 +358,45 @@ msgstr "%(source)s: включён на %(setpoint)s°, у прибора %(temp
 msgid "%(source)s: off, %(temperature)s° at the unit"
 msgstr "%(source)s: выключен, у прибора %(temperature)s°"
 
+#, python-format
+msgid "%(source)s: on at %(setpoint)s°"
+msgstr "%(source)s: включён на %(setpoint)s°"
+
+#, python-format
+msgid "%(source)s: off"
+msgstr "%(source)s: выключен"
+
+#, python-format
+msgid "%(source)s: %(mode)s, %(setpoint)s°, teplo leaves it alone"
+msgstr "%(source)s: %(mode)s, %(setpoint)s°, teplo не трогает"
+
+#, python-format
+msgid "%(source)s: %(mode)s, %(setpoint)s°"
+msgstr "%(source)s: %(mode)s, %(setpoint)s°"
+
+#, python-format
+msgid "%(line)s; frost lockout, %(temperature)s° outside"
+msgstr "%(line)s; блокировка морозом, на улице %(temperature)s°"
+
+#, python-format
+msgid "%(line)s; locked out: no outdoor reading"
+msgstr "%(line)s; блокировка: нет показаний с улицы"
+
+msgid "heating"
+msgstr "обогрев"
+
+msgid "cooling"
+msgstr "охлаждение"
+
+msgid "auto"
+msgstr "авто"
+
+msgid "another mode"
+msgstr "другой режим"
+
+msgid "off"
+msgstr "выкл"
+
 msgid "occupied"
 msgstr "занято"
 

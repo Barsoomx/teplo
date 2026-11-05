@@ -17,6 +17,7 @@ from apps.climate.domain.room_intent import IntentReason, RoomIntent
 from apps.climate.domain.schedule import ScheduleTransition
 from apps.climate.domain.zone_intent import ForcedTarget
 from apps.devices.domain.kinds import DeviceKind
+from apps.devices.domain.readings import ClimateMode
 from apps.panel.usecases.get_panel_overview import (
     GetPanelOverviewOutputDTO,
     OccupancyOverview,
@@ -1057,8 +1058,32 @@ def test_dashboard_says_until_when_teplo_leaves_a_floor_changed_on_its_thermosta
             ('Нет связи', 'is-offline'),
             ('Нет связи с прибором',),
         ),
+        (
+            {'mode': ClimateMode.COOL, 'level': None, 'setpoint': Decimal(24), 'pending': None},
+            ('охлаждает до 24° · у прибора 21°', 'Режим владельца'),
+            ('греет до', 'teplo поставит', 'Мороз'),
+        ),
+        (
+            {'mode': ClimateMode.OFF, 'on': False, 'locked_out': True, 'outdoor': Decimal('-17.0')},
+            ('выключен · у прибора 21°', 'Мороз: на улице -17°'),
+            ('Режим владельца',),
+        ),
+        (
+            {'available': False, 'error_code': 'broker_unavailable', 'error': 'mqtt broker not connected'},
+            ('Нет связи', 'teplo не может подключиться к MQTT-брокеру'),
+            (),
+        ),
     ],
-    ids=['watching', 'live_and_waiting_for_its_interval', 'held_by_hand', 'shed', 'unreachable'],
+    ids=[
+        'watching',
+        'live_and_waiting_for_its_interval',
+        'held_by_hand',
+        'shed',
+        'unreachable',
+        'cooled_by_the_owner',
+        'frost_lockout',
+        'broker_lost',
+    ],
     indirect=['m_convector_overview_use_case'],
 )
 def test_dashboard_shows_the_office_convector_and_when_teplo_s_target_reaches_it(

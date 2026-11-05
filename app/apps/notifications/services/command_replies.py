@@ -8,8 +8,10 @@ from django.utils.formats import date_format
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.drive import PendingKind
+from apps.climate.domain.fast_source import OWNER_MODES
 from apps.climate.domain.room_intent import OCCUPANCY_REASONS, IntentReason, RoomIntent
 from apps.climate.domain.room_status import RoomStatus, SourceStatus, ZoneStatus
+from apps.devices.domain.readings import ClimateMode
 from apps.notifications.domain.alerts import PhaseReading
 from apps.presence.domain.occupancy import Occupancy
 
@@ -65,7 +67,20 @@ SOURCE_HOLDS_OFF = gettext_lazy('%(source)s: already off')
 SOURCE_NO_CONNECTION = gettext_lazy('%(source)s: no connection')
 SOURCE_SWITCH_OFF = gettext_lazy('switch-off')
 SOURCE_ON = gettext_lazy('%(source)s: on at %(setpoint)s°, %(temperature)s° at the unit')
+SOURCE_ON_UNREAD = gettext_lazy('%(source)s: on at %(setpoint)s°')
 SOURCE_OFF = gettext_lazy('%(source)s: off, %(temperature)s° at the unit')
+SOURCE_OFF_UNREAD = gettext_lazy('%(source)s: off')
+SOURCE_OWNER_MODE = gettext_lazy('%(source)s: %(mode)s, %(setpoint)s°, teplo leaves it alone')
+SOURCE_MODE = gettext_lazy('%(source)s: %(mode)s, %(setpoint)s°')
+SOURCE_FROST_LOCKOUT = gettext_lazy('%(line)s; frost lockout, %(temperature)s° outside')
+SOURCE_LOCKED_WITHOUT_OUTDOOR = gettext_lazy('%(line)s; locked out: no outdoor reading')
+MODE_WORDS = {
+    ClimateMode.HEAT: gettext_lazy('heating'),
+    ClimateMode.COOL: gettext_lazy('cooling'),
+    ClimateMode.AUTO: gettext_lazy('auto'),
+    ClimateMode.OTHER: gettext_lazy('another mode'),
+    ClimateMode.OFF: gettext_lazy('off'),
+}
 HEATING_OFF = gettext_lazy('%(zone)s: heating is off')
 ROOM_AIR = gettext_lazy('%(room)s: %(air)s°, target %(target)s°, %(reason)s')
 ROOM_TARGET = gettext_lazy('%(room)s: target %(target)s°, %(reason)s')
@@ -225,14 +240,14 @@ def source_write_lines(rooms: Iterable[RoomStatus], now: datetime) -> list[str]:
 
 
 def source_state_line(source: SourceStatus) -> str:
-    if not source.available or source.on is None or source.temperature is None:
-        return str(SOURCE_NO_CONNECTION) % {'source': source.name}
+    line = _source_state(source)
+    if not source.locked_out:
+        return line
 
-    values = {'source': source.name, 'temperature': setpoint_degrees(source.temperature)}
-    if not source.on or source.setpoint is None:
-        return str(SOURCE_OFF) % values
+    if source.outdoor is None:
+        return str(SOURCE_LOCKED_WITHOUT_OUTDOOR) % {'line': line}
 
-    return str(SOURCE_ON) % {**values, 'setpoint': setpoint_degrees(source.setpoint)}
+    return str(SOURCE_FROST_LOCKOUT) % {'line': line, 'temperature': setpoint_degrees(source.outdoor)}
 
 
 def phases_line(phases: Sequence[PhaseReading]) -> str:
@@ -256,6 +271,27 @@ def _occupancy_text(room: RoomStatus) -> str:
     if not room.follows_occupancy:
         word = str(OCCUPANCY_WATCHED) % {'occupancy': word}
     return f'{NAMES_SEPARATOR}{word}'
+
+
+def _source_state(source: SourceStatus) -> str:
+    if not source.available or source.on is None:
+        return str(SOURCE_NO_CONNECTION) % {'source': source.name}
+
+    if not source.on or source.setpoint is None:
+        if source.temperature is None:
+            return str(SOURCE_OFF_UNREAD) % {'source': source.name}
+
+        return str(SOURCE_OFF) % {'source': source.name, 'temperature': setpoint_degrees(source.temperature)}
+
+    values = {'source': source.name, 'setpoint': setpoint_degrees(source.setpoint)}
+    if source.mode is not None and source.mode is not ClimateMode.HEAT:
+        template = SOURCE_OWNER_MODE if source.mode in OWNER_MODES else SOURCE_MODE
+        return str(template) % {**values, 'mode': MODE_WORDS[source.mode]}
+
+    if source.temperature is None:
+        return str(SOURCE_ON_UNREAD) % values
+
+    return str(SOURCE_ON) % {**values, 'temperature': setpoint_degrees(source.temperature)}
 
 
 def _source_target(source: SourceStatus) -> str:

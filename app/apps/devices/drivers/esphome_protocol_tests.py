@@ -3,7 +3,16 @@ from decimal import Decimal
 import pytest
 
 from apps.devices.domain.errors import DeviceProtocolError, SensorReadingError
-from apps.devices.drivers.esphome_protocol import NodeStatusTopic, SensorStateTopic, parse_topic, parse_value
+from apps.devices.domain.readings import ClimateMode
+from apps.devices.drivers.esphome_protocol import (
+    ClimateStateTopic,
+    NodeStatusTopic,
+    SensorStateTopic,
+    climate_command_topic,
+    climate_mode,
+    parse_topic,
+    parse_value,
+)
 
 LONG_PAYLOAD = b'x' * 40
 
@@ -24,9 +33,17 @@ LONG_PAYLOAD = b'x' * 40
             SensorStateTopic(node='pc-office', object_id='presence'),
         ),
         ('teplo/teplo-outdoor/status', NodeStatusTopic(node='outdoor')),
+        (
+            'teplo/teplo-ac-bedroom/climate/air_conditioner/mode/state',
+            ClimateStateTopic(node='ac-bedroom', object_id='air_conditioner', attribute='mode'),
+        ),
+        (
+            'teplo/teplo-ac-bedroom/climate/air_conditioner/target_temperature/state',
+            ClimateStateTopic(node='ac-bedroom', object_id='air_conditioner', attribute='target_temperature'),
+        ),
     ],
 )
-def test_topic_names_its_node(topic: str, expected: SensorStateTopic | NodeStatusTopic) -> None:
+def test_topic_names_its_node(topic: str, expected: SensorStateTopic | NodeStatusTopic | ClimateStateTopic) -> None:
     assert parse_topic(topic) == expected
 
 
@@ -39,8 +56,21 @@ def test_topic_names_its_node(topic: str, expected: SensorStateTopic | NodeStatu
         'teplo/teplo-air-kitchen/binary_sensor/window/state',
         'teplo/teplo-air-kitchen/status/extra',
         'home/teplo-air-kitchen/status',
+        'teplo/teplo-ac-bedroom/climate/air_conditioner/mode/command',
+        'teplo/ac-bedroom/climate/air_conditioner/mode/state',
+        'teplo/teplo-ac-bedroom/climate/air_conditioner/state',
     ],
-    ids=['node-without-prefix', 'no-state-suffix', 'command-topic', 'other-component', 'deeper-status', 'other-root'],
+    ids=[
+        'node-without-prefix',
+        'no-state-suffix',
+        'command-topic',
+        'other-component',
+        'deeper-status',
+        'other-root',
+        'climate-command',
+        'climate-node-without-prefix',
+        'climate-without-attribute',
+    ],
 )
 def test_topic_outside_the_contract_is_not_parsed(topic: str) -> None:
     assert parse_topic(topic) is None
@@ -111,3 +141,47 @@ def test_presence_nan_is_a_failed_reading() -> None:
         'sensor_reading_failed',
         'presence: the node reported nan',
     )
+
+
+@pytest.mark.parametrize(
+    ('payload', 'mode'),
+    [
+        (b'off', ClimateMode.OFF),
+        (b'heat', ClimateMode.HEAT),
+        (b'cool', ClimateMode.COOL),
+        (b'heat_cool', ClimateMode.AUTO),
+        (b'auto', ClimateMode.AUTO),
+        (b'dry', ClimateMode.OTHER),
+        (b'fan_only', ClimateMode.OTHER),
+        (b'unknown', ClimateMode.OTHER),
+    ],
+    ids=['off', 'heat', 'cool', 'heat_cool', 'auto', 'dry', 'fan_only', 'unknown'],
+)
+def test_climate_mode_names_the_modes_teplo_knows_and_calls_any_other_word_other(
+    payload: bytes,
+    mode: ClimateMode,
+) -> None:
+    assert climate_mode(payload) is mode
+
+
+@pytest.mark.parametrize(
+    ('payload', 'detail'),
+    [(b'\xd0\xbe\xd0\xb1', "mode: not a mode: b'\\xd0\\xbe\\xd0\\xb1'"), (b'', "mode: not a mode: b''")],
+    ids=['not-ascii', 'empty'],
+)
+def test_climate_mode_that_is_not_a_word_is_a_protocol_error(payload: bytes, detail: str) -> None:
+    with pytest.raises(DeviceProtocolError) as raised:
+        climate_mode(payload)
+
+    assert (raised.value.error_code, raised.value.detail) == ('device_protocol_error', detail)
+
+
+@pytest.mark.parametrize(
+    ('attribute', 'topic'),
+    [
+        ('mode', 'teplo/teplo-ac-bedroom/climate/air_conditioner/mode/command'),
+        ('target_temperature', 'teplo/teplo-ac-bedroom/climate/air_conditioner/target_temperature/command'),
+    ],
+)
+def test_climate_command_topic_is_the_node_s_command_topic_of_the_attribute(attribute: str, topic: str) -> None:
+    assert climate_command_topic('ac-bedroom', attribute) == topic

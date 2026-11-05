@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -6,8 +7,9 @@ from structlog.testing import capture_logs
 
 from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
-from apps.devices.domain.readings import Phase, PhaseCurrents, TemperatureReading
+from apps.devices.domain.readings import ClimateMode, ClimateUnitState, Phase, PhaseCurrents, TemperatureReading
 from apps.devices.drivers.esphome_messages import (
+    EsphomeClimateSink,
     EsphomeMessageHandler,
     NodeDevice,
     PhaseMeterSink,
@@ -15,6 +17,7 @@ from apps.devices.drivers.esphome_messages import (
     TemperatureSink,
 )
 from apps.devices.factories import DeviceFactory
+from apps.devices.services.esphome_climate_store import EsphomeClimateSnapshot, EsphomeClimateStore
 from apps.devices.services.phase_meter_store import PhaseMeterStore
 from apps.devices.services.presence_store import PresenceSnapshot, PresenceStore
 from apps.devices.services.state_store import TemperatureSnapshot, TemperatureStateStore
@@ -30,6 +33,16 @@ PC_PRESENCE = 'teplo/teplo-pc-office/sensor/presence/state'
 OFFICE_TEMPERATURE = 'teplo/teplo-air-office/sensor/temperature/state'
 OFFICE_PRESENCE = 'teplo/teplo-air-office/sensor/presence/state'
 OFFICE_STATUS = 'teplo/teplo-air-office/status'
+AC_MODE = 'teplo/teplo-ac-bedroom/climate/air_conditioner/mode/state'
+AC_TARGET = 'teplo/teplo-ac-bedroom/climate/air_conditioner/target_temperature/state'
+AC_TEMPERATURE = 'teplo/teplo-ac-bedroom/climate/air_conditioner/current_temperature/state'
+AC_STATUS = 'teplo/teplo-ac-bedroom/status'
+AC_HEATING = ClimateUnitState(
+    mode=ClimateMode.HEAT,
+    target=Decimal('20.5'),
+    room_temperature=Decimal('19.5'),
+    read_at=NOW,
+)
 
 
 @pytest.fixture
@@ -58,10 +71,16 @@ def f_presence_store(monotonic: MonotonicClockStub) -> PresenceStore:
 
 
 @pytest.fixture
+def f_climate_store(monotonic: MonotonicClockStub) -> EsphomeClimateStore:
+    return EsphomeClimateStore(clock=monotonic)
+
+
+@pytest.fixture
 def f_handler(
     f_temperature_store: TemperatureStateStore,
     f_phase_store: PhaseMeterStore,
     f_presence_store: PresenceStore,
+    f_climate_store: EsphomeClimateStore,
     wall_clock: WallClockStub,
 ) -> EsphomeMessageHandler:
     temperature = TemperatureSink(store=f_temperature_store)
@@ -76,6 +95,7 @@ def f_handler(
                 NodeDevice(slug='air-office', sink=temperature),
                 NodeDevice(slug='presence-office', sink=presence),
             ),
+            'ac-bedroom': (NodeDevice(slug='ac-bedroom', climate=EsphomeClimateSink(store=f_climate_store)),),
         },
         clock=wall_clock,
     )
@@ -140,6 +160,21 @@ def f_routed_presence_handler() -> EsphomeMessageHandler:
     )
     DeviceFactory(slug='pc-office', kind=DeviceKind.PRESENCE_SENSOR, driver=DeviceDriver.ESPHOME_PRESENCE)
     return EsphomeMessageHandler.init()
+
+
+@pytest.fixture
+def f_routed_climate_handler() -> EsphomeMessageHandler:
+    DeviceFactory(slug='ac-bedroom', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.ESPHOME_CLIMATE)
+    DeviceFactory(slug='heater-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.TUYA_HEATER)
+    return EsphomeMessageHandler.init()
+
+
+@pytest.fixture
+def f_climate_handler(f_handler: EsphomeMessageHandler) -> EsphomeMessageHandler:
+    f_handler.receive(AC_MODE, b'heat', retained=False)
+    f_handler.receive(AC_TEMPERATURE, b'19.5', retained=False)
+    f_handler.receive(AC_TARGET, b'20.5', retained=False)
+    return f_handler
 
 
 @pytest.fixture
@@ -556,4 +591,141 @@ def test_init_hears_a_device_on_the_node_it_names(f_routed_presence_handler: Esp
         {'event': 'esphome_node_online', 'device': 'presence-office', 'log_level': 'info'},
         {'event': 'esphome_node_online', 'device': 'pc-office', 'log_level': 'info'},
         {'event': 'esphome_node_unknown', 'node': 'teplo-presence-office', 'log_level': 'info'},
+    ]
+
+
+@pytest.mark.usefixtures('f_climate_handler')
+def test_climate_states_reach_the_air_conditioner_on_its_node(f_climate_store: EsphomeClimateStore) -> None:
+    assert f_climate_store.snapshot('ac-bedroom') == EsphomeClimateSnapshot(
+        slug='ac-bedroom',
+        state=AC_HEATING,
+        age=timedelta(0),
+        error_code=None,
+        error=None,
+    )
+
+
+@pytest.mark.parametrize(
+    ('topic', 'payload'),
+    [
+        ('teplo/teplo-ac-bedroom/sensor/outdoor_temperature/state', b'-3.0'),
+        ('teplo/teplo-ac-bedroom/sensor/power_usage/state', b'nan'),
+        ('teplo/teplo-ac-bedroom/sensor/wifi_signal/state', b'-71'),
+        ('teplo/teplo-ac-bedroom/sensor/uptime/state', b'3600'),
+        ('teplo/teplo-ac-bedroom/climate/air_conditioner/fan_mode/state', b'auto'),
+        ('teplo/teplo-ac-bedroom/climate/display/mode/state', b'heat'),
+        ('teplo/teplo-air-kitchen/climate/air_conditioner/mode/state', b'heat'),
+    ],
+    ids=[
+        'outdoor_temperature',
+        'power_usage',
+        'wifi_signal',
+        'uptime',
+        'attribute_teplo_does_not_read',
+        'another_climate',
+        'climate_of_an_air_node',
+    ],
+)
+def test_message_the_air_conditioner_does_not_read_records_nothing(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+    f_temperature_store: TemperatureStateStore,
+    topic: str,
+    payload: bytes,
+) -> None:
+    with capture_logs() as logs:
+        f_climate_handler.receive(topic, payload, retained=False)
+
+    assert (f_climate_store.snapshot('ac-bedroom').state, f_temperature_store.snapshot('air-kitchen').state, logs) == (
+        AC_HEATING,
+        None,
+        [],
+    )
+
+
+def test_room_temperature_the_unit_could_not_read_leaves_the_state_without_it(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+) -> None:
+    f_climate_handler.receive(AC_TEMPERATURE, b'nan', retained=False)
+
+    snapshot = f_climate_store.snapshot('ac-bedroom')
+    assert (snapshot.state, snapshot.error_code) == (replace(AC_HEATING, room_temperature=None), None)
+
+
+def test_nan_target_records_a_failed_reading_logged_once(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+) -> None:
+    with capture_logs() as logs:
+        f_climate_handler.receive(AC_TARGET, b'nan', retained=False)
+        f_climate_handler.receive(AC_TARGET, b'nan', retained=False)
+
+    snapshot = f_climate_store.snapshot('ac-bedroom')
+    assert (snapshot.state, snapshot.error_code, snapshot.error, logs) == (
+        AC_HEATING,
+        'sensor_reading_failed',
+        'target_temperature: the node reported nan',
+        [
+            {
+                'event': 'esphome_reading_failed',
+                'device': 'ac-bedroom',
+                'object_id': 'target_temperature',
+                'error_code': 'sensor_reading_failed',
+                'detail': 'target_temperature: the node reported nan',
+                'log_level': 'warning',
+            },
+        ],
+    )
+
+
+def test_mode_that_is_not_a_word_records_a_protocol_error(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+) -> None:
+    f_climate_handler.receive(AC_MODE, b'\xff', retained=False)
+
+    snapshot = f_climate_store.snapshot('ac-bedroom')
+    assert (snapshot.error_code, snapshot.error) == ('device_protocol_error', "mode: not a mode: b'\\xff'")
+
+
+def test_offline_air_conditioner_node_fails_the_unit_and_keeps_its_state(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+) -> None:
+    with capture_logs() as logs:
+        f_climate_handler.receive(AC_STATUS, b'offline', retained=False)
+
+    snapshot = f_climate_store.snapshot('ac-bedroom')
+    assert (snapshot.state, snapshot.error_code, snapshot.error, logs) == (
+        AC_HEATING,
+        'device_unavailable',
+        'the node went offline',
+        [{'event': 'esphome_node_offline', 'device': 'ac-bedroom', 'log_level': 'warning'}],
+    )
+
+
+def test_lost_broker_fails_the_air_conditioner_until_the_connection_returns(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+) -> None:
+    f_climate_handler.connection_lost('mqtt broker unreachable')
+    lost = f_climate_store.snapshot('ac-bedroom')
+    f_climate_handler.connection_made()
+    back = f_climate_store.snapshot('ac-bedroom')
+
+    assert ((lost.error_code, lost.error), (back.state, back.error_code)) == (
+        ('broker_unavailable', 'mqtt broker unreachable'),
+        (AC_HEATING, None),
+    )
+
+
+def test_init_hears_an_air_conditioner_on_its_node(f_routed_climate_handler: EsphomeMessageHandler) -> None:
+    with capture_logs() as logs:
+        for node in ('teplo-ac-bedroom', 'teplo-heater-office'):
+            f_routed_climate_handler.receive(f'teplo/{node}/status', b'online', retained=False)
+
+    assert logs == [
+        {'event': 'esphome_node_online', 'device': 'ac-bedroom', 'log_level': 'info'},
+        {'event': 'esphome_node_unknown', 'node': 'teplo-heater-office', 'log_level': 'info'},
     ]

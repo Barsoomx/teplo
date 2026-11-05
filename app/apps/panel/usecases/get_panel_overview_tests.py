@@ -103,6 +103,12 @@ CONVECTOR_AT_THE_APPS_SETPOINT = ClimateUnitState(
     read_at=MORNING,
     level='High',
 )
+AC_COOLING = ClimateUnitState(
+    mode=ClimateMode.COOL,
+    target=Decimal(24),
+    room_temperature=Decimal('23.5'),
+    read_at=MORNING,
+)
 NIGHT = datetime(2026, 10, 29, 1, 0, tzinfo=MOSCOW)
 WARM_UP = datetime(2026, 10, 29, 4, 0, tzinfo=MOSCOW)
 LATE_WARM_UP = datetime(2026, 10, 29, 4, 30, tzinfo=MOSCOW)
@@ -171,6 +177,7 @@ def _source_statuses(units: ClimateUnitStateStore | None = None) -> SourceStatus
         temperatures=TemperatureStateStore(unavailable_after=timedelta(minutes=10)),
         climate_settings=ClimateSettingsRepository(),
         gate=SourceLoadGateStub(held=frozenset(), gated=frozenset(), answers={}),
+        book=ControlBook(),
         dry_run=False,
     )
 
@@ -192,6 +199,7 @@ def _use_case(
     *,
     presence: PresenceStore | None = None,
     occupancy: dict[str, Occupancy] | None = None,
+    units: ClimateUnitStateStore | None = None,
 ) -> GetPanelOverviewUseCase:
     return GetPanelOverviewUseCase(
         zones=ZoneRepository(),
@@ -210,7 +218,7 @@ def _use_case(
         presence_store=PresenceStore(unavailable_after=timedelta(minutes=10)) if presence is None else presence,
         book=book,
         guard_book=GuardBook(),
-        sources=_source_statuses(),
+        sources=_source_statuses(units),
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
@@ -893,6 +901,36 @@ def f_office_use_case(request: pytest.FixtureRequest) -> GetPanelOverviewUseCase
         clock=ClockStub(trusted=True),
         dry_run=False,
     )
+
+
+@pytest.fixture
+def f_air_conditioner_use_case() -> GetPanelOverviewUseCase:
+    bedroom = RoomClimateFactory.create(
+        room=RoomFactory.create(
+            slug='bedroom',
+            name='Спальня',
+            floor=FloorFactory.create(slug='floor-2', name='2 этаж', level=2),
+        ),
+        comfort_target=Decimal('20.5'),
+        setback_target=Decimal('19.5'),
+    )
+    HeatSourceFactory.create(
+        slug='ac-bedroom',
+        name='Кондиционер: спальня',
+        room=bedroom.room,
+        kind=HeatSourceKind.AIR_CONDITIONER,
+        device=DeviceFactory.create(
+            slug='ac-bedroom',
+            name='Кондиционер: спальня',
+            kind=DeviceKind.CLIMATE_UNIT,
+            driver=DeviceDriver.ESPHOME_CLIMATE,
+            room=bedroom.room,
+        ),
+        min_outdoor=Decimal('-15.0'),
+    )
+    units = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10))
+    units.record_state('ac-bedroom', AC_COOLING)
+    return _use_case(TemperatureStateStore(unavailable_after=timedelta(minutes=10)), ControlBook(), units=units)
 
 
 @pytest.fixture
@@ -1768,6 +1806,7 @@ CONVECTOR_OVERVIEW = SourceOverview(
     held_until=None,
     shed=False,
     pending=PendingWrite(kind=PendingKind.WATCHING, at=None),
+    mode=ClimateMode.HEAT,
 )
 
 
@@ -1789,6 +1828,42 @@ def test_overview_shows_the_office_card_with_its_convector_and_target(
             forced=(),
         ),
         (CONVECTOR_OVERVIEW,),
+    )
+
+
+def test_overview_shows_an_air_conditioner_the_owner_cools_with_and_its_lockout_without_an_outdoor_reading(
+    f_air_conditioner_use_case: GetPanelOverviewUseCase,
+) -> None:
+    overview = f_air_conditioner_use_case.execute(GetPanelOverviewInputDTO(now=MORNING))
+
+    assert overview.sources == (
+        SourceOverview(
+            slug='ac-bedroom',
+            name='Кондиционер: спальня',
+            kind=HeatSourceKind.AIR_CONDITIONER,
+            live=False,
+            lit_until=None,
+            burning=False,
+            room='bedroom',
+            device='ac-bedroom',
+            priority=1,
+            available=True,
+            error_code=None,
+            error=None,
+            on=True,
+            setpoint=Decimal(24),
+            level=None,
+            temperature=Decimal('23.5'),
+            target_on=None,
+            target_setpoint=None,
+            commands_live=False,
+            held_until=None,
+            shed=False,
+            pending=None,
+            mode=ClimateMode.COOL,
+            locked_out=True,
+            outdoor=None,
+        ),
     )
 
 

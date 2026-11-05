@@ -35,6 +35,8 @@ def f_book() -> ControlBook:
     book.remember_source_journaled('convector-office', JOURNALED)
     book.remember_occupancy_journaled('convector-office', BY_OCCUPANCY)
     book.remember_occupancy_journaled('ac-bedroom', BY_OCCUPANCY)
+    book.remember_lockout('ac-bedroom', True)
+    book.remember_lockout('ac-office', False)
     return book
 
 
@@ -85,3 +87,11 @@ def test_book_remembers_what_occupancy_would_give_each_source_until_it_is_forgot
         f_book.occupancy_journaled('ac-bedroom'),
         f_book.source_journaled('convector-office'),
     ) == (BY_OCCUPANCY, None, JOURNALED)
+
+
+def test_book_remembers_each_source_s_outdoor_lockout_and_starts_unlocked(f_book: ControlBook) -> None:
+    assert (
+        f_book.source_locked_out('ac-bedroom'),
+        f_book.source_locked_out('ac-office'),
+        f_book.source_locked_out('ac-attic'),
+    ) == (True, False, False)

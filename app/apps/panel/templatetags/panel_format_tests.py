@@ -27,6 +27,7 @@ from apps.devices.domain.errors import (
     SensorReadingError,
 )
 from apps.devices.domain.kinds import DeviceKind
+from apps.devices.domain.readings import ClimateMode
 from apps.panel.templatetags.panel_format import (
     air_control_note,
     air_control_text,
@@ -76,7 +77,9 @@ from apps.panel.templatetags.panel_format import (
     settings_change_text,
     source_command_failed_text,
     source_command_text,
+    source_lockout_text,
     source_manual_change_text,
+    source_owner_mode,
     source_pending_text,
     source_state_text,
     start_wait_note,
@@ -1652,6 +1655,25 @@ CONVECTOR = SourceOverview(
 )
 
 
+AIR_CONDITIONER = SourceOverview(
+    slug='ac-bedroom',
+    name='Кондиционер: спальня',
+    kind=HeatSourceKind.AIR_CONDITIONER,
+    live=False,
+    lit_until=None,
+    burning=False,
+    available=True,
+    on=True,
+    setpoint=Decimal(24),
+    temperature=Decimal('19.5'),
+    target_on=True,
+    target_setpoint=Decimal('20.5'),
+    commands_live=True,
+    pending=None,
+    mode=ClimateMode.COOL,
+)
+
+
 def _source_entry(kind: str, payload: dict[str, object]) -> TimelineEntry:
     return TimelineEntry(
         kind=kind,
@@ -1708,8 +1730,17 @@ def test_source_command_failed_text_says_what_teplo_could_not_write(payload: dic
             {**CONVECTOR_CHANGE, 'power': [True, False], 'setpoint': None},
             'Конвектор: кабинет: изменили на приборе: выключили, teplo не трогает до 18:40',
         ),
+        (
+            {**CONVECTOR_CHANGE, 'mode': ['heat', 'other'], 'setpoint': ['20.5', '24']},
+            'Конвектор: кабинет: изменили на приборе: режим обогрев → другой режим, 20,5° → 24°, '
+            'teplo не трогает до 18:40',
+        ),
+        (
+            {**CONVECTOR_CHANGE, 'mode': ['auto', 'cool'], 'setpoint': None, 'dry_run': True},
+            'Конвектор: кабинет: изменили на приборе: режим авто → охлаждение, teplo не трогал бы до 18:40',
+        ),
     ],
-    ids=['setpoint', 'setpoint_while_watching', 'switched_off'],
+    ids=['setpoint', 'setpoint_while_watching', 'switched_off', 'mode_and_setpoint', 'mode_while_watching'],
 )
 def test_source_manual_change_text_says_what_was_changed_on_the_unit(payload: dict[str, object], expected: str) -> None:
     assert source_manual_change_text(_source_entry('source_manual_change', payload)) == expected
@@ -1783,8 +1814,10 @@ def test_load_command_text_names_the_heater_teplo_could_not_switch(command: str,
             ClimateUnitNotControllableError('heater-office', 'it only reads'),
             'Драйвер этого прибора не умеет им управлять',
         ),
+        (BrokerUnavailableError('mqtt broker not connected'), 'teplo не может подключиться к MQTT-брокеру'),
+        (SensorReadingError('target_temperature: the node reported nan'), 'Кондиционер не сообщил уставку'),
     ],
-    ids=['unavailable', 'protocol', 'not_controllable'],
+    ids=['unavailable', 'protocol', 'not_controllable', 'broker', 'no_target'],
 )
 def test_failure_note_names_the_unit_for_a_climate_unit(error: DomainError, expected: str) -> None:
     assert failure_note(error.error_code, error.detail, device=DeviceKind.CLIMATE_UNIT.value) == expected
@@ -1816,12 +1849,35 @@ def test_failure_note_names_the_unit_for_a_climate_unit(error: DomainError, expe
             '',
             '',
         ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.HEAT, setpoint=Decimal('20.5')),
+            'греет до 20,5° · у прибора 19,5°',
+            '',
+        ),
+        (AIR_CONDITIONER, 'охлаждает до 24° · у прибора 19,5°', ''),
+        (
+            replace(
+                AIR_CONDITIONER,
+                mode=ClimateMode.AUTO,
+                temperature=None,
+                pending=PendingWrite(kind=PendingKind.NEXT_WRITE, at=PANEL_NOW + timedelta(minutes=12)),
+            ),
+            'авто, 24°',
+            'teplo поставит 20,5° не раньше 16:52',
+        ),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.OTHER), 'другой режим, 24° · у прибора 19,5°', ''),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.OFF, on=False), 'выключен · у прибора 19,5°', ''),
     ],
     ids=[
         'heating_and_waiting_for_its_interval',
         'off_and_written_within_the_minute',
         'to_be_switched_off',
         'never_read',
+        'air_conditioner_heating',
+        'air_conditioner_cooling',
+        'air_conditioner_in_auto_taken_back_to_heat',
+        'air_conditioner_in_another_mode',
+        'air_conditioner_off',
     ],
 )
 def test_source_texts_say_what_the_unit_does_and_when_teplo_s_target_reaches_it(
@@ -1967,3 +2023,32 @@ def test_failure_note_explains_a_presence_source_beyond_its_lost_connection(erro
     )
 
     assert note == expected
+
+
+@pytest.mark.usefixtures('russian')
+@pytest.mark.parametrize(
+    ('source', 'owner_mode', 'lockout'),
+    [
+        (AIR_CONDITIONER, 'Режим владельца', ''),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.AUTO), '', ''),
+        (replace(AIR_CONDITIONER, mode=ClimateMode.OTHER), '', ''),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.HEAT, locked_out=True, outdoor=Decimal('-17.0')),
+            '',
+            'Мороз: на улице -17°',
+        ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.OFF, on=False, locked_out=True, outdoor=None),
+            '',
+            'Блокировка: нет показаний с улицы',
+        ),
+        (CONVECTOR, '', ''),
+    ],
+    ids=['cooling', 'auto', 'another_mode', 'frost_lockout', 'locked_out_without_an_outdoor_reading', 'convector'],
+)
+def test_source_chips_name_the_owner_s_mode_only_for_cool_and_the_frost_lockout(
+    source: SourceOverview,
+    owner_mode: str,
+    lockout: str,
+) -> None:
+    assert (source_owner_mode(source), source_lockout_text(source)) == (owner_mode, lockout)

@@ -15,6 +15,7 @@ class ClimateMode(StrEnum):
     HEAT = 'heat'
     COOL = 'cool'
     AUTO = 'auto'
+    OTHER = 'other'
 
 
 class Phase(StrEnum):

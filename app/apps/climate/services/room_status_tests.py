@@ -70,6 +70,7 @@ def _reader(
             temperatures=temperatures,
             climate_settings=ClimateSettingsRepository(),
             gate=SourceLoadGateStub(held=frozenset(), gated=frozenset(), answers={}),
+            book=ControlBook(),
             dry_run=dry_run,
         ),
         dry_run=dry_run,

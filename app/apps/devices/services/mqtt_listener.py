@@ -6,6 +6,7 @@ import structlog
 from django.conf import settings
 
 from apps.core.services.secrets import MqttSecret, SecretsFile
+from apps.devices.domain.errors import BrokerUnavailableError
 from apps.devices.drivers.esphome_messages import EsphomeMessageHandler
 from apps.devices.drivers.esphome_protocol import SUBSCRIPTIONS
 from apps.devices.drivers.mqtt_client import MqttClient, MqttReceiver
@@ -17,6 +18,8 @@ class MqttConnection(Protocol):
     def start(self) -> None: ...
 
     def stop(self) -> None: ...
+
+    def publish(self, topic: str, payload: bytes) -> None: ...
 
 
 ConnectionFactory = Callable[[MqttSecret, tuple[str, ...], MqttReceiver], MqttConnection]
@@ -57,6 +60,13 @@ class MqttListener:
 
         self._connection.stop()
         self._connection = None
+
+    def publish(self, topic: str, payload: bytes) -> None:
+        connection = self._connection
+        if connection is None:
+            raise BrokerUnavailableError('mqtt is not configured')
+
+        connection.publish(topic, payload)
 
 
 mqtt_listener = MqttListener.init()

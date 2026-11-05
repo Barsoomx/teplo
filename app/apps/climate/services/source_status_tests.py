@@ -13,10 +13,11 @@ from apps.climate.domain.room_intent import RoomIntents, resolve_room_intents
 from apps.climate.domain.room_status import SourceStatus
 from apps.climate.domain.sensors import ClimateSensors
 from apps.climate.domain.zone import AirTargets, ComfortWindow
+from apps.climate.services.control_book import ControlBook
 from apps.climate.services.source_status import SourceStatusReader
 from apps.climate.stubs import ClimateSensorsStoreStub, HeatSourceStoreStub, SourceLoadGateStub
 from apps.core.stubs import MonotonicClockStub
-from apps.devices.domain.readings import ClimateMode, ClimateUnitState
+from apps.devices.domain.readings import ClimateMode, ClimateUnitState, TemperatureReading
 from apps.devices.services.state_store import ClimateUnitStateStore, TemperatureStateStore
 
 MOSCOW = ZoneInfo('Europe/Moscow')
@@ -70,6 +71,30 @@ AT_THE_APPS_SETPOINT = ClimateUnitState(
     read_at=NOW,
     level='High',
 )
+BEDROOM = replace(
+    OFFICE,
+    slug='bedroom',
+    name='Спальня',
+    targets=AirTargets(comfort=Decimal('20.5'), night=Decimal('19.5')),
+    windows=(),
+)
+AIR_CONDITIONER = replace(
+    WATCHED_CONVECTOR,
+    slug='ac-bedroom',
+    name='Кондиционер: спальня',
+    room_slug='bedroom',
+    room_name='Спальня',
+    kind=HeatSourceKind.AIR_CONDITIONER,
+    device_slug='ac-bedroom',
+    min_outdoor=Decimal('-15.0'),
+    load='ac-bedroom',
+)
+AC_HEATING = ClimateUnitState(
+    mode=ClimateMode.HEAT,
+    target=Decimal('19.5'),
+    room_temperature=Decimal(19),
+    read_at=NOW,
+)
 
 
 @pytest.fixture
@@ -78,8 +103,20 @@ def intents() -> RoomIntents:
 
 
 @pytest.fixture
+def f_bedroom_intents() -> RoomIntents:
+    return resolve_room_intents([BEDROOM], now=NOW, clock_trusted=True, guests_until=None)
+
+
+@pytest.fixture
 def clock() -> MonotonicClockStub:
     return MonotonicClockStub(now=1000.0)
+
+
+@pytest.fixture
+def f_book(request: pytest.FixtureRequest) -> ControlBook:
+    book = ControlBook()
+    book.remember_lockout('ac-bedroom', getattr(request, 'param', False))
+    return book
 
 
 @pytest.fixture
@@ -100,6 +137,27 @@ def f_reader(
         temperatures=TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock),
         climate_settings=ClimateSensorsStoreStub(sensors=ClimateSensors(outdoor_slug=None)),
         gate=SourceLoadGateStub(held=held, gated=frozenset(), answers={}),
+        book=ControlBook(),
+        dry_run=False,
+    )
+
+
+@pytest.fixture
+def f_ac_reader(request: pytest.FixtureRequest, f_book: ControlBook, clock: MonotonicClockStub) -> SourceStatusReader:
+    temperatures = TemperatureStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    temperatures.record_state(
+        'outdoor',
+        TemperatureReading(temperature=Decimal(request.param), humidity=None, read_at=NOW),
+    )
+    units = ClimateUnitStateStore(unavailable_after=timedelta(minutes=10), clock=clock)
+    units.record_state('ac-bedroom', AC_HEATING)
+    return SourceStatusReader(
+        sources=HeatSourceStoreStub(sources=[AIR_CONDITIONER], errors={}),
+        units=units,
+        temperatures=temperatures,
+        climate_settings=ClimateSensorsStoreStub(sensors=ClimateSensors(outdoor_slug='outdoor')),
+        gate=SourceLoadGateStub(held=frozenset(), gated=frozenset(), answers={}),
+        book=f_book,
         dry_run=False,
     )
 
@@ -131,6 +189,7 @@ def test_status_gives_what_the_unit_reads_and_the_target_teplo_would_give_it(
                 held_until=None,
                 shed=False,
                 pending=PendingWrite(kind=PendingKind.WATCHING, at=None),
+                mode=ClimateMode.HEAT,
             ),
         ),
     }
@@ -183,3 +242,30 @@ def test_status_of_a_unit_never_read_says_it_is_unreachable(
         None,
         PendingWrite(kind=PendingKind.UNREACHED, at=None),
     )
+
+
+@pytest.mark.parametrize(
+    ('f_ac_reader', 'f_book', 'expected'),
+    [
+        ('-16.0', False, (ClimateMode.HEAT, True, Decimal('-16.0'), None, False)),
+        ('-14.5', True, (ClimateMode.HEAT, True, Decimal('-14.5'), None, True)),
+        ('-14.5', False, (ClimateMode.HEAT, False, Decimal('-14.5'), True, False)),
+    ],
+    ids=['below_the_limit', 'locked_within_a_degree_above_it', 'unlocked_within_a_degree_above_it'],
+    indirect=['f_ac_reader', 'f_book'],
+)
+def test_status_reads_a_source_s_lockout_from_the_book_without_remembering_it(
+    f_ac_reader: SourceStatusReader,
+    f_book: ControlBook,
+    f_bedroom_intents: RoomIntents,
+    expected: tuple[ClimateMode, bool, Decimal, bool | None, bool],
+) -> None:
+    status = f_ac_reader.statuses(f_bedroom_intents)['bedroom'][0]
+
+    assert (
+        status.mode,
+        status.locked_out,
+        status.outdoor,
+        status.target_on,
+        f_book.source_locked_out('ac-bedroom'),
+    ) == expected

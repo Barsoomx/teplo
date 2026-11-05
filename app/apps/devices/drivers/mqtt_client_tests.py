@@ -1,10 +1,13 @@
+from dataclasses import dataclass
+
 import pytest
-from paho.mqtt.client import ConnectFlags, DisconnectFlags, MQTTMessage
+from paho.mqtt.client import MQTT_ERR_NO_CONN, MQTT_ERR_SUCCESS, ConnectFlags, DisconnectFlags, MQTTMessage
 from paho.mqtt.packettypes import PacketTypes
 from paho.mqtt.reasoncodes import ReasonCode
 from structlog.testing import capture_logs
 
 from apps.core.services.secrets import MqttSecret
+from apps.devices.domain.errors import BrokerUnavailableError
 from apps.devices.drivers.mqtt_client import MqttClient
 from apps.devices.stubs import MqttReceiverStub
 
@@ -17,10 +20,17 @@ DISCONNECTED = ReasonCode(PacketTypes.DISCONNECT, 'Success')
 CONNECTION_LOST = ReasonCode(PacketTypes.DISCONNECT, 'Unspecified error')
 CONNECT_FLAGS = ConnectFlags(session_present=False)
 DISCONNECT_FLAGS = DisconnectFlags(is_disconnect_packet_from_server=False)
+MODE_COMMAND = 'teplo/teplo-ac-bedroom/climate/air_conditioner/mode/command'
+
+
+@dataclass(frozen=True, kw_only=True)
+class PublishInfoStub:
+    rc: int
 
 
 class PahoClientStub:
-    def __init__(self) -> None:
+    def __init__(self, publish_rc: int = MQTT_ERR_SUCCESS) -> None:
+        self._publish_rc = publish_rc
         self._calls: list[tuple[str, object]] = []
 
     @property
@@ -45,6 +55,10 @@ class PahoClientStub:
     def subscribe(self, topic: list[tuple[str, int]]) -> object:
         self._calls.append(('subscribe', topic))
         return None
+
+    def publish(self, topic: str, payload: bytes, qos: int, retain: bool) -> PublishInfoStub:
+        self._calls.append(('publish', (topic, payload, qos, retain)))
+        return PublishInfoStub(rc=self._publish_rc)
 
 
 @pytest.fixture
@@ -83,6 +97,14 @@ def f_refused_client(f_client: MqttClient, f_paho: PahoClientStub) -> MqttClient
 @pytest.fixture
 def f_failing_client(f_paho: PahoClientStub) -> MqttClient:
     return MqttClient(client=f_paho, secret=SECRET, topics=TOPICS, receiver=MqttReceiverStub(error=RuntimeError('bug')))
+
+
+@pytest.fixture
+def f_refusing_client(f_receiver: MqttReceiverStub) -> MqttClient:
+    paho = PahoClientStub(publish_rc=MQTT_ERR_NO_CONN)
+    client = MqttClient(client=paho, secret=SECRET, topics=TOPICS, receiver=f_receiver)
+    client.on_connect(paho, None, CONNECT_FLAGS, CONNECTED, None)
+    return client
 
 
 @pytest.fixture
@@ -218,3 +240,40 @@ def test_failing_receiver_does_not_end_the_network_thread(
         f_failing_client.on_message(f_paho, None, f_message)
 
     assert logs == [{'event': 'mqtt_message_failed', 'exc_info': True, 'log_level': 'error'}]
+
+
+def test_publish_while_connected_sends_qos_0_not_retained(
+    f_connected_client: MqttClient,
+    f_paho: PahoClientStub,
+) -> None:
+    f_connected_client.publish(MODE_COMMAND, b'heat')
+
+    assert f_paho.calls[1:] == [('publish', (MODE_COMMAND, b'heat', 0, False))]
+
+
+@pytest.mark.parametrize('client', ['f_client', 'f_dropped_client'], ids=['never_connected', 'connection_lost'])
+def test_publish_while_not_connected_is_refused_and_queues_nothing(
+    client: str,
+    request: pytest.FixtureRequest,
+    f_paho: PahoClientStub,
+) -> None:
+    disconnected: MqttClient = request.getfixturevalue(client)
+
+    with pytest.raises(BrokerUnavailableError) as raised:
+        disconnected.publish(MODE_COMMAND, b'heat')
+
+    assert (raised.value.error_code, raised.value.detail, [call for call in f_paho.calls if call[0] == 'publish']) == (
+        'broker_unavailable',
+        'mqtt broker not connected',
+        [],
+    )
+
+
+def test_publish_paho_does_not_take_is_a_lost_broker(f_refusing_client: MqttClient) -> None:
+    with pytest.raises(BrokerUnavailableError) as raised:
+        f_refusing_client.publish(MODE_COMMAND, b'off')
+
+    assert (raised.value.error_code, raised.value.detail) == (
+        'broker_unavailable',
+        'mqtt publish failed: The client is not currently connected.',
+    )

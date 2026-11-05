@@ -10,10 +10,12 @@ from apps.climate.domain.fast_source import (
     SourceDrive,
     SourceTarget,
     decide_source_power,
+    outdoor_lockout,
     pending_source_write,
     plan_source_change,
     plan_source_drive,
     room_targets,
+    source_lockouts,
     source_setpoint,
     source_starts,
 )
@@ -64,6 +66,8 @@ HEATING = ClimateUnitState(
 )
 OFF = replace(HEATING, mode=ClimateMode.OFF)
 COOLING = replace(HEATING, mode=ClimateMode.COOL)
+IN_AUTO = replace(HEATING, mode=ClimateMode.AUTO, level=None)
+IN_ANOTHER_MODE = replace(HEATING, mode=ClimateMode.OTHER, level=None)
 ON_AT_22 = SourceTarget(power=True, setpoint=Decimal(22))
 SWITCHED_OFF = SourceTarget(power=False, setpoint=None)
 
@@ -83,6 +87,8 @@ SWITCHED_OFF = SourceTarget(power=False, setpoint=None)
         (AIR_CONDITIONER, Decimal('20.25'), Decimal('20.5')),
         (AIR_CONDITIONER, Decimal('20.2'), Decimal('20.0')),
         (replace(AIR_CONDITIONER, max_setpoint=Decimal('23.7')), Decimal('25.0'), Decimal('23.5')),
+        (AIR_CONDITIONER, Decimal('16.0'), Decimal(17)),
+        (replace(AIR_CONDITIONER, setpoint_bias=Decimal('-3.0')), Decimal('19.0'), Decimal(17)),
     ],
     ids=[
         'half_a_degree_up',
@@ -97,9 +103,11 @@ SWITCHED_OFF = SourceTarget(power=False, setpoint=None)
         'air_conditioner_half_up',
         'air_conditioner_down',
         'air_conditioner_cap_rounded_down',
+        'air_conditioner_at_least_seventeen',
+        'air_conditioner_biased_down_at_least_seventeen',
     ],
 )
-def test_setpoint_is_the_target_and_bias_rounded_half_up_to_the_step_within_five_and_the_cap(
+def test_setpoint_is_the_target_and_bias_rounded_half_up_to_the_step_within_its_lowest_and_the_cap(
     source: SourceSettings,
     target: Decimal,
     setpoint: Decimal,
@@ -137,63 +145,77 @@ def test_power_starts_below_the_target_and_stops_a_degree_above_it(
 
 
 @pytest.mark.parametrize(
-    ('sources', 'states', 'shed', 'outdoor', 'targets'),
+    ('sources', 'states', 'shed', 'locked_out', 'targets'),
     [
         (
             [CONVECTOR, AIR_CONDITIONER],
             {'convector-office': HEATING, 'ac-office': OFF},
             frozenset(),
-            Decimal('-5.0'),
+            frozenset(),
             {'convector-office': ON_AT_22, 'ac-office': None},
         ),
         (
             [CONVECTOR, AIR_CONDITIONER],
             {'convector-office': None, 'ac-office': OFF},
             frozenset(),
-            Decimal('-5.0'),
+            frozenset(),
             {'convector-office': None, 'ac-office': SourceTarget(power=True, setpoint=Decimal('21.5'))},
         ),
         (
             [CONVECTOR, AIR_CONDITIONER],
             {'convector-office': HEATING, 'ac-office': OFF},
             frozenset({'convector-office'}),
-            Decimal('-5.0'),
+            frozenset(),
             {'convector-office': None, 'ac-office': SourceTarget(power=True, setpoint=Decimal('21.5'))},
         ),
         (
             [CONVECTOR, AIR_CONDITIONER],
             {'convector-office': COOLING, 'ac-office': OFF},
             frozenset(),
-            Decimal('-5.0'),
+            frozenset(),
             {'convector-office': None, 'ac-office': SourceTarget(power=True, setpoint=Decimal('21.5'))},
         ),
         (
             [replace(CONVECTOR, priority=3), AIR_CONDITIONER],
             {'convector-office': HEATING, 'ac-office': OFF},
             frozenset(),
-            Decimal('-17.0'),
+            frozenset({'ac-office'}),
             {'convector-office': ON_AT_22, 'ac-office': None},
         ),
         (
-            [replace(CONVECTOR, priority=3), AIR_CONDITIONER],
-            {'convector-office': HEATING, 'ac-office': OFF},
+            [replace(CONVECTOR, priority=3), replace(AIR_CONDITIONER, commanded_power=True)],
+            {'convector-office': OFF, 'ac-office': HEATING},
             frozenset(),
-            None,
-            {'convector-office': ON_AT_22, 'ac-office': None},
+            frozenset({'ac-office'}),
+            {'convector-office': ON_AT_22, 'ac-office': SWITCHED_OFF},
         ),
         (
             [CONVECTOR, replace(AIR_CONDITIONER, commanded_power=True)],
             {'convector-office': OFF, 'ac-office': HEATING},
             frozenset(),
-            Decimal('-5.0'),
+            frozenset(),
             {'convector-office': ON_AT_22, 'ac-office': SWITCHED_OFF},
         ),
         (
             [CONVECTOR, AIR_CONDITIONER],
             {'convector-office': OFF, 'ac-office': HEATING},
             frozenset(),
-            Decimal('-5.0'),
+            frozenset(),
             {'convector-office': ON_AT_22, 'ac-office': None},
+        ),
+        (
+            [replace(CONVECTOR, priority=3), AIR_CONDITIONER],
+            {'convector-office': OFF, 'ac-office': IN_ANOTHER_MODE},
+            frozenset(),
+            frozenset(),
+            {'convector-office': None, 'ac-office': SourceTarget(power=True, setpoint=Decimal('21.5'))},
+        ),
+        (
+            [replace(CONVECTOR, priority=3), replace(AIR_CONDITIONER, commanded_power=True)],
+            {'convector-office': OFF, 'ac-office': COOLING},
+            frozenset(),
+            frozenset(),
+            {'convector-office': ON_AT_22, 'ac-office': SWITCHED_OFF},
         ),
     ],
     ids=[
@@ -201,21 +223,32 @@ def test_power_starts_below_the_target_and_stops_a_degree_above_it(
         'unavailable_passed_over',
         'shed_passed_over',
         'owner_mode_passed_over',
-        'too_cold_outdoors_for_the_air_conditioner',
-        'no_outdoor_reading_for_the_air_conditioner',
+        'locked_out_passed_over',
+        'locked_out_source_teplo_set_on_is_switched_off',
         'source_teplo_set_on_but_not_picked_is_switched_off',
         'source_the_owner_switched_on_is_left_alone',
+        'unit_in_another_mode_picked',
+        'cooling_unit_never_picked',
     ],
 )
 def test_room_picks_its_first_source_that_can_heat_and_switches_off_one_teplo_set_on(
     sources: list[SourceSettings],
     states: dict[str, ClimateUnitState | None],
     shed: frozenset[str],
-    outdoor: Decimal | None,
+    locked_out: frozenset[str],
     targets: dict[str, SourceTarget | None],
 ) -> None:
     assert (
-        room_targets(sources, states, shed=shed, air=None, target=Decimal('21.5'), outdoor=outdoor, now=NOW) == targets
+        room_targets(
+            sources,
+            states,
+            shed=shed,
+            locked_out=locked_out,
+            air=None,
+            target=Decimal('21.5'),
+            now=NOW,
+        )
+        == targets
     )
 
 
@@ -224,9 +257,9 @@ def test_room_with_a_sensor_switches_its_source_off_a_degree_above_the_target() 
         [CONVECTOR],
         {'convector-office': HEATING},
         shed=frozenset(),
+        locked_out=frozenset(),
         air=Decimal('22.6'),
         target=Decimal('21.5'),
-        outdoor=None,
         now=NOW,
     )
 
@@ -240,9 +273,9 @@ def test_hold_on_any_source_of_a_room_holds_the_room() -> None:
         [CONVECTOR, held],
         {'convector-office': OFF, 'ac-office': OFF},
         shed=frozenset(),
+        locked_out=frozenset(),
         air=None,
         target=Decimal('21.5'),
-        outdoor=Decimal('-5.0'),
         now=NOW,
     )
 
@@ -259,6 +292,16 @@ def test_hold_on_any_source_of_a_room_holds_the_room() -> None:
         (SWITCHED_OFF, HEATING, SourceChange(power=False)),
         (SWITCHED_OFF, OFF, SourceChange()),
         (ON_AT_22, COOLING, SourceChange()),
+        (SWITCHED_OFF, COOLING, SourceChange()),
+        (ON_AT_22, IN_AUTO, SourceChange(power=True)),
+        (
+            SourceTarget(power=True, setpoint=Decimal('20.5')),
+            IN_AUTO,
+            SourceChange(power=True, setpoint=Decimal('20.5')),
+        ),
+        (ON_AT_22, IN_ANOTHER_MODE, SourceChange(power=True)),
+        (SWITCHED_OFF, IN_AUTO, SourceChange(power=False)),
+        (SWITCHED_OFF, IN_ANOTHER_MODE, SourceChange(power=False)),
     ],
     ids=[
         'switched_on_at_its_setpoint',
@@ -268,6 +311,12 @@ def test_hold_on_any_source_of_a_room_holds_the_room() -> None:
         'switched_off',
         'already_off',
         'owner_mode_left_alone',
+        'owner_mode_left_on',
+        'auto_back_to_heat_at_its_setpoint',
+        'auto_back_to_heat_and_set',
+        'another_mode_back_to_heat',
+        'auto_switched_off',
+        'another_mode_switched_off',
     ],
 )
 def test_change_writes_only_what_differs_and_leaves_the_owners_modes_alone(
@@ -279,18 +328,32 @@ def test_change_writes_only_what_differs_and_leaves_the_owners_modes_alone(
 
 
 @pytest.mark.parametrize(
-    ('change', 'starts'),
+    ('change', 'state', 'starts'),
     [
-        (SourceChange(power=True, setpoint=Decimal(22)), True),
-        (SourceChange(power=True), True),
-        (SourceChange(setpoint=Decimal(24)), False),
-        (SourceChange(setpoint=Decimal(19)), False),
-        (SourceChange(power=False), False),
+        (SourceChange(power=True, setpoint=Decimal(22)), OFF, True),
+        (SourceChange(power=True), OFF, True),
+        (SourceChange(setpoint=Decimal(24)), HEATING, False),
+        (SourceChange(setpoint=Decimal(19)), HEATING, False),
+        (SourceChange(power=False), HEATING, False),
+        (SourceChange(power=True), IN_AUTO, False),
+        (SourceChange(power=True, setpoint=Decimal(22)), IN_ANOTHER_MODE, False),
     ],
-    ids=['switched_on_with_a_setpoint', 'switched_on', 'raised_while_on', 'lowered_while_on', 'switched_off'],
+    ids=[
+        'switched_on_with_a_setpoint',
+        'switched_on',
+        'raised_while_on',
+        'lowered_while_on',
+        'switched_off',
+        'auto_back_to_heat',
+        'another_mode_back_to_heat',
+    ],
 )
-def test_change_starts_a_source_only_when_it_switches_it_on(change: SourceChange, starts: bool) -> None:
-    assert source_starts(change) is starts
+def test_change_starts_a_source_only_when_it_switches_it_on(
+    change: SourceChange,
+    state: ClimateUnitState,
+    starts: bool,
+) -> None:
+    assert source_starts(change, state) is starts
 
 
 @pytest.mark.parametrize(
@@ -421,8 +484,29 @@ def test_drive_of_a_source_settles_in_order_shed_hold_reading_change_and_interva
         (ON_AT_22, HEATING, False, None, True, PendingWrite(kind=PendingKind.HOLDS, at=None)),
         (ON_AT_22, OFF, False, None, False, PendingWrite(kind=PendingKind.WATCHING, at=None)),
         (ON_AT_22, OFF, False, None, True, PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=2))),
+        (ON_AT_22, COOLING, False, None, True, None),
+        (SWITCHED_OFF, COOLING, False, None, True, None),
+        (
+            ON_AT_22,
+            IN_AUTO,
+            False,
+            None,
+            True,
+            PendingWrite(kind=PendingKind.NEXT_WRITE, at=NOW + timedelta(minutes=2)),
+        ),
     ],
-    ids=['shed', 'held_by_hand', 'unavailable', 'not_driven', 'holds', 'watching', 'next_write'],
+    ids=[
+        'shed',
+        'held_by_hand',
+        'unavailable',
+        'not_driven',
+        'holds',
+        'watching',
+        'next_write',
+        'owner_mode',
+        'owner_mode_teplo_once_switched_on',
+        'taken_back_to_heat',
+    ],
 )
 def test_pending_write_of_a_source_names_what_keeps_its_target_from_the_unit(
     target: SourceTarget | None,
@@ -444,4 +528,85 @@ def test_pending_write_of_a_source_names_what_keeps_its_target_from_the_unit(
             writes_live=writes_live,
         )
         == pending
+    )
+
+
+@pytest.mark.parametrize(
+    ('min_outdoor', 'outdoor', 'locked', 'locked_out'),
+    [
+        (None, Decimal('-30.0'), True, False),
+        (Decimal('-15.0'), None, False, True),
+        (Decimal('-15.0'), Decimal('-15.5'), False, True),
+        (Decimal('-15.0'), Decimal('-15.0'), False, False),
+        (Decimal('-15.0'), Decimal('-15.0'), True, True),
+        (Decimal('-15.0'), Decimal('-14.5'), True, True),
+        (Decimal('-15.0'), Decimal('-14.5'), False, False),
+        (Decimal('-15.0'), Decimal('-14.0'), True, False),
+    ],
+    ids=[
+        'no_min_outdoor',
+        'no_outdoor_reading',
+        'below_the_limit',
+        'at_the_limit_unlocked',
+        'at_the_limit_locked',
+        'within_a_degree_locked',
+        'within_a_degree_unlocked',
+        'a_degree_above_released',
+    ],
+)
+def test_outdoor_lockout_holds_below_the_limit_and_releases_a_degree_above_it(
+    min_outdoor: Decimal | None,
+    outdoor: Decimal | None,
+    locked: bool,
+    locked_out: bool,
+) -> None:
+    assert outdoor_lockout(min_outdoor, outdoor, locked=locked) is locked_out
+
+
+def test_lockouts_are_decided_only_for_sources_with_an_outdoor_limit() -> None:
+    lockouts = source_lockouts(
+        [CONVECTOR, AIR_CONDITIONER, replace(AIR_CONDITIONER, slug='ac-bedroom')],
+        Decimal('-14.5'),
+        lambda slug: slug == 'ac-office',
+    )
+
+    assert lockouts == {'ac-office': True, 'ac-bedroom': False}
+
+
+@pytest.mark.parametrize(
+    ('state', 'target', 'drive'),
+    [
+        (COOLING, ON_AT_22, SourceDrive(change=SourceChange(), outcome=ZoneCycleOutcome.UNCHANGED, starts=False)),
+        (IN_AUTO, ON_AT_22, SourceDrive(change=SourceChange(power=True), outcome=None, starts=False)),
+        (
+            IN_ANOTHER_MODE,
+            SourceTarget(power=True, setpoint=Decimal('20.5')),
+            SourceDrive(change=SourceChange(power=True, setpoint=Decimal('20.5')), outcome=None, starts=False),
+        ),
+        (IN_AUTO, SWITCHED_OFF, SourceDrive(change=SourceChange(power=False), outcome=None, starts=False)),
+        (
+            OFF,
+            SourceTarget(power=True, setpoint=Decimal('20.5')),
+            SourceDrive(change=SourceChange(power=True, setpoint=Decimal('20.5')), outcome=None, starts=True),
+        ),
+    ],
+    ids=['cooling_left_alone', 'auto_back_to_heat', 'another_mode_back_to_heat_and_set', 'auto_off', 'off_started'],
+)
+def test_drive_of_an_air_conditioner_takes_a_mode_teplo_drives_back_to_heat_and_never_writes_cool(
+    state: ClimateUnitState,
+    target: SourceTarget,
+    drive: SourceDrive,
+) -> None:
+    assert (
+        plan_source_drive(
+            target,
+            state,
+            last_write_at=None,
+            interval=INTERVAL,
+            now=NOW,
+            shed=False,
+            hands_off=False,
+            slot_free=True,
+        )
+        == drive
     )

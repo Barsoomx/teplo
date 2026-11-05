@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 
@@ -28,6 +28,7 @@ from apps.climate.domain.room_intent import (
 )
 from apps.climate.domain.week_plan import DayPeriod
 from apps.devices.domain.kinds import DeviceKind
+from apps.devices.domain.readings import ClimateMode
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
@@ -62,12 +63,13 @@ PLUG_FAILURE_NOTES = {
     'device_config_invalid': gettext_lazy('The secrets file gives this plug a wrong address or protocol'),
     'plug_not_switchable': gettext_lazy('The driver of this plug cannot switch it'),
 }
+BROKER_UNAVAILABLE_NOTE = gettext_lazy('teplo cannot connect to the MQTT broker')
 SENSOR_FAILURE_NOTES = {
     **FAILURE_NOTES,
     'device_unavailable': gettext_lazy('No connection to the sensor'),
     'device_protocol_error': gettext_lazy('The sensor sent an unexpected reply'),
     'sensor_reading_failed': gettext_lazy('The sensor could not take a reading'),
-    'broker_unavailable': gettext_lazy('teplo cannot connect to the MQTT broker'),
+    'broker_unavailable': BROKER_UNAVAILABLE_NOTE,
 }
 PHASE_METER_FAILURE_NOTES = {
     **SENSOR_FAILURE_NOTES,
@@ -82,6 +84,8 @@ CLIMATE_UNIT_FAILURE_NOTES = {
     'secret_missing': gettext_lazy('The secrets file has no address and key for this unit'),
     'device_config_invalid': gettext_lazy('The secrets file gives this unit a wrong address or protocol'),
     'climate_unit_not_controllable': gettext_lazy('The driver of this unit cannot command it'),
+    'broker_unavailable': BROKER_UNAVAILABLE_NOTE,
+    'sensor_reading_failed': gettext_lazy('The unit reported no target'),
 }
 PRESENCE_FAILURE_NOTES = {
     **SENSOR_FAILURE_NOTES,
@@ -164,7 +168,23 @@ SOURCE_COMMANDS_FAILED = {
 }
 ANY_SOURCE_COMMAND_FAILED = gettext_lazy('%(name)s: a command failed')
 SOURCE_HEATS_UP_TO = gettext_lazy('heats up to %(setpoint)s°')
+SOURCE_MODE_STATES = {
+    ClimateMode.HEAT: SOURCE_HEATS_UP_TO,
+    ClimateMode.COOL: gettext_lazy('cools down to %(setpoint)s°'),
+    ClimateMode.AUTO: gettext_lazy('auto, %(setpoint)s°'),
+    ClimateMode.OTHER: gettext_lazy('another mode, %(setpoint)s°'),
+}
 SOURCE_IS_OFF = gettext_lazy('the unit is off')
+SOURCE_OWNER_MODE = gettext_lazy('The owner’s mode')
+SOURCE_FROST_LOCKOUT = gettext_lazy('Frost lockout: %(temperature)s° outside')
+SOURCE_LOCKED_WITHOUT_OUTDOOR = gettext_lazy('Locked out: no outdoor reading')
+MODE_WORDS = {
+    ClimateMode.HEAT.value: gettext_lazy('heating'),
+    ClimateMode.COOL.value: gettext_lazy('cooling'),
+    ClimateMode.AUTO.value: gettext_lazy('auto'),
+    ClimateMode.OTHER.value: gettext_lazy('another mode'),
+    ClimateMode.OFF.value: gettext_lazy('off'),
+}
 SOURCE_OWN_TEMPERATURE = gettext_lazy('%(temperature)s° at the unit')
 SOURCE_STATE_SEPARATOR = ' · '
 SOURCE_SETS_AT = gettext_lazy('teplo sets %(setpoint)s° no sooner than %(time)s')
@@ -680,7 +700,7 @@ def manual_change_text(entry: TimelineEntry) -> str:
 
 @register.filter
 def source_manual_change_text(entry: TimelineEntry) -> str:
-    changes = _manual_changes(entry.payload)
+    changes = _manual_changes(entry.payload, mode_words=MODE_WORDS)
     moment = _journaled_moment(entry.payload.get('until'))
     if not changes or moment is None:
         return _unknown_event(entry)
@@ -721,14 +741,28 @@ def source_state_text(source: SourceOverview) -> str:
     if source.on is None:
         return ''
 
-    parts = [
-        str(SOURCE_HEATS_UP_TO) % {'setpoint': floatformat(source.setpoint, -1)} if source.on else str(SOURCE_IS_OFF)
-    ]
+    parts = [_source_mode_text(source)]
     if source.on and source.level:
         parts.append(source.level)
     if source.temperature is not None:
         parts.append(str(SOURCE_OWN_TEMPERATURE) % {'temperature': floatformat(source.temperature, -1)})
     return SOURCE_STATE_SEPARATOR.join(parts)
+
+
+@register.filter
+def source_owner_mode(source: SourceOverview) -> str:
+    return str(SOURCE_OWNER_MODE) if source.on and source.mode is ClimateMode.COOL else ''
+
+
+@register.filter
+def source_lockout_text(source: SourceOverview) -> str:
+    if not source.locked_out:
+        return ''
+
+    if source.outdoor is None:
+        return str(SOURCE_LOCKED_WITHOUT_OUTDOOR)
+
+    return str(SOURCE_FROST_LOCKOUT) % {'temperature': floatformat(source.outdoor, -1)}
 
 
 @register.filter
@@ -1083,18 +1117,32 @@ def _hands_off_text(zone: ZoneOverview, until: datetime) -> str:
     return str(HANDS_OFF_SETPOINT) % {'setpoint': floatformat(zone.setpoint, -1), 'time': _moment_text(until)}
 
 
-def _manual_changes(payload: dict[str, object]) -> list[str]:
+def _manual_changes(payload: dict[str, object], mode_words: Mapping[str, Promise] | None = None) -> list[str]:
     changes: list[str] = []
     power = _change_pair(payload.get('power'))
     if power is not None and isinstance(power[1], bool):
         changes.append(str(MANUAL_POWER[power[1]]))
     mode = _change_pair(payload.get('mode'))
     if mode is not None:
-        changes.append(str(MANUAL_MODE) % {'old': mode[0], 'new': mode[1]})
+        old, new = (_mode_word(value, mode_words) for value in mode)
+        changes.append(str(MANUAL_MODE) % {'old': old, 'new': new})
     setpoint = _change_pair(payload.get('setpoint'))
     if setpoint is not None and all(floatformat(value, -1) for value in setpoint):
         changes.append(MANUAL_SETPOINT % {'old': _degrees(setpoint[0]), 'new': _degrees(setpoint[1])})
     return changes
+
+
+def _mode_word(value: object, words: Mapping[str, Promise] | None) -> str:
+    word = None if words is None else words.get(str(value))
+    return str(value) if word is None else str(word)
+
+
+def _source_mode_text(source: SourceOverview) -> str:
+    if not source.on:
+        return str(SOURCE_IS_OFF)
+
+    template = SOURCE_MODE_STATES.get(source.mode or ClimateMode.HEAT, SOURCE_HEATS_UP_TO)
+    return str(template) % {'setpoint': floatformat(source.setpoint, -1)}
 
 
 def _optional_bool(value: object) -> bool | None:

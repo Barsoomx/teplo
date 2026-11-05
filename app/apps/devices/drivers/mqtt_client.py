@@ -2,11 +2,21 @@ import uuid
 from typing import Protocol
 
 import structlog
-from paho.mqtt.client import CallbackAPIVersion, Client, ConnectFlags, DisconnectFlags, MQTTMessage, MQTTv311
+from paho.mqtt.client import (
+    MQTT_ERR_SUCCESS,
+    CallbackAPIVersion,
+    Client,
+    ConnectFlags,
+    DisconnectFlags,
+    MQTTMessage,
+    MQTTv311,
+    error_string,
+)
 from paho.mqtt.properties import Properties
 from paho.mqtt.reasoncodes import ReasonCode
 
 from apps.core.services.secrets import MqttSecret
+from apps.devices.domain.errors import BrokerUnavailableError
 
 logger = structlog.get_logger(__name__)
 
@@ -24,6 +34,11 @@ class MqttReceiver(Protocol):
     def connection_lost(self, detail: str) -> None: ...
 
 
+class PublishInfo(Protocol):
+    @property
+    def rc(self) -> int: ...
+
+
 class PahoClient(Protocol):
     def connect_async(self, host: str, port: int, keepalive: int) -> None: ...
 
@@ -34,6 +49,8 @@ class PahoClient(Protocol):
     def disconnect(self) -> object: ...
 
     def subscribe(self, topic: list[tuple[str, int]]) -> object: ...
+
+    def publish(self, topic: str, payload: bytes, qos: int, retain: bool) -> PublishInfo: ...
 
 
 class MqttClient:
@@ -67,6 +84,14 @@ class MqttClient:
     def stop(self) -> None:
         self._client.disconnect()
         self._client.loop_stop()
+
+    def publish(self, topic: str, payload: bytes) -> None:
+        if not self._connected:
+            raise BrokerUnavailableError('mqtt broker not connected')
+
+        info = self._client.publish(topic, payload, qos=QOS, retain=False)
+        if info.rc != MQTT_ERR_SUCCESS:
+            raise BrokerUnavailableError(f'mqtt publish failed: {error_string(info.rc)}')
 
     def on_connect(
         self,

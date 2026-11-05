@@ -76,6 +76,10 @@ IDLE_NOT_BELOW_LIMIT = (
     'The idle floor setpoint must be below the floor limit setpoint, or air mode would idle warmer than it heats'
 )
 DEVICE_UNLESS_FIREPLACE = 'A fireplace has no device, and any other heat source needs its device'
+CLIMATE_SOURCE_DRIVER_ONLY_READS_RU = (
+    'Обогревателю и кондиционеру нужен прибор, которым драйвер умеет управлять, например tuya_heater или '
+    'esphome_climate'
+)
 SOURCE_STAMP_FIELDS = ('manual_until', 'last_command_at', 'last_dry_run_at', 'commanded_power', 'commanded_setpoint')
 SOURCE_COMMANDS_POSTED = {'setpoint_bias': '0.0', 'max_setpoint': '24.0', 'min_write_minutes': '5'}
 LEARNING_URL = '/admin/climate/zonelearning/'
@@ -687,14 +691,26 @@ def test_heater_page_edits_its_commands_and_shows_what_teplo_stored_read_only(
         ),
         (
             (HeatSourceKind.HEATER, 'office', DeviceDriver.UNSUPPORTED),
-            {'device': ['Обогревателю нужен климатический прибор с управляющим драйвером, например tuya_heater']},
+            {'device': [CLIMATE_SOURCE_DRIVER_ONLY_READS_RU]},
+        ),
+        ((HeatSourceKind.AIR_CONDITIONER, 'office', DeviceDriver.ESPHOME_CLIMATE), {}),
+        (
+            (HeatSourceKind.AIR_CONDITIONER, 'office', DeviceDriver.ESPHOME_TEMPERATURE),
+            {'device': [CLIMATE_SOURCE_DRIVER_ONLY_READS_RU]},
         ),
         (
-            (HeatSourceKind.AIR_CONDITIONER, 'office', DeviceDriver.TUYA_HEATER),
-            {'kind': ['У teplo пока нет драйвера кондиционера']},
+            (HeatSourceKind.AIR_CONDITIONER, 'open-space', DeviceDriver.ESPHOME_CLIMATE),
+            {'room': ['В этой комнате тёплый пол: teplo не управляет источником тепла рядом с ним']},
         ),
     ],
-    ids=['heater', 'beside_a_floor', 'driver_only_reads', 'air_conditioner'],
+    ids=[
+        'heater',
+        'beside_a_floor',
+        'driver_only_reads',
+        'air_conditioner',
+        'air_conditioner_whose_driver_only_reads',
+        'air_conditioner_beside_a_floor',
+    ],
     indirect=['f_heater_posted'],
 )
 @pytest.mark.usefixtures('russian')

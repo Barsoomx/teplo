@@ -4,13 +4,17 @@
     {% if source.available %}{% if source.on %}<span class="chip switch-on">{% icon 'power' %}{% translate 'On' %}</span>{% else %}<span class="chip switch-off">{% icon 'power-off' %}{% translate 'Off' %}</span>{% endif %}{% endif %}
   </header>
   {% with state=source|source_state_text %}{% if state %}<p class="load-readings">{{ state }}</p>{% endif %}{% endwith %}
-  {% if not source.commands_live or source.held_until or source.shed %}
+  {% with owner_mode=source|source_owner_mode lockout=source|source_lockout_text %}
+  {% if not source.commands_live or source.held_until or source.shed or owner_mode or lockout %}
   <p class="tile-chips source-chips">
     {% if not source.commands_live %}<span class="chip observe">{% icon 'eye' %}{% translate 'Watching' %}</span>{% endif %}
+    {% if owner_mode %}<span class="chip intent">{% icon 'user' %}{{ owner_mode }}</span>{% endif %}
+    {% if lockout %}<span class="chip intent">{% icon 'thermometer' %}{{ lockout }}</span>{% endif %}
     {% if source.held_until %}<span class="chip intent">{% icon 'clock' %}{% with time=source.held_until|time:'H:i' day=source.held_until|day_word %}{% blocktranslate %}By hand until {{ time }}{% endblocktranslate %}{% if day %} {{ day }}{% endif %}{% endwith %}</span>{% endif %}
     {% if source.shed %}<span class="chip load-state load-state-shed">{% icon 'power-off' %}{% translate 'Off by load management' %}</span>{% endif %}
   </p>
   {% endif %}
+  {% endwith %}
   {% with caption=source|source_pending_text %}{% if caption %}<p class="source-pending">{{ caption }}</p>{% endif %}{% endwith %}
   {% if not source.available %}
   {% failure_note source.error_code source.error omit='device_unavailable' device='climate_unit' as note %}

@@ -39,7 +39,7 @@ def source_change(pair: ReadingPair[ClimateUnitState]) -> ManualChange | None:
     before, after = pair.before, pair.after
     change = ManualChange(
         power=None if before.on == after.on else (before.on, after.on),
-        mode=None,
+        mode=_mode_change(before, after),
         setpoint=None if before.target == after.target else (before.target, after.target),
     )
     return None if change.is_empty else change
@@ -51,3 +51,10 @@ def teplo_window[TState](pair: ReadingPair[TState], checked_at: float) -> tuple[
 
 def _consecutive[TState](pair: ReadingPair[TState]) -> bool:
     return pair.after_moment - pair.before_moment <= MANUAL_PAIR_SPAN.total_seconds()
+
+
+def _mode_change(before: ClimateUnitState, after: ClimateUnitState) -> tuple[str, str] | None:
+    if not (before.on and after.on) or before.mode is after.mode:
+        return None
+
+    return before.mode.value, after.mode.value

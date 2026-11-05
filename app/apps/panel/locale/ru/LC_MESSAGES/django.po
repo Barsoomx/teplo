@@ -1310,6 +1310,9 @@ msgstr "Файл секретов даёт этому прибору невер�
 msgid "The driver of this unit cannot command it"
 msgstr "Драйвер этого прибора не умеет им управлять"
 
+msgid "The unit reported no target"
+msgstr "Кондиционер не сообщил уставку"
+
 #, python-format
 msgid "%(name)s: changed on the unit: %(changes)s, teplo leaves it alone until %(time)s"
 msgstr "%(name)s: изменили на приборе: %(changes)s, teplo не трогает до %(time)s"
@@ -1376,6 +1379,43 @@ msgstr "греет до %(setpoint)s°"
 
 msgid "the unit is off"
 msgstr "выключен"
+
+#, python-format
+msgid "cools down to %(setpoint)s°"
+msgstr "охлаждает до %(setpoint)s°"
+
+#, python-format
+msgid "auto, %(setpoint)s°"
+msgstr "авто, %(setpoint)s°"
+
+#, python-format
+msgid "another mode, %(setpoint)s°"
+msgstr "другой режим, %(setpoint)s°"
+
+msgid "The owner’s mode"
+msgstr "Режим владельца"
+
+#, python-format
+msgid "Frost lockout: %(temperature)s° outside"
+msgstr "Мороз: на улице %(temperature)s°"
+
+msgid "Locked out: no outdoor reading"
+msgstr "Блокировка: нет показаний с улицы"
+
+msgid "heating"
+msgstr "обогрев"
+
+msgid "cooling"
+msgstr "охлаждение"
+
+msgid "auto"
+msgstr "авто"
+
+msgid "another mode"
+msgstr "другой режим"
+
+msgid "off"
+msgstr "выкл"
 
 #, python-format
 msgid "%(temperature)s° at the unit"

@@ -76,8 +76,58 @@ def _presence_sensor_factory(slug: str) -> PresenceSensor:
     return EsphomePresenceDriver(slug=slug, store=PresenceStore(unavailable_after=timedelta(minutes=10)))
 
 
+class MqttClimateUnitFactoryStub:
+    def __init__(self) -> None:
+        self._built: list[tuple[str, str]] = []
+
+    @property
+    def built(self) -> list[tuple[str, str]]:
+        return self._built
+
+    def __call__(self, slug: str, node: str) -> ControllableClimateUnit:
+        self._built.append((slug, node))
+        return ControllableClimateUnitStub(state=None)
+
+
+class MonitorOnlyDeviceRepositoryStub(DeviceRepository):
+    @staticmethod
+    def get(slug: str) -> Device:
+        return Device(
+            slug=slug,
+            name=slug,
+            kind=DeviceKind.CLIMATE_UNIT,
+            driver=DeviceDriver.ESPHOME_CLIMATE,
+            monitor_only=True,
+        )
+
+
+def _registry(
+    devices: DeviceRepository,
+    secrets: SecretsFile,
+    mqtt_factory: MqttClimateUnitFactoryStub,
+) -> DriverRegistry:
+    return DriverRegistry(
+        devices=devices,
+        secrets=secrets,
+        thermostat_factories={DeviceDriver.TUYA_THERMOSTAT: _stub_factory},
+        plug_factories={DeviceDriver.TUYA_PLUG: _stub_plug_factory},
+        switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: _stub_switchable_plug_factory},
+        temperature_sensor_factories={DeviceDriver.ESPHOME_TEMPERATURE: _temperature_sensor_factory},
+        phase_meter_factories={DeviceDriver.ESPHOME_PHASE_METER: _phase_meter_factory},
+        presence_sensor_factories={DeviceDriver.ESPHOME_PRESENCE: _presence_sensor_factory},
+        climate_unit_factories={DeviceDriver.ESPHOME_TEMPERATURE: _stub_climate_unit_factory},
+        controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: _stub_controllable_climate_unit_factory},
+        mqtt_climate_unit_factories={DeviceDriver.ESPHOME_CLIMATE: mqtt_factory},
+    )
+
+
 @pytest.fixture
-def f_registry() -> DriverRegistry:
+def f_mqtt_factory() -> MqttClimateUnitFactoryStub:
+    return MqttClimateUnitFactoryStub()
+
+
+@pytest.fixture
+def f_registry(f_mqtt_factory: MqttClimateUnitFactoryStub) -> DriverRegistry:
     DeviceFactory(slug='thermostat-kitchen')
     DeviceFactory(slug='thermostat-without-secret')
     DeviceFactory(slug='climate-bedroom', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.UNSUPPORTED)
@@ -90,6 +140,13 @@ def f_registry() -> DriverRegistry:
     DeviceFactory(slug='air-attic', kind=DeviceKind.TEMPERATURE_SENSOR, driver=DeviceDriver.UNSUPPORTED)
     DeviceFactory(slug='phase-meter', kind=DeviceKind.PHASE_METER, driver=DeviceDriver.ESPHOME_PHASE_METER)
     DeviceFactory(slug='pc-office', kind=DeviceKind.PRESENCE_SENSOR, driver=DeviceDriver.ESPHOME_PRESENCE)
+    DeviceFactory(slug='ac-bedroom', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.ESPHOME_CLIMATE)
+    DeviceFactory(
+        slug='ac-office',
+        kind=DeviceKind.CLIMATE_UNIT,
+        driver=DeviceDriver.ESPHOME_CLIMATE,
+        node='air-office',
+    )
     secrets = SecretsFile(
         devices={
             'thermostat-kitchen': SECRET,
@@ -102,18 +159,12 @@ def f_registry() -> DriverRegistry:
         },
         panel_password=None,
     )
-    return DriverRegistry(
-        devices=DeviceRepository(),
-        secrets=secrets,
-        thermostat_factories={DeviceDriver.TUYA_THERMOSTAT: _stub_factory},
-        plug_factories={DeviceDriver.TUYA_PLUG: _stub_plug_factory},
-        switchable_plug_factories={DeviceDriver.TUYA_SWITCHABLE_PLUG: _stub_switchable_plug_factory},
-        temperature_sensor_factories={DeviceDriver.ESPHOME_TEMPERATURE: _temperature_sensor_factory},
-        phase_meter_factories={DeviceDriver.ESPHOME_PHASE_METER: _phase_meter_factory},
-        presence_sensor_factories={DeviceDriver.ESPHOME_PRESENCE: _presence_sensor_factory},
-        climate_unit_factories={DeviceDriver.ESPHOME_TEMPERATURE: _stub_climate_unit_factory},
-        controllable_climate_unit_factories={DeviceDriver.TUYA_HEATER: _stub_controllable_climate_unit_factory},
-    )
+    return _registry(DeviceRepository(), secrets, f_mqtt_factory)
+
+
+@pytest.fixture
+def f_registry_of_a_monitor_only_air_conditioner(f_mqtt_factory: MqttClimateUnitFactoryStub) -> DriverRegistry:
+    return _registry(MonitorOnlyDeviceRepositoryStub(), SecretsFile(devices={}, panel_password=None), f_mqtt_factory)
 
 
 @pytest.fixture
@@ -323,3 +374,32 @@ def test_controllable_climate_unit_refuses_a_monitor_only_device(
 def test_climate_unit_with_an_unsupported_driver_raises(f_registry: DriverRegistry) -> None:
     with pytest.raises(DriverNotImplementedError):
         f_registry.climate_unit('climate-bedroom')
+
+
+def test_air_conditioner_is_built_once_on_its_node_without_a_secret_and_polled_through_its_commanding_driver(
+    f_registry: DriverRegistry,
+    f_mqtt_factory: MqttClimateUnitFactoryStub,
+) -> None:
+    commanded = f_registry.controllable_climate_unit('ac-bedroom')
+    polled = f_registry.climate_unit('ac-bedroom')
+    office = f_registry.climate_unit('ac-office')
+
+    assert (
+        type(commanded),
+        polled is commanded,
+        f_registry.controllable_climate_unit('ac-office') is office,
+        f_mqtt_factory.built,
+    ) == (ControllableClimateUnitStub, True, True, [('ac-bedroom', 'ac-bedroom'), ('ac-office', 'air-office')])
+
+
+def test_air_conditioner_is_not_commanded_while_monitor_only(
+    f_registry_of_a_monitor_only_air_conditioner: DriverRegistry,
+    f_mqtt_factory: MqttClimateUnitFactoryStub,
+) -> None:
+    with pytest.raises(ClimateUnitNotControllableError) as raised:
+        f_registry_of_a_monitor_only_air_conditioner.controllable_climate_unit('ac-bedroom')
+
+    assert (raised.value.detail, f_mqtt_factory.built) == (
+        'climate unit ac-bedroom cannot be controlled: it is monitor-only',
+        [],
+    )

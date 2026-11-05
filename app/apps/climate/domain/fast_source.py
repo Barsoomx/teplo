@@ -1,4 +1,4 @@
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
@@ -12,9 +12,12 @@ from apps.devices.domain.readings import ClimateMode, ClimateUnitState
 SOURCE_START_BELOW = Decimal('0.3')
 SOURCE_STOP_ABOVE = Decimal('1.0')
 SOURCE_SETPOINT_MIN = Decimal(5)
+SETPOINT_MINIMUMS = {HeatSourceKind.AIR_CONDITIONER: Decimal(17)}
 HEATER_STEP = Decimal(1)
 SETPOINT_STEPS = {HeatSourceKind.HEATER: HEATER_STEP, HeatSourceKind.AIR_CONDITIONER: Decimal('0.5')}
-TEPLO_MODES = frozenset({ClimateMode.OFF, ClimateMode.HEAT})
+OWNER_MODES = frozenset({ClimateMode.COOL})
+OUTDOOR_RELEASE = Decimal('1.0')
+OUTDOOR_READING_FOR = timedelta(hours=1)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -50,7 +53,29 @@ def source_setpoint(target: Decimal, source: SourceSettings) -> Decimal:
     step = SETPOINT_STEPS.get(source.kind, HEATER_STEP)
     wanted = _on_step(target + source.setpoint_bias, step, ROUND_HALF_UP)
     highest = _on_step(source.max_setpoint, step, ROUND_DOWN)
-    return max(SOURCE_SETPOINT_MIN, min(wanted, highest))
+    return max(SETPOINT_MINIMUMS.get(source.kind, SOURCE_SETPOINT_MIN), min(wanted, highest))
+
+
+def outdoor_lockout(min_outdoor: Decimal | None, outdoor: Decimal | None, *, locked: bool) -> bool:
+    if min_outdoor is None:
+        return False
+
+    if outdoor is None or outdoor < min_outdoor:
+        return True
+
+    return locked and outdoor < min_outdoor + OUTDOOR_RELEASE
+
+
+def source_lockouts(
+    sources: Sequence[SourceSettings],
+    outdoor: Decimal | None,
+    locked: Callable[[str], bool],
+) -> dict[str, bool]:
+    return {
+        source.slug: outdoor_lockout(source.min_outdoor, outdoor, locked=locked(source.slug))
+        for source in sources
+        if source.min_outdoor is not None
+    }
 
 
 def decide_source_power(on: bool, air: Decimal | None, target: Decimal) -> bool:
@@ -72,16 +97,16 @@ def room_targets(
     states: Mapping[str, ClimateUnitState | None],
     *,
     shed: frozenset[str],
+    locked_out: frozenset[str],
     air: Decimal | None,
     target: Decimal,
-    outdoor: Decimal | None,
     now: datetime,
 ) -> dict[str, SourceTarget | None]:
     if room_held_by_hand(sources, now):
         return {source.slug: None for source in sources}
 
     ordered = sorted(sources, key=lambda source: source.priority)
-    pick = next((source for source in ordered if _pickable(source, states.get(source.slug), shed, outdoor)), None)
+    pick = next((source for source in ordered if _pickable(source, states.get(source.slug), shed, locked_out)), None)
     return {
         source.slug: _target(source, states.get(source.slug), pick=pick, shed=shed, air=air, target=target)
         for source in ordered
@@ -89,18 +114,18 @@ def room_targets(
 
 
 def plan_source_change(target: SourceTarget, state: ClimateUnitState) -> SourceChange:
-    if state.mode not in TEPLO_MODES:
+    if state.mode in OWNER_MODES:
         return SourceChange()
 
     if not target.power:
         return SourceChange(power=False) if state.on else SourceChange()
 
     setpoint = None if target.setpoint is None or target.setpoint == state.target else target.setpoint
-    return SourceChange(power=None if state.on else True, setpoint=setpoint)
+    return SourceChange(power=None if state.mode is ClimateMode.HEAT else True, setpoint=setpoint)
 
 
-def source_starts(change: SourceChange) -> bool:
-    return change.power is True
+def source_starts(change: SourceChange, state: ClimateUnitState) -> bool:
+    return change.power is True and not state.on
 
 
 def plan_source_drive(
@@ -130,7 +155,7 @@ def plan_source_drive(
     if not slot_free or not write_allowed(last_write_at, now, interval):
         return _settled(ZoneCycleOutcome.THROTTLED)
 
-    return SourceDrive(change=change, outcome=None, starts=source_starts(change))
+    return SourceDrive(change=change, outcome=None, starts=source_starts(change, state))
 
 
 def pending_source_write(
@@ -153,7 +178,7 @@ def pending_source_write(
     if state is None:
         return PendingWrite(kind=PendingKind.UNREACHED, at=None)
 
-    if target is None:
+    if target is None or state.mode in OWNER_MODES:
         return None
 
     if plan_source_change(target, state).is_empty:
@@ -169,12 +194,9 @@ def _pickable(
     source: SourceSettings,
     state: ClimateUnitState | None,
     shed: frozenset[str],
-    outdoor: Decimal | None,
+    locked_out: frozenset[str],
 ) -> bool:
-    if state is None or state.mode not in TEPLO_MODES or source.slug in shed:
-        return False
-
-    return source.min_outdoor is None or (outdoor is not None and outdoor >= source.min_outdoor)
+    return state is not None and state.mode not in OWNER_MODES and source.slug not in shed | locked_out
 
 
 def _target(

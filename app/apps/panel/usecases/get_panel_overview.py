@@ -27,6 +27,7 @@ from apps.climate.services.source_status import SourceStatusReader
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.devices.domain.device import DeviceSettings
 from apps.devices.domain.kinds import DeviceKind
+from apps.devices.domain.readings import ClimateMode
 from apps.devices.drivers.esphome_protocol import NODE_PREFIX
 from apps.devices.repositories.device import DeviceRepository
 from apps.devices.services.presence_store import PresenceStore, presence_store
@@ -181,6 +182,9 @@ class SourceOverview:
     held_until: datetime | None = None
     shed: bool = False
     pending: PendingWrite | None = None
+    mode: ClimateMode | None = None
+    locked_out: bool = False
+    outdoor: Decimal | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -733,6 +737,9 @@ def _commanded_source(source: SourceStatus) -> SourceOverview:
         held_until=source.held_until,
         shed=source.shed,
         pending=source.pending,
+        mode=source.mode,
+        locked_out=source.locked_out,
+        outdoor=source.outdoor,
     )
 
 
