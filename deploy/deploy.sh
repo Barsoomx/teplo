@@ -20,7 +20,9 @@ $ROOT/venv/bin/python -m pip install --no-cache-dir --no-deps -r requirements.tx
 set -a; . /opt/etc/teplo/teplo.env; set +a
 $ROOT/venv/bin/python app/manage.py collectstatic --noinput
 $ROOT/venv/bin/python app/manage.py migrate --noinput
-ln -sfn $RELEASE $ROOT/current
-/opt/etc/init.d/S90teplo restart
+if ! { ln -sfn $RELEASE $ROOT/current && /opt/etc/init.d/S90teplo restart; }; then
+    echo 'migrated, but the switch to $SHA or the restart failed, so the previous release may still run on the new schema; run: ln -sfn $RELEASE $ROOT/current && /opt/etc/init.d/S90teplo restart' >&2
+    exit 1
+fi
 $ROOT/venv/bin/python app/manage.py ensure_panel_user"
 echo "deployed $SHA"
