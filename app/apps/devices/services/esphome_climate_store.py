@@ -23,6 +23,7 @@ class _ModeReport:
     word: ClimateModeWord | None
     read_at: datetime
     recorded_at: float
+    report: int
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -30,6 +31,7 @@ class _TargetReport:
     target: Decimal
     read_at: datetime
     recorded_at: float
+    report: int
 
 
 class EsphomeClimateStore:
@@ -39,6 +41,7 @@ class EsphomeClimateStore:
         self._targets: dict[str, _TargetReport] = {}
         self._room_temperatures: dict[str, Decimal | None] = {}
         self._failures: dict[str, tuple[str, str]] = {}
+        self._reports = 0
         self._changed = threading.Condition()
 
     def record_mode(
@@ -50,12 +53,25 @@ class EsphomeClimateStore:
         word: ClimateModeWord | None = None,
     ) -> None:
         with self._changed:
-            self._modes[slug] = _ModeReport(mode=mode, word=word, read_at=read_at, recorded_at=self._clock())
+            self._reports += 1
+            self._modes[slug] = _ModeReport(
+                mode=mode,
+                word=word,
+                read_at=read_at,
+                recorded_at=self._clock(),
+                report=self._reports,
+            )
             self._recorded(slug)
 
     def record_target(self, slug: str, target: Decimal, read_at: datetime) -> None:
         with self._changed:
-            self._targets[slug] = _TargetReport(target=target, read_at=read_at, recorded_at=self._clock())
+            self._reports += 1
+            self._targets[slug] = _TargetReport(
+                target=target,
+                read_at=read_at,
+                recorded_at=self._clock(),
+                report=self._reports,
+            )
             self._recorded(slug)
 
     def record_room_temperature(self, slug: str, temperature: Decimal | None) -> None:
@@ -85,15 +101,31 @@ class EsphomeClimateStore:
             error=error,
         )
 
-    def wait_for(self, slug: str, accepts: Callable[[ClimateUnitState], bool], timeout: float) -> bool:
+    def report_count(self) -> int:
         with self._changed:
-            return self._changed.wait_for(lambda: self._accepted(slug, accepts), timeout=timeout)
+            return self._reports
+
+    def wait_for(
+        self,
+        slug: str,
+        accepts: Callable[[ClimateUnitState], bool],
+        *,
+        reported_after: int,
+        timeout: float,
+    ) -> bool:
+        with self._changed:
+            return self._changed.wait_for(lambda: self._accepted(slug, accepts, reported_after), timeout=timeout)
 
     def _recorded(self, slug: str) -> None:
         self._failures.pop(slug, None)
         self._changed.notify_all()
 
-    def _accepted(self, slug: str, accepts: Callable[[ClimateUnitState], bool]) -> bool:
+    def _accepted(self, slug: str, accepts: Callable[[ClimateUnitState], bool], reported_after: int) -> bool:
+        mode = self._modes.get(slug)
+        target = self._targets.get(slug)
+        if mode is None or target is None or min(mode.report, target.report) <= reported_after:
+            return False
+
         state = self._state(slug)
         return state is not None and accepts(state)
 

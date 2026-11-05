@@ -45,6 +45,17 @@ def f_reported_store(f_store: EsphomeClimateStore, clock: MonotonicClockStub) ->
 
 
 @pytest.fixture
+def f_reports_at_the_command(request: pytest.FixtureRequest, f_reported_store: EsphomeClimateStore) -> int:
+    reports = f_reported_store.report_count()
+    mode, target = request.param
+    if mode is not None:
+        f_reported_store.record_mode('ac-bedroom', mode, NOW + timedelta(seconds=30))
+    if target is not None:
+        f_reported_store.record_target('ac-bedroom', target, NOW + timedelta(seconds=30))
+    return reports
+
+
+@pytest.fixture
 def f_failed_store(f_reported_store: EsphomeClimateStore) -> EsphomeClimateStore:
     f_reported_store.record_failure('ac-bedroom', error_code='device_unavailable', error='the node went offline')
     return f_reported_store
@@ -130,18 +141,36 @@ def test_cleared_failure_is_only_the_one_of_its_code(f_failed_store: EsphomeClim
 
 
 @pytest.mark.parametrize(
-    ('slug', 'mode', 'accepted'),
+    ('f_reports_at_the_command', 'slug', 'accepted'),
     [
-        ('ac-bedroom', ClimateMode.HEAT, True),
-        ('ac-bedroom', ClimateMode.OFF, False),
-        ('ac-office', ClimateMode.HEAT, False),
+        ((ClimateMode.HEAT, Decimal('20.5')), 'ac-bedroom', True),
+        ((None, None), 'ac-bedroom', False),
+        ((ClimateMode.HEAT, None), 'ac-bedroom', False),
+        ((None, Decimal('20.5')), 'ac-bedroom', False),
+        ((ClimateMode.OFF, Decimal('20.5')), 'ac-bedroom', False),
+        ((ClimateMode.HEAT, Decimal('20.5')), 'ac-office', False),
     ],
-    ids=['already_there', 'not_there_within_the_timeout', 'never_reported'],
+    ids=[
+        'mode_and_target_after_the_command',
+        'state_from_before_the_command',
+        'only_the_mode_after_the_command',
+        'only_the_target_after_the_command',
+        'another_state_after_the_command',
+        'never_reported',
+    ],
+    indirect=['f_reports_at_the_command'],
 )
-def test_wait_for_answers_at_once_when_the_state_is_there_and_gives_up_at_its_timeout(
+def test_wait_for_takes_only_a_state_whose_mode_and_target_both_arrived_after_the_command(
     f_reported_store: EsphomeClimateStore,
+    f_reports_at_the_command: int,
     slug: str,
-    mode: ClimateMode,
     accepted: bool,
 ) -> None:
-    assert f_reported_store.wait_for(slug, lambda state: state.mode is mode, timeout=0) is accepted
+    echoed = f_reported_store.wait_for(
+        slug,
+        lambda state: state.mode is ClimateMode.HEAT,
+        reported_after=f_reports_at_the_command,
+        timeout=0,
+    )
+
+    assert echoed is accepted

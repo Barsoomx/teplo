@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -9,7 +9,8 @@ from apps.core.stubs import MonotonicClockStub
 from apps.devices.domain.errors import BrokerUnavailableError
 from apps.devices.domain.readings import ClimateMode, ClimateUnitState
 from apps.devices.drivers.esphome_climate import EsphomeClimateDriver
-from apps.devices.drivers.esphome_messages import EsphomeClimateSink
+from apps.devices.drivers.esphome_messages import EsphomeClimateSink, EsphomeMessageHandler, NodeDevice
+from apps.devices.drivers.esphome_protocol import MODE, TARGET_TEMPERATURE
 from apps.devices.services.esphome_climate_store import EsphomeClimateStore
 from apps.devices.stubs import CommandPublisherStub
 
@@ -24,13 +25,36 @@ OFF_AT_20 = ClimateUnitState(
 )
 
 
+def _node(store: EsphomeClimateStore) -> EsphomeMessageHandler:
+    return EsphomeMessageHandler(
+        nodes={'ac-bedroom': (NodeDevice(slug='ac-bedroom', climate=EsphomeClimateSink(store=store)),)},
+        clock=lambda: NOW,
+    )
+
+
+def _publish_state(node: EsphomeMessageHandler, state: Mapping[str, bytes]) -> None:
+    for attribute, payload in state.items():
+        node.receive(f'teplo/teplo-ac-bedroom/climate/air_conditioner/{attribute}/state', payload, retained=False)
+
+
 def _node_echo(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
-    sink = EsphomeClimateSink(store=store)
+    node = _node(store)
+    state = {MODE: b'off', TARGET_TEMPERATURE: b'20.0'}
 
     def echo(topic: str, payload: bytes) -> None:
-        sink.record_climate('ac-bedroom', topic.split('/')[-2], payload, NOW)
+        state[topic.split('/')[-2]] = payload
+        _publish_state(node, state)
 
     return echo
+
+
+def _node_booting(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
+    node = _node(store)
+
+    def boot(topic: str, payload: bytes) -> None:  # noqa: ARG001
+        _publish_state(node, {MODE: b'off', TARGET_TEMPERATURE: b'nan'})
+
+    return boot
 
 
 @pytest.fixture
@@ -55,6 +79,11 @@ def f_echoing_publisher(store: EsphomeClimateStore) -> CommandPublisherStub:
 @pytest.fixture
 def f_silent_publisher() -> CommandPublisherStub:
     return CommandPublisherStub()
+
+
+@pytest.fixture
+def booting_publisher(store: EsphomeClimateStore) -> CommandPublisherStub:
+    return CommandPublisherStub(echo=_node_booting(store))
 
 
 @pytest.fixture
@@ -106,6 +135,21 @@ def f_stale_driver(f_driver: EsphomeClimateDriver, clock: MonotonicClockStub) ->
 def f_heating_driver(f_driver: EsphomeClimateDriver, store: EsphomeClimateStore) -> EsphomeClimateDriver:
     store.record_mode('ac-bedroom', ClimateMode.HEAT, NOW)
     return f_driver
+
+
+@pytest.fixture
+def f_driver_of_a_heating_unit_whose_node_reboots(
+    store: EsphomeClimateStore,
+    booting_publisher: CommandPublisherStub,
+) -> EsphomeClimateDriver:
+    store.record_mode('ac-bedroom', ClimateMode.HEAT, NOW)
+    return EsphomeClimateDriver(
+        slug='ac-bedroom',
+        node='ac-bedroom',
+        store=store,
+        publisher=booting_publisher,
+        echo_timeout=0,
+    )
 
 
 @pytest.fixture
@@ -175,6 +219,29 @@ def test_switch_off_sends_off_and_succeeds_on_the_echo(
         [(MODE_COMMAND, b'off')],
         ClimateMode.OFF,
     )
+
+
+def test_switch_off_without_an_echo_fails_though_the_unit_last_reported_off(
+    f_silent_driver: EsphomeClimateDriver,
+    f_silent_publisher: CommandPublisherStub,
+) -> None:
+    with pytest.raises(DomainError) as raised:
+        f_silent_driver.set_power(False)
+
+    assert (f_silent_publisher.published, raised.value.error_code, raised.value.detail) == (
+        [(MODE_COMMAND, b'off')],
+        'device_protocol_error',
+        'the unit did not switch off',
+    )
+
+
+def test_switch_off_fails_on_the_off_and_nan_a_node_reports_as_it_boots(
+    f_driver_of_a_heating_unit_whose_node_reboots: EsphomeClimateDriver,
+) -> None:
+    with pytest.raises(DomainError) as raised:
+        f_driver_of_a_heating_unit_whose_node_reboots.set_power(False)
+
+    assert (raised.value.error_code, raised.value.detail) == ('device_protocol_error', 'the unit did not switch off')
 
 
 def test_switch_on_without_an_echo_fails(

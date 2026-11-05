@@ -72,5 +72,6 @@ class EsphomeClimateDriver:
 
     def _command(self, attribute: str, payload: bytes, echoes: Callable[[ClimateUnitState], bool]) -> bool:
         with self._lock:
+            reported = self._store.report_count()
             self._publisher.publish(climate_command_topic(self._node, attribute), payload)
-            return self._store.wait_for(self._slug, echoes, timeout=self._echo_timeout)
+            return self._store.wait_for(self._slug, echoes, reported_after=reported, timeout=self._echo_timeout)
