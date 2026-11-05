@@ -1,4 +1,5 @@
 import threading
+import time
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
@@ -14,17 +15,20 @@ POWER_DP = 1
 SETPOINT_DP = 3
 TEMPERATURE_DP = 4
 LEVEL_DP = 7
+CONFIRM_READS = 3
+CONFIRM_PAUSE = 0.5
 
 
 class TuyaHeaterDriver:
-    def __init__(self, client: TuyaClient, clock: Callable[[], datetime]) -> None:
+    def __init__(self, client: TuyaClient, clock: Callable[[], datetime], pause: Callable[[float], None]) -> None:
         self._client = client
         self._clock = clock
+        self._pause = pause
         self._lock = threading.Lock()
 
     @classmethod
     def init(cls, secret: DeviceSecret) -> 'TuyaHeaterDriver':
-        return cls(client=tuya_client(secret), clock=timezone.now)
+        return cls(client=tuya_client(secret), clock=timezone.now, pause=time.sleep)
 
     def read_state(self) -> ClimateUnitState:
         try:
@@ -49,8 +53,12 @@ class TuyaHeaterDriver:
         if _echoes(self._write(SETPOINT_DP, degrees), SETPOINT_DP, degrees):
             return
 
-        if self.read_state().target != setpoint:
-            raise DeviceProtocolError(f'the heater did not take the setpoint {degrees}')
+        for _ in range(CONFIRM_READS):
+            self._pause(CONFIRM_PAUSE)
+            if self.read_state().target == setpoint:
+                return
+
+        raise DeviceProtocolError(f'the heater did not take the setpoint {degrees}')
 
     def _state(self, payload: TuyaPayload) -> ClimateUnitState:
         dps = payload.get('dps')
