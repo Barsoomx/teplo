@@ -22,18 +22,25 @@ Target: Keenetic/Netcraze with Entware on USB storage, SSH to Entware on port 22
 sh deploy/deploy.sh
 ```
 
-The script installs pinned requirements into `/opt/share/teplo/venv` (Entware provides `cryptography`), collects static files and creates or updates the `owner` panel account from `secrets.toml`; only then does it migrate, switch `/opt/share/teplo/current` and restart the service. The panel is at `http://192.168.1.1:8088/`.
+The script installs pinned requirements into `/opt/share/teplo/venv` (Entware provides `cryptography`) and collects static files; only then does it migrate, switch `/opt/share/teplo/current` and restart the service, and last it creates or updates the `owner` panel account from `secrets.toml`. The panel is at `http://192.168.1.1:8088/`.
 
 ```mermaid
 flowchart LR
     archive["git archive HEAD<br/>app, deploy"] -->|ssh| release["releases/commit"]
-    release --> prepare["pip install --no-deps<br/>collectstatic<br/>owner account"]
+    release --> prepare["pip install --no-deps<br/>collectstatic"]
     prepare --> migrate["migrate"]
     migrate --> switch["current → releases/commit"]
     switch --> restart["S90teplo restart"]
+    restart --> owner["owner account"]
 ```
 
-A failed step stops the script before `current` moves, so the running release stays in place. The steps that cannot change the schema come first: `pip install`, `collectstatic`, which opens no database, and the owner account, which writes only Django's user table, there since the first install. So a failure in any of them leaves the running release on the schema it knows. `migrate` comes last, and the switch of `current` and the restart follow it in the same ssh command, so only a failure of `migrate` itself leaves the running release on the new schema for longer than the seconds until the restart.
+A failed step stops the script, which then never prints `deployed <commit>`. The steps that cannot change the schema come first: `pip install` and `collectstatic`, which opens no database, so a failure in either leaves the running release in place, on the schema it knows. `migrate` comes next, and the switch of `current` and the restart follow it in the same ssh command, so only a failure of `migrate` itself leaves the running release on the new schema for longer than the seconds until the restart. The owner account comes last, as it writes Django's user table, which on a first install only that `migrate` creates. A failure there, such as `secret missing: panel.password` when the `[panel]` table of `secrets.toml` has no `password`, comes after the restart: the new release runs, and only the account is not created or its password not changed. Fix the cause, then create or update the account again:
+
+```sh
+ssh -p 222 root@192.168.1.1 'set -a; . /opt/etc/teplo/teplo.env; set +a; /opt/share/teplo/venv/bin/python /opt/share/teplo/current/app/manage.py ensure_panel_user'
+```
+
+It prints `panel user owner created`, or `panel user owner updated` when the account exists.
 
 Between `migrate` and the restart the running release works on the new schema. The release that brings the office convector adds a load of kind `source`, which the releases before it do not know: until the restart, a few seconds, their settings page and the save of the shedding order fail on it, while the dashboard, the heating cycle and load management run on. Open `/settings/` once the new release runs, and never start an older release on that schema before undoing its migrations (see [Roll back](#roll-back)).
 

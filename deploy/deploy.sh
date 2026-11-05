@@ -19,8 +19,8 @@ cd $RELEASE
 $ROOT/venv/bin/python -m pip install --no-cache-dir --no-deps -r requirements.txt
 set -a; . /opt/etc/teplo/teplo.env; set +a
 $ROOT/venv/bin/python app/manage.py collectstatic --noinput
-$ROOT/venv/bin/python app/manage.py ensure_panel_user
 $ROOT/venv/bin/python app/manage.py migrate --noinput
 ln -sfn $RELEASE $ROOT/current
-/opt/etc/init.d/S90teplo restart"
+/opt/etc/init.d/S90teplo restart
+$ROOT/venv/bin/python app/manage.py ensure_panel_user"
 echo "deployed $SHA"

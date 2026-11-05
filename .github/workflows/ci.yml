@@ -228,6 +228,21 @@ jobs:
           poetry run python app/manage.py shell -c "from apps.devices.models import Device; Device.objects.filter(slug='ac-bedroom').delete()"
           poetry run python app/manage.py migrate devices 0005 --noinput
           poetry run python app/manage.py migrate --noinput
+      - name: Deploy steps run in their order on an empty database
+        env:
+          DJANGO_SETTINGS_MODULE: settings.settings
+          DJANGO_SECRET_KEY: ci-deploy-only
+          TEPLO_SITE: barsoom
+          TEPLO_DB_PATH: /tmp/teplo-first-deploy.sqlite3
+          TEPLO_STATIC_ROOT: /tmp/teplo-first-deploy-static
+          TEPLO_SECRETS_FILE: /tmp/teplo-first-deploy-secrets.toml
+        run: |
+          printf "[panel]\npassword = 'ci-deploy-only'\n" > "$TEPLO_SECRETS_FILE"
+          sed -n 's|^\$ROOT/venv/bin/python app/manage\.py \([^"]*\)"\{0,1\}$|poetry run python app/manage.py \1|p' deploy/deploy.sh > /tmp/deploy-steps.sh
+          cat /tmp/deploy-steps.sh
+          test "$(wc -l < /tmp/deploy-steps.sh)" -eq 3
+          sh -eu /tmp/deploy-steps.sh
+          poetry run python app/manage.py shell -c "from django.contrib.auth.models import User; owner = User.objects.get(username='owner'); assert (owner.is_staff, owner.is_superuser, owner.check_password('ci-deploy-only')) == (True, True, True)"
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
