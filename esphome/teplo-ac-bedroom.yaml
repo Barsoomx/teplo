@@ -27,7 +27,13 @@ wifi:
   output_power: 15dB
 
 # The page can drive the air conditioner, so it asks for a login; the sensor nodes only show readings.
+# Instead of the generic entity list it serves a phone remote in Russian, built into the firmware, so it works without
+# the internet: web/ac_remote.js drives the REST API and follows /events.
 web_server:
+  local: false
+  js_url: ''
+  js_include: web/ac_remote.js
+  css_include: web/ac_remote.css
   auth:
     type: digest
     username: !secret web_username
