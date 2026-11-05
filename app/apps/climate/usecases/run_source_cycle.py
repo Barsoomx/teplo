@@ -248,7 +248,10 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         )
         for source in sources:
             target = would[source.slug]
-            if target is None or target == targets[source.slug]:
+            if target is None:
+                continue
+
+            if target == targets[source.slug]:
                 self._book.forget_occupancy_journaled(source.slug)
                 continue
 

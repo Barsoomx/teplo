@@ -257,6 +257,12 @@ class SourceLoadGateStub:
     def started(self) -> list[str]:
         return self._started
 
+    def hold(self, source: str) -> None:
+        self._held = self._held | {source}
+
+    def release(self, source: str) -> None:
+        self._held = self._held - {source}
+
     def held_sources(self) -> frozenset[str]:
         return self._held
 

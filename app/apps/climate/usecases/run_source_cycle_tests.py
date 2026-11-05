@@ -119,6 +119,7 @@ GRANTED = {
 OFFICE_FOLLOWING = replace(OFFICE, follows_occupancy=True)
 WINDOW_ENDS = datetime(2026, 11, 4, 23, 45, tzinfo=MOSCOW)
 OVERRIDE_ENDS = datetime(2026, 11, 4, 17, 30, tzinfo=MOSCOW)
+HOLD_ENDS = datetime(2026, 11, 4, 16, 0, tzinfo=MOSCOW)
 OVERRIDDEN_OFFICE = replace(
     OFFICE,
     override=RoomOverride(target=Decimal('23.0'), until=OVERRIDE_ENDS, source=CommandSource.PANEL),
@@ -330,6 +331,17 @@ def f_use_case_that_followed_a_vacant_office(
 def f_use_case_that_journaled_the_occupancy(f_use_case: RunSourceCycleUseCase) -> RunSourceCycleUseCase:
     f_use_case.execute(_cycle(COMFORT_AT))
     return f_use_case
+
+
+@pytest.fixture
+def f_use_case_that_journaled_the_occupancy_before_a_shed(
+    f_use_case_that_journaled_the_occupancy: RunSourceCycleUseCase,
+    f_gate: SourceLoadGateStub,
+) -> RunSourceCycleUseCase:
+    f_gate.hold('convector-office')
+    f_use_case_that_journaled_the_occupancy.execute(_cycle(COMFORT_AT + timedelta(minutes=10)))
+    f_gate.release('convector-office')
+    return f_use_case_that_journaled_the_occupancy
 
 
 def test_watched_source_journals_what_it_would_write_after_stamping_it(
@@ -811,6 +823,36 @@ def test_room_held_by_hand_journals_nothing_for_occupancy(
         RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.HANDS_OFF}),
         [],
     )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'occupancy'),
+    [(([replace(WATCHED_CONVECTOR, manual_until=HOLD_ENDS)], {}), {'office': Occupancy.VACANT})],
+    indirect=True,
+)
+def test_hold_by_hand_holds_back_the_occupancy_entry_and_it_does_not_repeat_after_the_hold(
+    f_use_case_that_journaled_the_occupancy: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    held = f_use_case_that_journaled_the_occupancy.execute(_cycle(HOLD_ENDS - timedelta(hours=1)))
+    f_use_case_that_journaled_the_occupancy.execute(_cycle(HOLD_ENDS))
+
+    assert (held, [event for event in f_events if isinstance(event, OccupancyDryRun)]) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.HANDS_OFF}),
+        [_by_occupancy(Occupancy.VACANT, Decimal(19), COMFORT_AT)],
+    )
+
+
+@pytest.mark.parametrize('occupancy', [{'office': Occupancy.VACANT}], indirect=True)
+def test_shed_holds_back_the_occupancy_entry_and_it_does_not_repeat_after_the_shed(
+    f_use_case_that_journaled_the_occupancy_before_a_shed: RunSourceCycleUseCase,
+    f_events: list[DomainEvent],
+) -> None:
+    f_use_case_that_journaled_the_occupancy_before_a_shed.execute(_cycle(COMFORT_AT + timedelta(minutes=20)))
+
+    assert [event for event in f_events if isinstance(event, OccupancyDryRun)] == [
+        _by_occupancy(Occupancy.VACANT, Decimal(19), COMFORT_AT),
+    ]
 
 
 @pytest.mark.parametrize(
