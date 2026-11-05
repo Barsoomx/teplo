@@ -401,7 +401,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             self._sources.mark_commanded(source.slug, now, power=target.power, setpoint=target.setpoint)
         try:
             unit = self._provider.controllable_climate_unit(source.device_slug)
-            written = self._writes.write(reservation, partial(_apply, unit, change))
+            written = self._writes.write(reservation, partial(_apply, source, unit, change))
         except DomainError as error:
             logger.warning(
                 'source_command_failed',
@@ -464,18 +464,29 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         return snapshot.state.temperature
 
 
-def _apply(unit: ControllableClimateUnit, change: SourceChange) -> None:
-    if change.power is not None:
-        unit.set_power(change.power)
-    if change.setpoint is None:
-        return
-
+def _apply(source: SourceSettings, unit: ControllableClimateUnit, change: SourceChange) -> None:
     try:
-        unit.set_setpoint(change.setpoint)
+        if change.power is not None:
+            unit.set_power(change.power)
+        if change.setpoint is not None:
+            unit.set_setpoint(change.setpoint)
     except DomainError:
         if change.power is True:
-            unit.set_power(False)
+            _switch_off(source, unit)
         raise
+
+
+def _switch_off(source: SourceSettings, unit: ControllableClimateUnit) -> None:
+    try:
+        unit.set_power(False)
+    except DomainError as error:
+        logger.warning(
+            'source_switch_off_failed',
+            source=source.slug,
+            device=source.device_slug,
+            error_code=error.error_code,
+            detail=error.detail,
+        )
 
 
 def _by_room(sources: Sequence[SourceSettings]) -> dict[str, list[SourceSettings]]:

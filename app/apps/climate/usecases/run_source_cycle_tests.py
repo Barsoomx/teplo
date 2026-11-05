@@ -461,7 +461,7 @@ def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_after_its
     [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, (DeviceUnavailableError('timeout'),))],
     indirect=True,
 )
-def test_source_that_cannot_be_switched_on_gets_no_setpoint(
+def test_source_that_cannot_be_switched_on_gets_no_setpoint_and_is_switched_off(
     f_use_case: RunSourceCycleUseCase,
     f_unit: ControllableClimateUnitStub,
     f_events: list[DomainEvent],
@@ -470,7 +470,7 @@ def test_source_that_cannot_be_switched_on_gets_no_setpoint(
 
     assert (output, f_unit.commands, f_events) == (
         RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.FAILED}),
-        [],
+        [('power', False)],
         [
             SourceCommandFailed(
                 source='convector-office',
@@ -511,6 +511,81 @@ def test_source_that_refuses_its_setpoint_once_on_is_switched_off_again(
                 occurred_at=COMFORT_AT,
             ),
         ],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'f_unit', 'commands', 'failure'),
+    [
+        (
+            ([LIVE_CONVECTOR], {}),
+            OFF_AT_NINETEEN,
+            (DeviceProtocolError('the unit did not switch on'), DeviceUnavailableError('timeout')),
+            [],
+            ('device_protocol_error', 'the unit did not switch on'),
+        ),
+        (
+            ([LIVE_CONVECTOR], {}),
+            OFF_AT_NINETEEN,
+            (None, DeviceProtocolError('the heater did not take 22'), DeviceUnavailableError('timeout')),
+            [('power', True)],
+            ('device_protocol_error', 'the heater did not take 22'),
+        ),
+    ],
+    ids=['switch_on_failed', 'setpoint_refused'],
+    indirect=['f_sources', 'units', 'f_unit'],
+)
+def test_source_whose_switch_off_fails_too_reports_the_error_of_its_change(
+    f_use_case: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+    f_events: list[DomainEvent],
+    commands: list[tuple[str, object]],
+    failure: tuple[str, str],
+) -> None:
+    with capture_logs() as logs:
+        output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands, f_events, [log for log in logs if log['event'] == 'source_switch_off_failed']) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.FAILED}),
+        commands,
+        [
+            SourceCommandFailed(
+                source='convector-office',
+                name='Конвектор: кабинет',
+                power=True,
+                setpoint=Decimal(22),
+                error=failure[1],
+                error_code=failure[0],
+                occurred_at=COMFORT_AT,
+            ),
+        ],
+        [
+            {
+                'event': 'source_switch_off_failed',
+                'source': 'convector-office',
+                'device': 'heater-office',
+                'error_code': 'device_unavailable',
+                'detail': 'timeout',
+                'log_level': 'warning',
+            },
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'f_unit'),
+    [(([LIVE_CONVECTOR], {}), AT_NINETEEN, (DeviceProtocolError('the heater did not take 22'),))],
+    indirect=True,
+)
+def test_source_already_on_that_refuses_its_setpoint_is_left_on(
+    f_use_case: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.FAILED}),
+        [],
     )
 
 
