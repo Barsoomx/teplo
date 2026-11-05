@@ -13,6 +13,7 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy
 
 from apps.climate.domain.climate_config import start_offset_keeps_band
+from apps.climate.domain.fast_source import lowest_setpoint
 from apps.climate.domain.heat_sources import COMMANDED_KINDS, HeatSourceKind
 from apps.climate.models import ClimateSettings, ComfortPeriod, HeatSource, RoomClimate, Zone, ZoneLearning
 from apps.climate.models.climate_settings import START_OFFSET_BELOW_MIN_BAND
@@ -39,6 +40,9 @@ SOURCE_BESIDE_A_FLOOR = gettext_lazy('This room has a heated floor: teplo comman
 CLIMATE_SOURCE_DRIVER_ONLY_READS = gettext_lazy(
     'A heater or an air conditioner needs a climate unit whose driver commands it, such as tuya_heater or '
     'esphome_climate',
+)
+MAX_SETPOINT_BELOW_THE_LOWEST = gettext_lazy(
+    'This kind of source takes no setpoint below %(lowest)s°, so its max setpoint cannot be lower',
 )
 COMMANDS_REACH_THE_DEVICE = gettext_lazy('Reach the device')
 COMMANDS_HELD_BACK = gettext_lazy('Held back by: %(gates)s')
@@ -241,7 +245,8 @@ class ZoneLearningAdmin(admin.ModelAdmin):
 class HeatSourceAdminForm(forms.ModelForm):
     def clean(self) -> dict[str, Any]:
         super().clean()
-        if self.cleaned_data.get('kind') not in COMMANDED_KINDS:
+        kind = self.cleaned_data.get('kind')
+        if kind not in COMMANDED_KINDS:
             return self.cleaned_data
 
         room = self.cleaned_data.get('room')
@@ -250,6 +255,10 @@ class HeatSourceAdminForm(forms.ModelForm):
         device = self.cleaned_data.get('device')
         if device is not None and not _commands_climate_units(device.driver):
             self.add_error('device', CLIMATE_SOURCE_DRIVER_ONLY_READS)
+        max_setpoint = self.cleaned_data.get('max_setpoint')
+        lowest = lowest_setpoint(HeatSourceKind(kind))
+        if max_setpoint is not None and max_setpoint < lowest:
+            self.add_error('max_setpoint', str(MAX_SETPOINT_BELOW_THE_LOWEST) % {'lowest': lowest})
         return self.cleaned_data
 
 

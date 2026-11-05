@@ -59,6 +59,10 @@ msgstr "В этой комнате тёплый пол: teplo не управл�
 msgid "A heater or an air conditioner needs a climate unit whose driver commands it, such as tuya_heater or esphome_climate"
 msgstr "Обогревателю и кондиционеру нужен прибор, которым драйвер умеет управлять, например tuya_heater или esphome_climate"
 
+#, python-format
+msgid "This kind of source takes no setpoint below %(lowest)s°, so its max setpoint cannot be lower"
+msgstr "Источник этого вида не принимает уставку ниже %(lowest)s°, поэтому max setpoint не может быть ниже"
+
 msgid "Commands"
 msgstr "Команды"
 

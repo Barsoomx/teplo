@@ -49,11 +49,15 @@ class SourceDrive:
     starts: bool
 
 
+def lowest_setpoint(kind: HeatSourceKind) -> Decimal:
+    return SETPOINT_MINIMUMS.get(kind, SOURCE_SETPOINT_MIN)
+
+
 def source_setpoint(target: Decimal, source: SourceSettings) -> Decimal:
     step = SETPOINT_STEPS.get(source.kind, HEATER_STEP)
     wanted = _on_step(target + source.setpoint_bias, step, ROUND_HALF_UP)
     highest = _on_step(source.max_setpoint, step, ROUND_DOWN)
-    return max(SETPOINT_MINIMUMS.get(source.kind, SOURCE_SETPOINT_MIN), min(wanted, highest))
+    return max(lowest_setpoint(source.kind), min(wanted, highest))
 
 
 def outdoor_lockout(min_outdoor: Decimal | None, outdoor: Decimal | None, *, locked: bool) -> bool:

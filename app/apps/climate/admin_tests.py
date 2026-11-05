@@ -80,6 +80,7 @@ CLIMATE_SOURCE_DRIVER_ONLY_READS_RU = (
     'Обогревателю и кондиционеру нужен прибор, которым драйвер умеет управлять, например tuya_heater или '
     'esphome_climate'
 )
+MAX_SETPOINT_BELOW_17_RU = 'Источник этого вида не принимает уставку ниже 17°, поэтому max setpoint не может быть ниже'
 SOURCE_STAMP_FIELDS = ('manual_until', 'last_command_at', 'last_dry_run_at', 'commanded_power', 'commanded_setpoint')
 SOURCE_COMMANDS_POSTED = {'setpoint_bias': '0.0', 'max_setpoint': '24.0', 'min_write_minutes': '5'}
 LEARNING_URL = '/admin/climate/zonelearning/'
@@ -605,6 +606,22 @@ def f_heater_posted(request: pytest.FixtureRequest, f_office: Room, f_open_space
 
 
 @pytest.fixture
+def f_air_conditioner_posted(request: pytest.FixtureRequest, f_office: Room) -> dict[str, str]:
+    kind, max_setpoint = request.param
+    device = DeviceFactory.create(slug='ac-office', kind=DeviceKind.CLIMATE_UNIT, driver=DeviceDriver.ESPHOME_CLIMATE)
+    return {
+        'slug': 'ac-office',
+        'name': 'Кондиционер: кабинет',
+        'room': str(f_office.pk),
+        'kind': kind,
+        'device': str(device.pk),
+        'priority': '1',
+        **SOURCE_COMMANDS_POSTED,
+        'max_setpoint': max_setpoint,
+    }
+
+
+@pytest.fixture
 def f_convector(f_office: Room, f_climate_unit: Device) -> HeatSource:
     return HeatSourceFactory.create(
         slug='convector-office',
@@ -721,6 +738,28 @@ def test_heat_source_page_refuses_a_source_teplo_cannot_command(
     errors: dict[str, list[str]],
 ) -> None:
     form = f_heat_source_admin.get_form(f_request)(f_heater_posted)
+
+    assert (form.is_valid(), form.errors) == (not errors, errors)
+
+
+@pytest.mark.parametrize(
+    ('f_air_conditioner_posted', 'errors'),
+    [
+        ((HeatSourceKind.AIR_CONDITIONER, '16.5'), {'max_setpoint': [MAX_SETPOINT_BELOW_17_RU]}),
+        ((HeatSourceKind.AIR_CONDITIONER, '17.0'), {}),
+        ((HeatSourceKind.HEATER, '16.5'), {}),
+    ],
+    ids=['air_conditioner_below_17', 'air_conditioner_at_17', 'heater_below_17'],
+    indirect=['f_air_conditioner_posted'],
+)
+@pytest.mark.usefixtures('russian')
+def test_heat_source_page_refuses_a_max_setpoint_below_the_lowest_setpoint_its_kind_takes(
+    f_heat_source_admin: HeatSourceAdmin,
+    f_request: HttpRequest,
+    f_air_conditioner_posted: dict[str, str],
+    errors: dict[str, list[str]],
+) -> None:
+    form = f_heat_source_admin.get_form(f_request)(f_air_conditioner_posted)
 
     assert (form.is_valid(), form.errors) == (not errors, errors)
 
