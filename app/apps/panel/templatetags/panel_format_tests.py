@@ -1739,8 +1739,24 @@ def test_source_command_failed_text_says_what_teplo_could_not_write(payload: dic
             {**CONVECTOR_CHANGE, 'mode': ['auto', 'cool'], 'setpoint': None, 'dry_run': True},
             'Конвектор: кабинет: изменили на приборе: режим авто → охлаждение, teplo не трогал бы до 18:40',
         ),
+        (
+            {**CONVECTOR_CHANGE, 'mode': ['dry', 'fan_only'], 'setpoint': None},
+            'Конвектор: кабинет: изменили на приборе: режим осушение → вентиляция, teplo не трогает до 18:40',
+        ),
+        (
+            {**CONVECTOR_CHANGE, 'mode': ['heat', 'heat_cool'], 'setpoint': None},
+            'Конвектор: кабинет: изменили на приборе: режим обогрев → авто, teplo не трогает до 18:40',
+        ),
     ],
-    ids=['setpoint', 'setpoint_while_watching', 'switched_off', 'mode_and_setpoint', 'mode_while_watching'],
+    ids=[
+        'setpoint',
+        'setpoint_while_watching',
+        'switched_off',
+        'mode_and_setpoint',
+        'mode_while_watching',
+        'dry_to_fan_only',
+        'heat_to_heat_cool',
+    ],
 )
 def test_source_manual_change_text_says_what_was_changed_on_the_unit(payload: dict[str, object], expected: str) -> None:
     assert source_manual_change_text(_source_entry('source_manual_change', payload)) == expected

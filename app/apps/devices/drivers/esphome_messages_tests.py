@@ -7,7 +7,14 @@ from structlog.testing import capture_logs
 
 from apps.core.stubs import MonotonicClockStub, WallClockStub
 from apps.devices.domain.kinds import DeviceDriver, DeviceKind
-from apps.devices.domain.readings import ClimateMode, ClimateUnitState, Phase, PhaseCurrents, TemperatureReading
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateModeWord,
+    ClimateUnitState,
+    Phase,
+    PhaseCurrents,
+    TemperatureReading,
+)
 from apps.devices.drivers.esphome_messages import (
     EsphomeClimateSink,
     EsphomeMessageHandler,
@@ -640,6 +647,19 @@ def test_message_the_air_conditioner_does_not_read_records_nothing(
         AC_HEATING,
         None,
         [],
+    )
+
+
+def test_mode_teplo_lumps_with_another_keeps_the_unit_s_own_word(
+    f_climate_handler: EsphomeMessageHandler,
+    f_climate_store: EsphomeClimateStore,
+) -> None:
+    f_climate_handler.receive(AC_MODE, b'fan_only', retained=False)
+
+    assert f_climate_store.snapshot('ac-bedroom').state == replace(
+        AC_HEATING,
+        mode=ClimateMode.OTHER,
+        mode_word=ClimateModeWord.FAN_ONLY,
     )
 
 

@@ -28,7 +28,7 @@ from apps.climate.domain.room_intent import (
 )
 from apps.climate.domain.week_plan import DayPeriod
 from apps.devices.domain.kinds import DeviceKind
-from apps.devices.domain.readings import ClimateMode
+from apps.devices.domain.readings import ClimateMode, ClimateModeWord
 from apps.notifications.domain.alerts import AlertTransition
 from apps.notifications.services.messages import alert_text_from_payload, duration_text, interval_parts
 from apps.panel.usecases.get_journal_timeline import TimelineEntry
@@ -184,6 +184,9 @@ MODE_WORDS = {
     ClimateMode.AUTO.value: gettext_lazy('auto'),
     ClimateMode.OTHER.value: gettext_lazy('another mode'),
     ClimateMode.OFF.value: gettext_lazy('off'),
+    ClimateModeWord.HEAT_COOL.value: gettext_lazy('auto'),
+    ClimateModeWord.DRY.value: gettext_lazy('drying'),
+    ClimateModeWord.FAN_ONLY.value: gettext_lazy('fan only'),
 }
 SOURCE_OWN_TEMPERATURE = gettext_lazy('%(temperature)s° at the unit')
 SOURCE_STATE_SEPARATOR = ' · '

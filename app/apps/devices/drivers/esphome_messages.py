@@ -139,7 +139,8 @@ class EsphomeClimateSink:
 
     def record_climate(self, slug: str, attribute: str, payload: bytes, read_at: datetime) -> None:
         if attribute == MODE:
-            self._store.record_mode(slug, climate_mode(payload), read_at)
+            reported = climate_mode(payload)
+            self._store.record_mode(slug, reported.mode, read_at, word=reported.word)
         elif attribute == TARGET_TEMPERATURE:
             self._store.record_target(slug, parse_value(attribute, payload), read_at)
         elif attribute == CURRENT_TEMPERATURE:

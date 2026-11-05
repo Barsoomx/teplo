@@ -5,7 +5,14 @@ from decimal import Decimal
 import pytest
 
 from apps.climate.domain.manual_change import ManualChange, source_change, teplo_window, thermostat_change
-from apps.devices.domain.readings import ClimateMode, ClimateUnitState, ReadingPair, ThermostatMode, ThermostatState
+from apps.devices.domain.readings import (
+    ClimateMode,
+    ClimateModeWord,
+    ClimateUnitState,
+    ReadingPair,
+    ThermostatMode,
+    ThermostatState,
+)
 
 NOW = datetime(2026, 11, 4, 16, 40, tzinfo=UTC)
 FIRST_POLL = 1000.0
@@ -32,6 +39,7 @@ AIR_CONDITIONER = ClimateUnitState(
     room_temperature=Decimal('19.5'),
     read_at=NOW,
 )
+DRYING = replace(AIR_CONDITIONER, mode=ClimateMode.OTHER, mode_word=ClimateModeWord.DRY)
 
 
 def _source_pair(
@@ -167,13 +175,28 @@ def test_change_of_a_heat_source_counts_only_between_polls_at_most_ninety_second
         ),
         (
             AIR_CONDITIONER,
-            replace(AIR_CONDITIONER, mode=ClimateMode.OTHER, target=Decimal(24)),
-            ManualChange(power=None, mode=('heat', 'other'), setpoint=(Decimal('20.5'), Decimal(24))),
+            replace(DRYING, target=Decimal(24)),
+            ManualChange(power=None, mode=('heat', 'dry'), setpoint=(Decimal('20.5'), Decimal(24))),
+        ),
+        (
+            DRYING,
+            replace(DRYING, mode_word=ClimateModeWord.FAN_ONLY),
+            ManualChange(power=None, mode=('dry', 'fan_only'), setpoint=None),
+        ),
+        (
+            AIR_CONDITIONER,
+            replace(AIR_CONDITIONER, mode=ClimateMode.OTHER),
+            ManualChange(power=None, mode=('heat', 'other'), setpoint=None),
         ),
         (
             replace(AIR_CONDITIONER, mode=ClimateMode.AUTO),
             AIR_CONDITIONER,
             ManualChange(power=None, mode=('auto', 'heat'), setpoint=None),
+        ),
+        (
+            replace(AIR_CONDITIONER, mode=ClimateMode.AUTO, mode_word=ClimateModeWord.HEAT_COOL),
+            replace(AIR_CONDITIONER, mode=ClimateMode.AUTO),
+            ManualChange(power=None, mode=('heat_cool', 'auto'), setpoint=None),
         ),
         (
             replace(AIR_CONDITIONER, mode=ClimateMode.OFF),
@@ -186,7 +209,16 @@ def test_change_of_a_heat_source_counts_only_between_polls_at_most_ninety_second
             ManualChange(power=(True, False), mode=None, setpoint=None),
         ),
     ],
-    ids=['heat_to_cool', 'heat_to_dry_and_set', 'auto_to_heat', 'switched_on_in_heat', 'cool_switched_off'],
+    ids=[
+        'heat_to_cool',
+        'heat_to_dry_and_set',
+        'dry_to_fan_only',
+        'heat_to_a_mode_teplo_has_no_name_for',
+        'auto_to_heat',
+        'heat_cool_to_auto',
+        'switched_on_in_heat',
+        'cool_switched_off',
+    ],
 )
 def test_mode_changed_on_an_air_conditioner_counts_between_two_modes_it_runs_in(
     before: ClimateUnitState,
@@ -194,3 +226,12 @@ def test_mode_changed_on_an_air_conditioner_counts_between_two_modes_it_runs_in(
     expected: ManualChange,
 ) -> None:
     assert source_change(_source_pair(after, before=before)) == expected
+
+
+@pytest.mark.parametrize(
+    'state',
+    [DRYING, replace(AIR_CONDITIONER, mode=ClimateMode.OTHER)],
+    ids=['dry', 'a_mode_teplo_has_no_name_for'],
+)
+def test_air_conditioner_left_in_the_same_mode_of_its_own_counts_nothing(state: ClimateUnitState) -> None:
+    assert source_change(_source_pair(state, before=state)) is None

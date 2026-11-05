@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
 from apps.devices.domain.errors import DeviceProtocolError, SensorReadingError
-from apps.devices.domain.readings import ClimateMode, Phase
+from apps.devices.domain.readings import ClimateMode, ClimateModeWord, Phase
 
 NODE_PREFIX = 'teplo-'
 SUBSCRIPTIONS = ('teplo/+/sensor/+/state', 'teplo/+/status', 'teplo/+/climate/+/+/state')
@@ -24,6 +24,13 @@ CLIMATE_MODES = {
     'heat_cool': ClimateMode.AUTO,
     'auto': ClimateMode.AUTO,
 }
+CLIMATE_MODE_WORDS = {word.value: word for word in ClimateModeWord}
+
+
+@dataclass(frozen=True, kw_only=True)
+class ReportedMode:
+    mode: ClimateMode
+    word: ClimateModeWord | None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -60,7 +67,7 @@ def climate_command_topic(node: str, attribute: str) -> str:
     return f'teplo/{NODE_PREFIX}{node}/climate/{CLIMATE_OBJECT_ID}/{attribute}/command'
 
 
-def climate_mode(payload: bytes) -> ClimateMode:
+def climate_mode(payload: bytes) -> ReportedMode:
     try:
         word = payload.decode('ascii').strip()
     except UnicodeDecodeError:
@@ -68,7 +75,10 @@ def climate_mode(payload: bytes) -> ClimateMode:
     if not word:
         raise DeviceProtocolError(f'{MODE}: not a mode: {payload[:SHOWN_PAYLOAD_BYTES]!r}')
 
-    return CLIMATE_MODES.get(word, ClimateMode.OTHER)
+    return ReportedMode(
+        mode=CLIMATE_MODES.get(word, ClimateMode.OTHER),
+        word=CLIMATE_MODE_WORDS.get(word),
+    )
 
 
 def parse_value(object_id: str, payload: bytes) -> Decimal:

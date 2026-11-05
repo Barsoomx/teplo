@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
 
-from apps.devices.domain.readings import ClimateMode, ClimateUnitState
+from apps.devices.domain.readings import ClimateMode, ClimateModeWord, ClimateUnitState
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -20,6 +20,7 @@ class EsphomeClimateSnapshot:
 @dataclass(frozen=True, kw_only=True)
 class _ModeReport:
     mode: ClimateMode
+    word: ClimateModeWord | None
     read_at: datetime
     recorded_at: float
 
@@ -40,9 +41,16 @@ class EsphomeClimateStore:
         self._failures: dict[str, tuple[str, str]] = {}
         self._changed = threading.Condition()
 
-    def record_mode(self, slug: str, mode: ClimateMode, read_at: datetime) -> None:
+    def record_mode(
+        self,
+        slug: str,
+        mode: ClimateMode,
+        read_at: datetime,
+        *,
+        word: ClimateModeWord | None = None,
+    ) -> None:
         with self._changed:
-            self._modes[slug] = _ModeReport(mode=mode, read_at=read_at, recorded_at=self._clock())
+            self._modes[slug] = _ModeReport(mode=mode, word=word, read_at=read_at, recorded_at=self._clock())
             self._recorded(slug)
 
     def record_target(self, slug: str, target: Decimal, read_at: datetime) -> None:
@@ -99,6 +107,7 @@ class EsphomeClimateStore:
             target=self._targets[slug].target,
             room_temperature=self._room_temperatures.get(slug),
             read_at=older.read_at,
+            mode_word=self._modes[slug].word,
         )
 
     def _older_report(self, slug: str) -> _ModeReport | _TargetReport | None:

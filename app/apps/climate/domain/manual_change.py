@@ -54,7 +54,12 @@ def _consecutive[TState](pair: ReadingPair[TState]) -> bool:
 
 
 def _mode_change(before: ClimateUnitState, after: ClimateUnitState) -> tuple[str, str] | None:
-    if not (before.on and after.on) or before.mode is after.mode:
+    modes = _unit_mode(before), _unit_mode(after)
+    if not (before.on and after.on) or modes[0] == modes[1]:
         return None
 
-    return before.mode.value, after.mode.value
+    return modes
+
+
+def _unit_mode(state: ClimateUnitState) -> str:
+    return state.mode.value if state.mode_word is None else state.mode_word.value

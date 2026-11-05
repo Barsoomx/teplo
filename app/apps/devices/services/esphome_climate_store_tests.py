@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from apps.core.stubs import MonotonicClockStub
-from apps.devices.domain.readings import ClimateMode, ClimateUnitState
+from apps.devices.domain.readings import ClimateMode, ClimateModeWord, ClimateUnitState
 from apps.devices.services.esphome_climate_store import EsphomeClimateSnapshot, EsphomeClimateStore
 
 NOW = datetime(2026, 11, 5, 21, 0, tzinfo=UTC)
@@ -86,6 +86,19 @@ def test_newer_mode_leaves_the_state_as_old_as_its_target(
             read_at=NOW + timedelta(seconds=20),
         ),
         timedelta(seconds=15),
+    )
+
+
+def test_state_keeps_the_unit_s_own_word_for_a_mode_teplo_lumps_with_another(
+    f_reported_store: EsphomeClimateStore,
+) -> None:
+    f_reported_store.record_mode('ac-bedroom', ClimateMode.OTHER, NOW + timedelta(seconds=30), word=ClimateModeWord.DRY)
+
+    assert f_reported_store.snapshot('ac-bedroom').state == replace(
+        HEATING,
+        mode=ClimateMode.OTHER,
+        read_at=NOW + timedelta(seconds=20),
+        mode_word=ClimateModeWord.DRY,
     )
 
 

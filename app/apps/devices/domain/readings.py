@@ -18,6 +18,12 @@ class ClimateMode(StrEnum):
     OTHER = 'other'
 
 
+class ClimateModeWord(StrEnum):
+    HEAT_COOL = 'heat_cool'
+    DRY = 'dry'
+    FAN_ONLY = 'fan_only'
+
+
 class Phase(StrEnum):
     A = 'a'
     B = 'b'
@@ -63,6 +69,7 @@ class ClimateUnitState:
     room_temperature: Decimal | None
     read_at: datetime
     level: str | None = None
+    mode_word: ClimateModeWord | None = None
 
     @property
     def on(self) -> bool:

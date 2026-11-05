@@ -1417,6 +1417,12 @@ msgstr "другой режим"
 msgid "off"
 msgstr "выкл"
 
+msgid "drying"
+msgstr "осушение"
+
+msgid "fan only"
+msgstr "вентиляция"
+
 #, python-format
 msgid "%(temperature)s° at the unit"
 msgstr "у прибора %(temperature)s°"

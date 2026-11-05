@@ -3,10 +3,11 @@ from decimal import Decimal
 import pytest
 
 from apps.devices.domain.errors import DeviceProtocolError, SensorReadingError
-from apps.devices.domain.readings import ClimateMode
+from apps.devices.domain.readings import ClimateMode, ClimateModeWord
 from apps.devices.drivers.esphome_protocol import (
     ClimateStateTopic,
     NodeStatusTopic,
+    ReportedMode,
     SensorStateTopic,
     climate_command_topic,
     climate_mode,
@@ -146,22 +147,22 @@ def test_presence_nan_is_a_failed_reading() -> None:
 @pytest.mark.parametrize(
     ('payload', 'mode'),
     [
-        (b'off', ClimateMode.OFF),
-        (b'heat', ClimateMode.HEAT),
-        (b'cool', ClimateMode.COOL),
-        (b'heat_cool', ClimateMode.AUTO),
-        (b'auto', ClimateMode.AUTO),
-        (b'dry', ClimateMode.OTHER),
-        (b'fan_only', ClimateMode.OTHER),
-        (b'unknown', ClimateMode.OTHER),
+        (b'off', ReportedMode(mode=ClimateMode.OFF, word=None)),
+        (b'heat', ReportedMode(mode=ClimateMode.HEAT, word=None)),
+        (b'cool', ReportedMode(mode=ClimateMode.COOL, word=None)),
+        (b'heat_cool', ReportedMode(mode=ClimateMode.AUTO, word=ClimateModeWord.HEAT_COOL)),
+        (b'auto', ReportedMode(mode=ClimateMode.AUTO, word=None)),
+        (b'dry', ReportedMode(mode=ClimateMode.OTHER, word=ClimateModeWord.DRY)),
+        (b'fan_only', ReportedMode(mode=ClimateMode.OTHER, word=ClimateModeWord.FAN_ONLY)),
+        (b'unknown', ReportedMode(mode=ClimateMode.OTHER, word=None)),
     ],
     ids=['off', 'heat', 'cool', 'heat_cool', 'auto', 'dry', 'fan_only', 'unknown'],
 )
-def test_climate_mode_names_the_modes_teplo_knows_and_calls_any_other_word_other(
+def test_climate_mode_names_the_modes_teplo_knows_keeps_the_words_it_lumps_together_and_calls_any_other_other(
     payload: bytes,
-    mode: ClimateMode,
+    mode: ReportedMode,
 ) -> None:
-    assert climate_mode(payload) is mode
+    assert climate_mode(payload) == mode
 
 
 @pytest.mark.parametrize(
