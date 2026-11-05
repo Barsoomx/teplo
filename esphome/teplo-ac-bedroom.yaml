@@ -7,14 +7,19 @@
 # teplo reads the climate's mode, target_temperature and current_temperature state topics and commands mode and
 # target_temperature. The component publishes a state only when the unit's answer changes it, so an interval republishes
 # the whole climate state every 30 s, as the sensor nodes report: teplo takes a state older than 90 s for a lost node.
-# A call that switches the unit from off to heat turns its display off 5 s later, once the unit has taken the call; the
-# toggle goes over UART only when the unit reports light control, otherwise the component only logs a warning.
+# A call that switches the unit from off to heat turns its display off 5 s later, once the unit has taken the call. The
+# unit reports no light control, so ESPHome's own toggle would go over IR, which the dongle has no LED for:
+# midea_display.h sends the toggle over UART instead.
 substitutions:
   node_name: teplo-ac-bedroom
   friendly_name: Bedroom air conditioner
 
 packages:
   node: !include common/node.yaml
+
+esphome:
+  includes:
+    - midea_display.h
 
 esp32:
   board: seeed_xiao_esp32c3
@@ -84,16 +89,15 @@ script:
     mode: restart
     then:
       - delay: 5s
-      - midea_ac.display_toggle:
+      - lambda: 'teplo::MideaDisplay::toggle(id(air_conditioner));'
 
 interval:
   - interval: 30s
     then:
       - lambda: 'id(air_conditioner).publish_state();'
 
-# Works over UART only when the unit reports light control; otherwise the component logs a warning and does nothing.
 button:
   - platform: template
     name: Display toggle
     on_press:
-      - midea_ac.display_toggle:
+      - lambda: 'teplo::MideaDisplay::toggle(id(air_conditioner));'
