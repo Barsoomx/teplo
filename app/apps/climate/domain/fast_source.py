@@ -124,8 +124,11 @@ def plan_source_change(target: SourceTarget, state: ClimateUnitState) -> SourceC
     if not target.power:
         return SourceChange(power=False) if state.on else SourceChange()
 
+    if state.mode is not ClimateMode.HEAT:
+        return SourceChange(power=True, setpoint=target.setpoint)
+
     setpoint = None if target.setpoint is None or target.setpoint == state.target else target.setpoint
-    return SourceChange(power=None if state.mode is ClimateMode.HEAT else True, setpoint=setpoint)
+    return SourceChange(setpoint=setpoint)
 
 
 def source_starts(change: SourceChange, state: ClimateUnitState) -> bool:

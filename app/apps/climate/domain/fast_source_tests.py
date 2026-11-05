@@ -285,7 +285,7 @@ def test_hold_on_any_source_of_a_room_holds_the_room() -> None:
 @pytest.mark.parametrize(
     ('target', 'state', 'change'),
     [
-        (ON_AT_22, OFF, SourceChange(power=True)),
+        (ON_AT_22, OFF, SourceChange(power=True, setpoint=Decimal(22))),
         (SourceTarget(power=True, setpoint=Decimal(19)), OFF, SourceChange(power=True, setpoint=Decimal(19))),
         (SourceTarget(power=True, setpoint=Decimal(19)), HEATING, SourceChange(setpoint=Decimal(19))),
         (ON_AT_22, HEATING, SourceChange()),
@@ -293,18 +293,18 @@ def test_hold_on_any_source_of_a_room_holds_the_room() -> None:
         (SWITCHED_OFF, OFF, SourceChange()),
         (ON_AT_22, COOLING, SourceChange()),
         (SWITCHED_OFF, COOLING, SourceChange()),
-        (ON_AT_22, IN_AUTO, SourceChange(power=True)),
+        (ON_AT_22, IN_AUTO, SourceChange(power=True, setpoint=Decimal(22))),
         (
             SourceTarget(power=True, setpoint=Decimal('20.5')),
             IN_AUTO,
             SourceChange(power=True, setpoint=Decimal('20.5')),
         ),
-        (ON_AT_22, IN_ANOTHER_MODE, SourceChange(power=True)),
+        (ON_AT_22, IN_ANOTHER_MODE, SourceChange(power=True, setpoint=Decimal(22))),
         (SWITCHED_OFF, IN_AUTO, SourceChange(power=False)),
         (SWITCHED_OFF, IN_ANOTHER_MODE, SourceChange(power=False)),
     ],
     ids=[
-        'switched_on_at_its_setpoint',
+        'switched_on_with_the_setpoint_it_reads',
         'switched_on_and_set',
         'set',
         'holds_the_target',
@@ -312,14 +312,14 @@ def test_hold_on_any_source_of_a_room_holds_the_room() -> None:
         'already_off',
         'owner_mode_left_alone',
         'owner_mode_left_on',
-        'auto_back_to_heat_at_its_setpoint',
+        'auto_back_to_heat_with_the_setpoint_it_reads',
         'auto_back_to_heat_and_set',
         'another_mode_back_to_heat',
         'auto_switched_off',
         'another_mode_switched_off',
     ],
 )
-def test_change_writes_only_what_differs_and_leaves_the_owners_modes_alone(
+def test_change_writes_the_setpoint_with_every_switch_on_and_leaves_the_owners_modes_alone(
     target: SourceTarget,
     state: ClimateUnitState,
     change: SourceChange,
@@ -429,7 +429,7 @@ def test_change_starts_a_source_only_when_it_switches_it_on(
             False,
             True,
             NOW - INTERVAL,
-            SourceDrive(change=SourceChange(power=True), outcome=None, starts=True),
+            SourceDrive(change=SourceChange(power=True, setpoint=Decimal(22)), outcome=None, starts=True),
         ),
     ],
     ids=[
@@ -577,7 +577,11 @@ def test_lockouts_are_decided_only_for_sources_with_an_outdoor_limit() -> None:
     ('state', 'target', 'drive'),
     [
         (COOLING, ON_AT_22, SourceDrive(change=SourceChange(), outcome=ZoneCycleOutcome.UNCHANGED, starts=False)),
-        (IN_AUTO, ON_AT_22, SourceDrive(change=SourceChange(power=True), outcome=None, starts=False)),
+        (
+            IN_AUTO,
+            ON_AT_22,
+            SourceDrive(change=SourceChange(power=True, setpoint=Decimal(22)), outcome=None, starts=False),
+        ),
         (
             IN_ANOTHER_MODE,
             SourceTarget(power=True, setpoint=Decimal('20.5')),
