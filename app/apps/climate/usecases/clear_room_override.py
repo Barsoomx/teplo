@@ -26,6 +26,7 @@ class ClearRoomOverrideInputDTO:
 @dataclass(frozen=True, kw_only=True)
 class ClearRoomOverrideOutputDTO:
     cleared: bool
+    occupancy: Occupancy | None = None
 
 
 class ClearRoomOverrideUseCase(BaseUseCase[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO]):
@@ -61,16 +62,17 @@ class ClearRoomOverrideUseCase(BaseUseCase[ClearRoomOverrideInputDTO, ClearRoomO
 
         occupancy = self._occupancy.snapshot().get(room.slug, Occupancy.UNKNOWN)
         holds = occupancy_holds(room, occupancy, guests_until=guests_until, now=input_dto.now)
+        returns_to = occupancy if holds else None
         self._event_store.add_event(
             RoomOverrideCleared(
                 room=room.slug,
                 name=room.name,
                 source=input_dto.source,
-                occupancy=occupancy if holds else None,
+                occupancy=returns_to,
                 occurred_at=input_dto.now,
             ),
         )
-        return ClearRoomOverrideOutputDTO(cleared=True)
+        return ClearRoomOverrideOutputDTO(cleared=True, occupancy=returns_to)
 
     def _clear(self, slug: str) -> RoomClimateSettings | None:
         room = self._rooms.comfort_for_update(slug)

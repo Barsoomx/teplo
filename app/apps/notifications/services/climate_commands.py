@@ -45,6 +45,7 @@ from apps.notifications.services.command_replies import (
     AMBIGUOUS,
     AUTO,
     AUTO_DONE,
+    AUTO_DONE_OCCUPANCY,
     AUTO_NONE,
     AUTO_OCCUPANCY,
     AUTO_OPEN,
@@ -272,15 +273,16 @@ class ClimateCommandRunner:
         return self._with_floors(reply, status.slug, now, clock_trusted=clock_trusted)
 
     def _auto(self, room: CommandRoom, now: datetime, *, clock_trusted: bool) -> str:
-        cleared = self._clear_override.execute(
+        output = self._clear_override.execute(
             ClearRoomOverrideInputDTO(room=room.slug, now=now, source=CommandSource.TELEGRAM),
-        ).cleared
-        if not cleared:
+        )
+        if not output.cleared:
             return str(AUTO_NONE) % {'room': room.name}
 
         status = next(iter(self._changed({room.slug}, now, clock_trusted=clock_trusted)), None)
         if status is None:
-            return str(AUTO_DONE) % {'room': room.name}
+            done = AUTO_DONE if output.occupancy is None else AUTO_DONE_OCCUPANCY
+            return str(done) % {'room': room.name}
 
         values = {'room': status.name, 'target': degrees(status.intent.target)}
         until = status.intent.until

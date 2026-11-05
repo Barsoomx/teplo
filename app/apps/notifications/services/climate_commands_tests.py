@@ -388,6 +388,18 @@ def f_uncleared_runner(
 
 
 @pytest.fixture
+def f_unread_after_occupancy_runner(
+    f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
+    f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
+    f_boost: ExecutableStub[BoostZonesInputDTO, BoostZonesOutputDTO],
+) -> ClimateCommandRunner:
+    clear = ExecutableStub[ClearRoomOverrideInputDTO, ClearRoomOverrideOutputDTO](
+        outcomes=(ClearRoomOverrideOutputDTO(cleared=True, occupancy=Occupancy.VACANT),),
+    )
+    return _runner(f_guests, f_override, clear, f_boost, RoomStatusSourceStub(readings=(LOCKED,)))
+
+
+@pytest.fixture
 def f_english_runner(
     f_guests: ExecutableStub[SetGuestsInputDTO, SetGuestsOutputDTO],
     f_override: ExecutableStub[OverrideRoomInputDTO, OverrideRoomOutputDTO],
@@ -716,6 +728,18 @@ def test_a_change_whose_floors_cannot_be_read_back_is_answered_with_what_it_did(
 
     changes = len(f_guests.inputs) + len(f_override.inputs) + len(f_clear.inputs) + len(f_boost.inputs)
     assert (changes, reply) == (1, expected)
+
+
+def test_auto_whose_room_cannot_be_read_back_says_the_room_returned_to_occupancy(
+    f_unread_after_occupancy_runner: ClimateCommandRunner,
+) -> None:
+    reply = f_unread_after_occupancy_runner.run(
+        OwnerCommand(kind=CommandKind.AUTO, room=OFFICE_ROOM),
+        NOW,
+        clock_trusted=True,
+    )
+
+    assert reply == 'Кабинет: снова по присутствию.'
 
 
 def test_replies_follow_the_configured_language(f_english_runner: ClimateCommandRunner) -> None:

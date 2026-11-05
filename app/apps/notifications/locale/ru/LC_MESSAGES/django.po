@@ -168,6 +168,10 @@ msgid "%(room)s: back to the schedule."
 msgstr "%(room)s: снова по расписанию."
 
 #, python-format
+msgid "%(room)s: back to occupancy."
+msgstr "%(room)s: снова по присутствию."
+
+#, python-format
 msgid "%(room)s: boost until %(until)s."
 msgstr "%(room)s: буст до %(until)s."
 

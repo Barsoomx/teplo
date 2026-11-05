@@ -155,17 +155,20 @@ def test_back_to_the_schedule_names_the_occupancy_the_room_returns_to(
     f_events: list[DomainEvent],
     expected: Occupancy | None,
 ) -> None:
-    f_use_case.execute(replace(CLEAR, room='office'))
+    output = f_use_case.execute(replace(CLEAR, room='office'))
 
-    assert f_events == [
-        RoomOverrideCleared(
-            room='office',
-            name='Кабинет',
-            source=CommandSource.TELEGRAM,
-            occupancy=expected,
-            occurred_at=NOW,
-        ),
-    ]
+    assert (output, f_events) == (
+        ClearRoomOverrideOutputDTO(cleared=True, occupancy=expected),
+        [
+            RoomOverrideCleared(
+                room='office',
+                name='Кабинет',
+                source=CommandSource.TELEGRAM,
+                occupancy=expected,
+                occurred_at=NOW,
+            ),
+        ],
+    )
 
 
 def test_back_to_the_schedule_without_an_override_writes_and_journals_nothing(
