@@ -7,7 +7,7 @@ Before changing control logic, device drivers, persistence or failure handling, 
 
 - **Offline runtime.** Devices are reached over the LAN; the internet only carries Telegram alerts and commands, and NTP; the panel stays the full offline control path.
 - **Router target.** Production is one Python 3.13 process on an Entware router (aarch64, ~600 MB free RAM, USB flash). Dependencies are pure Python or provided by Entware (`python3-cryptography`). Writes to flash are batched.
-- **Public repository.** Secrets (device addresses, device ids, local keys, tokens, passwords) live only in the router's secrets file; code and migrations reference devices by slug.
+- **Public repository.** Secrets (device addresses, device ids, local keys, tokens, passwords) live only in the router's secrets file, and the office PC's broker password in `pc_presence.toml` beside its script; code and migrations reference devices by slug.
 - **Configuration is data.** Schedules, tariffs, thresholds and priorities come from the database, seeded by `sites/<name>` data migrations and edited in the panel.
 - **Dry-run first.** A new control path ships behind dry-run and journals the commands it would send.
 - **Device safety.** Monitor-only loads expose no switching operation, and the database refuses a monitor-only device with a commanding driver. A thermostat gets at most one state change per zone per 30 minutes: every live thermostat write takes the zone's write gate, and only a live shed of load management overrides it, switching the thermostat off at once and stamping the write. A fast heat source gets at most one change per its `min_write_minutes` through a write gate of its own, which only a live shed overrides the same way (`docs/design.md`, sections 4 and 7).
@@ -39,12 +39,12 @@ deploy/                  router install and deploy scripts
 scripts/                 workstation tooling; pc_presence.py runs on the office PC under Python 3.12, standard library only
 ```
 
-Contexts: `core`, `house`, `devices`, `climate`, `power`, `tariffs`, `telemetry`, `notifications`, `system`, `panel`.
+Contexts: `core`, `house`, `devices`, `climate`, `presence`, `power`, `tariffs`, `telemetry`, `notifications`, `system`, `panel`.
 
 - **Use cases** extend `BaseUseCase[TInput, TOutput]`: the public `execute(input_dto)` handles logging, `DomainError` and event dispatch, the subclass implements `_execute`. Views, management commands and runtime loops only call use cases.
 - **Use cases are synchronous**; the asyncio runtime runs each periodic job in a worker thread (`asyncio.to_thread`), so jobs run concurrently: shared in-memory state takes a lock and a driver serializes calls to its device.
-- **Domain policies** (`climate/domain`, `power/domain`) are pure: value objects in, decisions out, no imports from Django, drivers or the network. AST architecture tests enforce the boundaries.
-- **Devices** are reached through capability ports declared as `Protocol` in `devices/domain/capabilities.py` (`FloorThermostat`, the read-only `MeteredPlug` and `SwitchablePlug` that extends it, `TemperatureSensor`, `PhaseMeter`, the read-only `ClimateUnit` and `ControllableClimateUnit` that extends it, `EvCharger`). A new device type is a driver implementing a port; an unsupported one is a stub driver raising `DriverNotImplementedError`.
+- **Domain policies** (`climate/domain`, `presence/domain`, `power/domain`) are pure: value objects in, decisions out, no imports from Django, drivers or the network. AST architecture tests enforce the boundaries.
+- **Devices** are reached through capability ports declared as `Protocol` in `devices/domain/capabilities.py` (`FloorThermostat`, the read-only `MeteredPlug` and `SwitchablePlug` that extends it, `TemperatureSensor`, `PhaseMeter`, `PresenceSensor`, the read-only `ClimateUnit` and `ControllableClimateUnit` that extends it, `EvCharger`). A new device type is a driver implementing a port; an unsupported one is a stub driver raising `DriverNotImplementedError`.
 - **Domain events** (`DomainEvent`) are collected by the use case and dispatched in-process after success to `@domain_event_handler` handlers: journal, Telegram.
 - **Errors** subclass `DomainError(detail, error_code=...)`.
 - **Read to change.** The settings use cases read, check and write inside one `Transaction` (`core/domain/ports.py`) and read through the repository's `*_for_update` method, which takes SQLite's write lock before it reads, so two saves at once run one after the other.
