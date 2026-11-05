@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -15,6 +16,18 @@ HEATING = ClimateUnitState(
     room_temperature=Decimal('19.5'),
     read_at=NOW,
 )
+
+
+def _reboot(store: EsphomeClimateStore, *, target_after: Decimal | None) -> None:
+    store.record_failure('ac-bedroom', error_code='device_unavailable', error='the node went offline')
+    store.record_mode('ac-bedroom', ClimateMode.OFF, NOW + timedelta(seconds=30))
+    store.record_failure(
+        'ac-bedroom',
+        error_code='sensor_reading_failed',
+        error='target_temperature: the node reported nan',
+    )
+    if target_after is not None:
+        store.record_target('ac-bedroom', target_after, NOW + timedelta(seconds=40))
 
 
 @pytest.fixture
@@ -58,6 +71,29 @@ def f_reports_at_the_command(request: pytest.FixtureRequest, f_reported_store: E
 @pytest.fixture
 def f_failed_store(f_reported_store: EsphomeClimateStore) -> EsphomeClimateStore:
     f_reported_store.record_failure('ac-bedroom', error_code='device_unavailable', error='the node went offline')
+    return f_reported_store
+
+
+@pytest.fixture
+def f_store_without_a_target(f_reported_store: EsphomeClimateStore) -> EsphomeClimateStore:
+    f_reported_store.record_failure(
+        'ac-bedroom',
+        error_code='sensor_reading_failed',
+        error='target_temperature: the node reported nan',
+    )
+    return f_reported_store
+
+
+@pytest.fixture
+def f_reports_before_a_reboot(request: pytest.FixtureRequest, f_reported_store: EsphomeClimateStore) -> int:
+    reports = f_reported_store.report_count()
+    _reboot(f_reported_store, target_after=request.param)
+    return reports
+
+
+@pytest.fixture
+def f_rebooted_store(f_reported_store: EsphomeClimateStore) -> EsphomeClimateStore:
+    _reboot(f_reported_store, target_after=None)
     return f_reported_store
 
 
@@ -119,17 +155,83 @@ def test_room_temperature_the_node_could_not_read_is_none(f_reported_store: Esph
     assert f_reported_store.snapshot('ac-bedroom').state == replace(HEATING, room_temperature=None)
 
 
-def test_failure_keeps_the_state_until_the_next_record_drops_it(
+def test_failure_drops_the_state_until_both_a_mode_and_a_target_arrive_after_it(
     f_failed_store: EsphomeClimateStore,
 ) -> None:
     failed = f_failed_store.snapshot('ac-bedroom')
     f_failed_store.record_target('ac-bedroom', Decimal('21.0'), NOW + timedelta(seconds=30))
-    recorded = f_failed_store.snapshot('ac-bedroom')
+    target_alone = f_failed_store.snapshot('ac-bedroom')
+    f_failed_store.record_mode('ac-bedroom', ClimateMode.HEAT, NOW + timedelta(seconds=30))
+    whole = f_failed_store.snapshot('ac-bedroom')
 
     assert (
-        (failed.state, failed.error_code, failed.error),
-        (recorded.error_code, recorded.error),
-    ) == ((HEATING, 'device_unavailable', 'the node went offline'), (None, None))
+        (failed.state, failed.age, failed.error_code, failed.error),
+        (target_alone.state, target_alone.error_code),
+        (whole.state, whole.error_code, whole.error),
+    ) == (
+        (None, None, 'device_unavailable', 'the node went offline'),
+        (None, 'device_unavailable'),
+        (replace(HEATING, target=Decimal('21.0'), read_at=NOW + timedelta(seconds=30)), None, None),
+    )
+
+
+@pytest.mark.parametrize(
+    'report',
+    [
+        lambda store: store.record_room_temperature('ac-bedroom', Decimal('19.0')),
+        lambda store: store.record_mode('ac-bedroom', ClimateMode.HEAT, NOW + timedelta(seconds=30)),
+    ],
+    ids=['room_temperature', 'mode'],
+)
+def test_report_without_a_target_keeps_the_failure_of_the_target_and_gives_no_state(
+    f_store_without_a_target: EsphomeClimateStore,
+    report: Callable[[EsphomeClimateStore], None],
+) -> None:
+    report(f_store_without_a_target)
+
+    assert f_store_without_a_target.snapshot('ac-bedroom') == EsphomeClimateSnapshot(
+        slug='ac-bedroom',
+        state=None,
+        age=None,
+        error_code='sensor_reading_failed',
+        error='target_temperature: the node reported nan',
+    )
+
+
+@pytest.mark.parametrize(
+    'f_reports_before_a_reboot',
+    [None, Decimal('20.5')],
+    ids=['off_and_nan', 'off_and_nan_then_a_target_alone'],
+    indirect=True,
+)
+def test_node_that_goes_offline_and_boots_gives_no_state_and_no_echo_on_its_off_and_nan(
+    f_reported_store: EsphomeClimateStore,
+    f_reports_before_a_reboot: int,
+) -> None:
+    echoed = f_reported_store.wait_for(
+        'ac-bedroom',
+        lambda state: state.mode is ClimateMode.OFF,
+        reported_after=f_reports_before_a_reboot,
+        timeout=0,
+    )
+
+    snapshot = f_reported_store.snapshot('ac-bedroom')
+    assert (echoed, snapshot.state, snapshot.error_code) == (False, None, 'sensor_reading_failed')
+
+
+def test_node_back_from_a_reboot_gives_its_state_once_it_reports_a_mode_and_a_target(
+    f_rebooted_store: EsphomeClimateStore,
+) -> None:
+    f_rebooted_store.record_mode('ac-bedroom', ClimateMode.HEAT, NOW + timedelta(seconds=40))
+    f_rebooted_store.record_target('ac-bedroom', Decimal('20.5'), NOW + timedelta(seconds=40))
+
+    assert f_rebooted_store.snapshot('ac-bedroom') == EsphomeClimateSnapshot(
+        slug='ac-bedroom',
+        state=replace(HEATING, read_at=NOW + timedelta(seconds=40)),
+        age=timedelta(0),
+        error_code=None,
+        error=None,
+    )
 
 
 def test_cleared_failure_is_only_the_one_of_its_code(f_failed_store: EsphomeClimateStore) -> None:

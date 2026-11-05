@@ -673,7 +673,7 @@ def test_room_temperature_the_unit_could_not_read_leaves_the_state_without_it(
     assert (snapshot.state, snapshot.error_code) == (replace(AC_HEATING, room_temperature=None), None)
 
 
-def test_nan_target_records_a_failed_reading_logged_once(
+def test_nan_target_records_a_failed_reading_logged_once_and_drops_the_state(
     f_climate_handler: EsphomeMessageHandler,
     f_climate_store: EsphomeClimateStore,
 ) -> None:
@@ -683,7 +683,7 @@ def test_nan_target_records_a_failed_reading_logged_once(
 
     snapshot = f_climate_store.snapshot('ac-bedroom')
     assert (snapshot.state, snapshot.error_code, snapshot.error, logs) == (
-        AC_HEATING,
+        None,
         'sensor_reading_failed',
         'target_temperature: the node reported nan',
         [
@@ -709,7 +709,7 @@ def test_mode_that_is_not_a_word_records_a_protocol_error(
     assert (snapshot.error_code, snapshot.error) == ('device_protocol_error', "mode: not a mode: b'\\xff'")
 
 
-def test_offline_air_conditioner_node_fails_the_unit_and_keeps_its_state(
+def test_offline_air_conditioner_node_fails_the_unit_and_drops_its_state(
     f_climate_handler: EsphomeMessageHandler,
     f_climate_store: EsphomeClimateStore,
 ) -> None:
@@ -718,14 +718,14 @@ def test_offline_air_conditioner_node_fails_the_unit_and_keeps_its_state(
 
     snapshot = f_climate_store.snapshot('ac-bedroom')
     assert (snapshot.state, snapshot.error_code, snapshot.error, logs) == (
-        AC_HEATING,
+        None,
         'device_unavailable',
         'the node went offline',
         [{'event': 'esphome_node_offline', 'device': 'ac-bedroom', 'log_level': 'warning'}],
     )
 
 
-def test_lost_broker_fails_the_air_conditioner_until_the_connection_returns(
+def test_lost_broker_fails_the_air_conditioner_until_its_node_reports_after_the_connection_returns(
     f_climate_handler: EsphomeMessageHandler,
     f_climate_store: EsphomeClimateStore,
 ) -> None:
@@ -733,9 +733,17 @@ def test_lost_broker_fails_the_air_conditioner_until_the_connection_returns(
     lost = f_climate_store.snapshot('ac-bedroom')
     f_climate_handler.connection_made()
     back = f_climate_store.snapshot('ac-bedroom')
+    f_climate_handler.receive(AC_MODE, b'heat', retained=False)
+    f_climate_handler.receive(AC_TARGET, b'20.5', retained=False)
+    reported = f_climate_store.snapshot('ac-bedroom')
 
-    assert ((lost.error_code, lost.error), (back.state, back.error_code)) == (
-        ('broker_unavailable', 'mqtt broker unreachable'),
+    assert (
+        (lost.state, lost.error_code, lost.error),
+        (back.state, back.error_code),
+        (reported.state, reported.error_code),
+    ) == (
+        (None, 'broker_unavailable', 'mqtt broker unreachable'),
+        (None, None),
         (AC_HEATING, None),
     )
 

@@ -41,6 +41,7 @@ class EsphomeClimateStore:
         self._targets: dict[str, _TargetReport] = {}
         self._room_temperatures: dict[str, Decimal | None] = {}
         self._failures: dict[str, tuple[str, str]] = {}
+        self._failed_after: dict[str, int] = {}
         self._reports = 0
         self._changed = threading.Condition()
 
@@ -77,11 +78,12 @@ class EsphomeClimateStore:
     def record_room_temperature(self, slug: str, temperature: Decimal | None) -> None:
         with self._changed:
             self._room_temperatures[slug] = temperature
-            self._recorded(slug)
+            self._changed.notify_all()
 
     def record_failure(self, slug: str, error_code: str, error: str) -> None:
         with self._changed:
             self._failures[slug] = (error_code, error)
+            self._failed_after[slug] = self._reports
 
     def clear_failure(self, slug: str, error_code: str) -> None:
         with self._changed:
@@ -117,17 +119,13 @@ class EsphomeClimateStore:
             return self._changed.wait_for(lambda: self._accepted(slug, accepts, reported_after), timeout=timeout)
 
     def _recorded(self, slug: str) -> None:
-        self._failures.pop(slug, None)
+        if self._older_report(slug) is not None:
+            self._failures.pop(slug, None)
         self._changed.notify_all()
 
     def _accepted(self, slug: str, accepts: Callable[[ClimateUnitState], bool], reported_after: int) -> bool:
-        mode = self._modes.get(slug)
-        target = self._targets.get(slug)
-        if mode is None or target is None or min(mode.report, target.report) <= reported_after:
-            return False
-
         state = self._state(slug)
-        return state is not None and accepts(state)
+        return state is not None and self._reported_after(slug, reported_after) and accepts(state)
 
     def _state(self, slug: str) -> ClimateUnitState | None:
         older = self._older_report(slug)
@@ -143,12 +141,17 @@ class EsphomeClimateStore:
         )
 
     def _older_report(self, slug: str) -> _ModeReport | _TargetReport | None:
-        mode = self._modes.get(slug)
-        target = self._targets.get(slug)
-        if mode is None or target is None:
+        if not self._reported_after(slug, self._failed_after.get(slug, 0)):
             return None
 
+        mode = self._modes[slug]
+        target = self._targets[slug]
         return mode if mode.recorded_at <= target.recorded_at else target
+
+    def _reported_after(self, slug: str, report: int) -> bool:
+        mode = self._modes.get(slug)
+        target = self._targets.get(slug)
+        return mode is not None and target is not None and min(mode.report, target.report) > report
 
 
 esphome_climate_store = EsphomeClimateStore()

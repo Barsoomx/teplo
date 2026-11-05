@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -15,6 +16,7 @@ from apps.devices.services.esphome_climate_store import EsphomeClimateStore
 from apps.devices.stubs import CommandPublisherStub
 
 NOW = datetime(2026, 11, 5, 21, 0, tzinfo=UTC)
+STATUS = 'teplo/teplo-ac-bedroom/status'
 MODE_COMMAND = 'teplo/teplo-ac-bedroom/climate/air_conditioner/mode/command'
 TARGET_COMMAND = 'teplo/teplo-ac-bedroom/climate/air_conditioner/target_temperature/command'
 OFF_AT_20 = ClimateUnitState(
@@ -48,6 +50,15 @@ def _node_echo(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
     return echo
 
 
+def _node_echoing_the_mode_alone(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
+    node = _node(store)
+
+    def echo(topic: str, payload: bytes) -> None:
+        _publish_state(node, {topic.split('/')[-2]: payload})
+
+    return echo
+
+
 def _node_booting(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
     node = _node(store)
 
@@ -55,6 +66,17 @@ def _node_booting(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
         _publish_state(node, {MODE: b'off', TARGET_TEMPERATURE: b'nan'})
 
     return boot
+
+
+def _node_rebooting(store: EsphomeClimateStore) -> Callable[[str, bytes], None]:
+    node = _node(store)
+
+    def reboot(topic: str, payload: bytes) -> None:  # noqa: ARG001
+        node.receive(STATUS, b'offline', retained=False)
+        _publish_state(node, {MODE: b'off', TARGET_TEMPERATURE: b'nan'})
+        _publish_state(node, {TARGET_TEMPERATURE: b'20.0'})
+
+    return reboot
 
 
 @pytest.fixture
@@ -84,6 +106,11 @@ def f_silent_publisher() -> CommandPublisherStub:
 @pytest.fixture
 def booting_publisher(store: EsphomeClimateStore) -> CommandPublisherStub:
     return CommandPublisherStub(echo=_node_booting(store))
+
+
+@pytest.fixture
+def rebooting_publisher(store: EsphomeClimateStore) -> CommandPublisherStub:
+    return CommandPublisherStub(echo=_node_rebooting(store))
 
 
 @pytest.fixture
@@ -150,6 +177,43 @@ def f_driver_of_a_heating_unit_whose_node_reboots(
         publisher=booting_publisher,
         echo_timeout=0,
     )
+
+
+@pytest.fixture
+def f_driver_of_a_heating_unit_whose_node_goes_offline_and_reboots(
+    store: EsphomeClimateStore,
+    rebooting_publisher: CommandPublisherStub,
+) -> EsphomeClimateDriver:
+    store.record_mode('ac-bedroom', ClimateMode.HEAT, NOW)
+    return EsphomeClimateDriver(
+        slug='ac-bedroom',
+        node='ac-bedroom',
+        store=store,
+        publisher=rebooting_publisher,
+        echo_timeout=0,
+    )
+
+
+@pytest.fixture
+def f_driver_echoed_by_the_mode_alone(store: EsphomeClimateStore) -> EsphomeClimateDriver:
+    return EsphomeClimateDriver(
+        slug='ac-bedroom',
+        node='ac-bedroom',
+        store=store,
+        publisher=CommandPublisherStub(echo=_node_echoing_the_mode_alone(store)),
+        echo_timeout=0,
+    )
+
+
+@pytest.fixture
+def f_driver_of_a_node_back_from_an_outage(
+    f_driver: EsphomeClimateDriver,
+    store: EsphomeClimateStore,
+) -> EsphomeClimateDriver:
+    node = _node(store)
+    node.receive(STATUS, b'offline', retained=False)
+    _publish_state(node, {MODE: b'heat', TARGET_TEMPERATURE: b'21.5'})
+    return f_driver
 
 
 @pytest.fixture
@@ -242,6 +306,42 @@ def test_switch_off_fails_on_the_off_and_nan_a_node_reports_as_it_boots(
         f_driver_of_a_heating_unit_whose_node_reboots.set_power(False)
 
     assert (raised.value.error_code, raised.value.detail) == ('device_protocol_error', 'the unit did not switch off')
+
+
+def test_node_that_goes_offline_and_boots_gives_no_echo_and_no_state_on_its_off_nan_and_a_target_alone(
+    f_driver_of_a_heating_unit_whose_node_goes_offline_and_reboots: EsphomeClimateDriver,
+) -> None:
+    with pytest.raises(DomainError) as switched:
+        f_driver_of_a_heating_unit_whose_node_goes_offline_and_reboots.set_power(False)
+    with pytest.raises(DomainError) as read:
+        f_driver_of_a_heating_unit_whose_node_goes_offline_and_reboots.read_state()
+
+    assert (
+        (switched.value.error_code, switched.value.detail),
+        (read.value.error_code, read.value.detail),
+    ) == (
+        ('device_protocol_error', 'the unit did not switch off'),
+        ('sensor_reading_failed', 'target_temperature: the node reported nan'),
+    )
+
+
+def test_read_gives_the_state_a_node_reports_whole_after_an_outage(
+    f_driver_of_a_node_back_from_an_outage: EsphomeClimateDriver,
+) -> None:
+    assert f_driver_of_a_node_back_from_an_outage.read_state() == replace(
+        OFF_AT_20,
+        mode=ClimateMode.HEAT,
+        target=Decimal('21.5'),
+    )
+
+
+def test_switch_on_fails_when_only_the_mode_arrives_after_it(
+    f_driver_echoed_by_the_mode_alone: EsphomeClimateDriver,
+) -> None:
+    with pytest.raises(DomainError) as raised:
+        f_driver_echoed_by_the_mode_alone.set_power(True)
+
+    assert (raised.value.error_code, raised.value.detail) == ('device_protocol_error', 'the unit did not switch on')
 
 
 def test_switch_on_without_an_echo_fails(
