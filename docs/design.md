@@ -147,8 +147,8 @@ ESPHome firmware publishes readings to the Mosquitto broker on the router. Confi
 
 - **Phase meter:** ESP32-S3 with a U.FL antenna led outside the shed's metal door, and three SCT-013-050 clamps (1 V at 50 A) on the input phase conductors, before the stabilizers. Each clamp sits on a single conductor. The clamps share a 1.65 V bias (two 10 kΩ resistors, 10 µF to ground) and feed ADC1 pins. Reports RMS current per phase every second. In the reference house the L2 input is wired but empty, as its clamp is not on a conductor yet: L2 reports the fraction of an ampere an empty input reads, and load management estimates the phase instead (section 7).
 - **Air sensors:** ESP32-C3 with SHT3x over I2C, the sensor 5–10 cm away from the board; the second floor, out of reach of the SuperMini's chip antenna, runs on an ESP32 DevKit, whose PCB antenna reaches further. Reports every 30 seconds.
-- **Outdoor sensor:** DS18B20 on a 3 m cable with a 4.7 kΩ pull-up, the board indoors.
-- **Link:** the air and outdoor nodes are ESP32-C3 SuperMini boards, whose crystal sits next to the antenna. At full transmit power their link fails, and at 8.5 dB the router barely hears a node a room or two away, so they transmit at 10 dB; a node may set its own power. Every node keeps its radio awake (no Wi-Fi power save) and Bluetooth off, pings the broker every 60 seconds, and restarts after 5 minutes without it, as a SuperMini can hang with its Wi-Fi associated and nothing passing.
+- **Outdoor sensor:** an ESP32 DevKit in the water filter box with two DS18B20, each on a 1-Wire line of its own with a 4.7 kΩ pull-up: the street probe on a 3 m cable, and a probe for the box, which may freeze in winter. teplo reads only the street probe so far; the box reading is published for a heater still to be chosen.
+- **Link:** the air nodes are mostly ESP32-C3 SuperMini boards, whose crystal sits next to the antenna. At full transmit power their link fails, and at 8.5 dB the router barely hears a node a room or two away, so they transmit at 10 dB; a node may set its own power. Every node keeps its radio awake (no Wi-Fi power save) and Bluetooth off, pings the broker every 60 seconds, and restarts after 5 minutes without it, as a SuperMini can hang with its Wi-Fi associated and nothing passing.
 
 The firmware and teplo share one MQTT contract:
 
@@ -160,7 +160,7 @@ The firmware and teplo share one MQTT contract:
 | Node | Device kind | Object ids | Every |
 |---|---|---|---|
 | `teplo-air-living-room`, `teplo-air-kitchen`, `teplo-air-hallway`, `teplo-air-second-floor` | temperature sensor | `temperature` (°C) and `humidity` (%), 1 decimal | 30 s |
-| `teplo-outdoor` | temperature sensor | `temperature` (°C), 1 decimal | 30 s |
+| `teplo-outdoor` | temperature sensor | `temperature` (°C), 1 decimal; `box_temperature`, not read yet | 30 s |
 | `teplo-phase-meter` | phase meter | `l1_current`, `l2_current`, `l3_current` (A RMS), 2 decimals | 1 s |
 | `teplo-pc-office`, the office computer's script | presence sensor | `presence`: 1 when there was keyboard or mouse input since its previous report, 0 otherwise | 30 s, and a 1 at once after a 0 |
 | `teplo-ac-bedroom`, the bedroom air conditioner's dongle | climate unit | the climate `air_conditioner` on `teplo/<node>/climate/air_conditioner/<attribute>/state`: `mode`, `target_temperature` and `current_temperature` (°C) | 30 s, and at each change |

@@ -4,15 +4,21 @@ substitutions:
 
 packages:
   node: !include common/node.yaml
-  supermini: !include common/supermini.yaml
+  devkit: !include common/devkit.yaml
 
+# Each probe sits on its own 1-Wire line through its own adapter, the adapter's 4.7 kΩ pulling the line up to
+# 3.3 V: a street probe that water shorts leaves the filter box read, and no probe needs its address pinned.
 one_wire:
   - platform: gpio
     id: outdoor_bus
-    pin: GPIO10
+    pin: GPIO4
+  - platform: gpio
+    id: box_bus
+    pin: GPIO16
 
 sensor:
   - platform: dallas_temp
+    one_wire_id: outdoor_bus
     id: outdoor_temperature
     name: Temperature
     update_interval: 30s
@@ -20,9 +26,18 @@ sensor:
     state_topic: teplo/${node_name}/sensor/temperature/state
     retain: false
     qos: 0
+  - platform: dallas_temp
+    one_wire_id: box_bus
+    id: box_temperature
+    name: Box temperature
+    update_interval: 30s
+    accuracy_decimals: 1
+    state_topic: teplo/${node_name}/sensor/box_temperature/state
+    retain: false
+    qos: 0
 
-# The bus searches for the DS18B20 only at boot, and a sensor it did not find reads nothing. While it is missing,
-# search again and publish nan.
+# A bus searches for its DS18B20 only at boot, and a sensor it did not find reads nothing. While a probe is
+# missing, search its line again and publish nan.
 interval:
   - interval: 30s
     then:
@@ -38,3 +53,15 @@ interval:
           }
 
           id(outdoor_temperature).publish_state(NAN);
+      - lambda: |-
+          auto *bus = id(box_bus);
+          if (!bus->get_devices().empty())
+            return;
+
+          bus->search();
+          if (bus->get_devices().size() == 1) {
+            id(box_temperature).set_address(bus->get_devices().front());
+            return;
+          }
+
+          id(box_temperature).publish_state(NAN);
