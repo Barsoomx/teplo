@@ -6,15 +6,17 @@ packages:
   node: !include common/node.yaml
   devkit: !include common/devkit.yaml
 
-# Each probe sits on its own 1-Wire line through its own adapter, the adapter's 4.7 kΩ pulling the line up to
-# 3.3 V: a street probe that water shorts leaves the filter box read, and no probe needs its address pinned.
+# The street probe's adapter pulls its 1-Wire line up to 3.3 V with its own 4.7 kΩ.
 one_wire:
   - platform: gpio
     id: outdoor_bus
     pin: GPIO4
-  - platform: gpio
-    id: box_bus
-    pin: GPIO16
+
+# An SHT30 in the water filter box, which may freeze in winter: the box's air and humidity.
+i2c:
+  sda: GPIO21
+  scl: GPIO22
+  scan: true
 
 sensor:
   - platform: dallas_temp
@@ -26,21 +28,36 @@ sensor:
     state_topic: teplo/${node_name}/sensor/temperature/state
     retain: false
     qos: 0
-  - platform: dallas_temp
-    one_wire_id: box_bus
-    id: box_temperature
-    name: Box temperature
+  # A failed read publishes nothing, so once a reading has gone out the timeout publishes nan after two missed
+  # updates.
+  - platform: sht3xd
+    id: box_sht30
+    address: 0x44
     update_interval: 30s
-    accuracy_decimals: 1
-    state_topic: teplo/${node_name}/sensor/box_temperature/state
-    retain: false
-    qos: 0
+    temperature:
+      id: box_temperature
+      name: Box temperature
+      accuracy_decimals: 1
+      state_topic: teplo/${node_name}/sensor/box_temperature/state
+      retain: false
+      qos: 0
+      filters:
+        - timeout: 75s
+    humidity:
+      id: box_humidity
+      name: Box humidity
+      accuracy_decimals: 1
+      state_topic: teplo/${node_name}/sensor/box_humidity/state
+      retain: false
+      qos: 0
+      filters:
+        - timeout: 75s
 
-# A bus searches for its DS18B20 only at boot, and a sensor it did not find reads nothing. While a probe is
-# missing, search its line again and publish nan.
 interval:
   - interval: 30s
     then:
+      # The bus searches for the DS18B20 only at boot, and a sensor it did not find reads nothing. While it is
+      # missing, search again and publish nan.
       - lambda: |-
           auto *bus = id(outdoor_bus);
           if (!bus->get_devices().empty())
@@ -53,15 +70,10 @@ interval:
           }
 
           id(outdoor_temperature).publish_state(NAN);
+      # An SHT30 that does not answer at boot leaves sht3xd failed until the node restarts, and without a first
+      # reading the timeout never starts.
       - lambda: |-
-          auto *bus = id(box_bus);
-          if (!bus->get_devices().empty())
-            return;
-
-          bus->search();
-          if (bus->get_devices().size() == 1) {
-            id(box_temperature).set_address(bus->get_devices().front());
-            return;
+          if (id(box_sht30).is_failed()) {
+            id(box_temperature).publish_state(NAN);
+            id(box_humidity).publish_state(NAN);
           }
-
-          id(box_temperature).publish_state(NAN);
