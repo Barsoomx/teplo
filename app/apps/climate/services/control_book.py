@@ -1,4 +1,7 @@
 import threading
+import time
+from collections.abc import Callable
+from datetime import timedelta
 
 from apps.climate.domain.external_heat import FireWatch
 from apps.climate.domain.fast_source import SourceTarget
@@ -6,7 +9,8 @@ from apps.climate.domain.memory import ZoneMemory
 
 
 class ControlBook:
-    def __init__(self) -> None:
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self._clock = clock
         self._zones: dict[str, ZoneMemory] = {}
         self._backups: dict[str, bool] = {}
         self._fires: dict[str, FireWatch] = {}
@@ -14,6 +18,7 @@ class ControlBook:
         self._occupancy_journaled: dict[str, SourceTarget] = {}
         self._lockouts: dict[str, bool] = {}
         self._rooms_without_climate: set[str] = set()
+        self._air_lost_at: dict[str, float] = {}
         self._lock = threading.Lock()
 
     def zone(self, slug: str) -> ZoneMemory:
@@ -71,6 +76,15 @@ class ControlBook:
     def remember_lockout(self, source: str, locked: bool) -> None:
         with self._lock:
             self._lockouts[source] = locked
+
+    def air_lost_for(self, sensor: str, *, lost: bool) -> timedelta | None:
+        with self._lock:
+            if not lost:
+                self._air_lost_at.pop(sensor, None)
+                return None
+
+            lost_at = self._air_lost_at.setdefault(sensor, self._clock())
+            return timedelta(seconds=self._clock() - lost_at)
 
     def first_notice_without_climate(self, room: str) -> bool:
         with self._lock:

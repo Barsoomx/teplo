@@ -67,11 +67,31 @@ class EsphomeClimateDriver:
             raise DeviceProtocolError(f'the unit takes half degrees, not {setpoint}')
 
         payload = f'{setpoint:.1f}'.encode('ascii')
-        if not self._command(TARGET_TEMPERATURE, payload, lambda state: state.target == setpoint):
+        if not self._command(
+            TARGET_TEMPERATURE,
+            payload,
+            lambda state: state.target == setpoint,
+            unless_shown=True,
+        ):
             raise DeviceProtocolError(f'the unit did not take the setpoint {setpoint}')
 
-    def _command(self, attribute: str, payload: bytes, echoes: Callable[[ClimateUnitState], bool]) -> bool:
+    def _command(
+        self,
+        attribute: str,
+        payload: bytes,
+        echoes: Callable[[ClimateUnitState], bool],
+        *,
+        unless_shown: bool = False,
+    ) -> bool:
         with self._lock:
+            if unless_shown and self._shows(echoes):
+                return True
+
             reported = self._store.report_count()
             self._publisher.publish(climate_command_topic(self._node, attribute), payload)
             return self._store.wait_for(self._slug, echoes, reported_after=reported, timeout=self._echo_timeout)
+
+    def _shows(self, echoes: Callable[[ClimateUnitState], bool]) -> bool:
+        snapshot = self._store.snapshot(self._slug)
+        fresh = snapshot.age is not None and snapshot.age <= FRESH_FOR
+        return snapshot.error_code is None and snapshot.state is not None and fresh and echoes(snapshot.state)

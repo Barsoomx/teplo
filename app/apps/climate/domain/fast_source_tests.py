@@ -9,6 +9,7 @@ from apps.climate.domain.fast_source import (
     SourceChange,
     SourceDrive,
     SourceTarget,
+    air_loss_holds,
     decide_source_power,
     outdoor_lockout,
     pending_source_write,
@@ -142,6 +143,49 @@ def test_power_starts_below_the_target_and_stops_a_degree_above_it(
     power: bool,
 ) -> None:
     assert decide_source_power(on, air, Decimal('21.5')) is power
+
+
+@pytest.mark.parametrize(
+    ('on', 'air', 'power'),
+    [
+        (False, None, False),
+        (True, None, True),
+        (False, Decimal('21.1'), True),
+        (True, Decimal('22.5'), False),
+    ],
+    ids=['off_stays_off', 'on_stays_on', 'reading_back_below_the_start', 'reading_back_a_degree_above'],
+)
+def test_power_holds_while_the_room_sensor_was_lost_recently(on: bool, air: Decimal | None, power: bool) -> None:
+    assert decide_source_power(on, air, Decimal('21.5'), air_lost_recently=True) is power
+
+
+@pytest.mark.parametrize(
+    ('lost_for', 'holds'),
+    [
+        (None, False),
+        (timedelta(0), True),
+        (timedelta(hours=1), True),
+        (timedelta(hours=1, seconds=1), False),
+    ],
+    ids=['sensor_reads', 'just_lost', 'lost_an_hour_ago', 'lost_longer'],
+)
+def test_lost_room_sensor_holds_its_sources_for_an_hour(lost_for: timedelta | None, holds: bool) -> None:
+    assert air_loss_holds(lost_for) is holds
+
+
+def test_room_whose_sensor_was_lost_recently_keeps_its_source_off() -> None:
+    targets = room_targets(
+        [CONVECTOR],
+        {'convector-office': OFF},
+        shed=frozenset(),
+        locked_out=frozenset(),
+        air=None,
+        target=Decimal('21.5'),
+        now=NOW,
+        air_lost_recently=True,
+    )
+
+    assert targets == {'convector-office': SWITCHED_OFF}
 
 
 @pytest.mark.parametrize(

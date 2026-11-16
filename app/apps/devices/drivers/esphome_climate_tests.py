@@ -223,6 +223,18 @@ def f_failed_driver(f_driver: EsphomeClimateDriver, store: EsphomeClimateStore) 
 
 
 @pytest.fixture
+def f_silent_stale_driver(f_silent_driver: EsphomeClimateDriver, clock: MonotonicClockStub) -> EsphomeClimateDriver:
+    clock.advance(91)
+    return f_silent_driver
+
+
+@pytest.fixture
+def f_silent_failed_driver(f_silent_driver: EsphomeClimateDriver, store: EsphomeClimateStore) -> EsphomeClimateDriver:
+    store.record_failure('ac-bedroom', error_code='sensor_reading_failed', error='target_temperature: nan')
+    return f_silent_driver
+
+
+@pytest.fixture
 def f_unheard_driver(store: EsphomeClimateStore, f_silent_publisher: CommandPublisherStub) -> EsphomeClimateDriver:
     return EsphomeClimateDriver(
         slug='ac-office',
@@ -381,6 +393,36 @@ def test_setpoint_without_an_echo_fails(
         [(TARGET_COMMAND, b'22.0')],
         'device_protocol_error',
         'the unit did not take the setpoint 22',
+    )
+
+
+def test_setpoint_the_unit_already_shows_counts_as_taken_and_nothing_goes_out(
+    f_silent_driver: EsphomeClimateDriver,
+    f_silent_publisher: CommandPublisherStub,
+) -> None:
+    f_silent_driver.set_setpoint(Decimal(20))
+
+    assert f_silent_publisher.published == []
+
+
+@pytest.mark.parametrize(
+    'driver',
+    ['f_silent_stale_driver', 'f_silent_failed_driver'],
+    ids=['older_than_90_seconds', 'failure_recorded'],
+)
+def test_setpoint_shown_only_by_a_state_that_is_not_fresh_goes_out_and_waits_for_its_echo(
+    driver: str,
+    request: pytest.FixtureRequest,
+    f_silent_publisher: CommandPublisherStub,
+) -> None:
+    unsure: EsphomeClimateDriver = request.getfixturevalue(driver)
+
+    with pytest.raises(DomainError) as raised:
+        unsure.set_setpoint(Decimal(20))
+
+    assert (f_silent_publisher.published, raised.value.detail) == (
+        [(TARGET_COMMAND, b'20.0')],
+        'the unit did not take the setpoint 20',
     )
 
 

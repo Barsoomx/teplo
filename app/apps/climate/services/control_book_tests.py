@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -7,6 +8,7 @@ from apps.climate.domain.fast_source import SourceTarget
 from apps.climate.domain.memory import ZoneMemory
 from apps.climate.domain.modes import AirState, ControlPath, ScheduleMode
 from apps.climate.services.control_book import ControlBook
+from apps.core.stubs import MonotonicClockStub
 
 MEMORY = ZoneMemory(
     path=ControlPath.AIR,
@@ -95,3 +97,36 @@ def test_book_remembers_each_source_s_outdoor_lockout_and_starts_unlocked(f_book
         f_book.source_locked_out('ac-office'),
         f_book.source_locked_out('ac-attic'),
     ) == (True, False, False)
+
+
+@pytest.fixture
+def clock() -> MonotonicClockStub:
+    return MonotonicClockStub(now=1000.0)
+
+
+@pytest.fixture
+def f_book_that_lost_a_sensor_ten_minutes_ago(clock: MonotonicClockStub) -> ControlBook:
+    book = ControlBook(clock=clock)
+    book.air_lost_for('air-bedroom', lost=True)
+    clock.advance(600)
+    return book
+
+
+def test_lost_sensor_counts_from_the_first_time_it_was_seen_lost(
+    f_book_that_lost_a_sensor_ten_minutes_ago: ControlBook,
+) -> None:
+    assert (
+        f_book_that_lost_a_sensor_ten_minutes_ago.air_lost_for('air-bedroom', lost=True),
+        f_book_that_lost_a_sensor_ten_minutes_ago.air_lost_for('air-kitchen', lost=True),
+    ) == (timedelta(minutes=10), timedelta(0))
+
+
+def test_sensor_that_reads_again_is_counted_afresh_once_lost_again(
+    f_book_that_lost_a_sensor_ten_minutes_ago: ControlBook,
+) -> None:
+    back = f_book_that_lost_a_sensor_ten_minutes_ago.air_lost_for('air-bedroom', lost=False)
+
+    assert (back, f_book_that_lost_a_sensor_ten_minutes_ago.air_lost_for('air-bedroom', lost=True)) == (
+        None,
+        timedelta(0),
+    )

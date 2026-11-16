@@ -117,6 +117,7 @@ GRANTED = {
     'heater-bedroom': StartAnswer(granted=True, note=None),
 }
 OFFICE_FOLLOWING = replace(OFFICE, follows_occupancy=True)
+OFFICE_WITH_A_SENSOR = replace(OFFICE, air_sensor_slug='air-office')
 WINDOW_ENDS = datetime(2026, 11, 4, 23, 45, tzinfo=MOSCOW)
 OVERRIDE_ENDS = datetime(2026, 11, 4, 17, 30, tzinfo=MOSCOW)
 HOLD_ENDS = datetime(2026, 11, 4, 16, 0, tzinfo=MOSCOW)
@@ -252,8 +253,13 @@ def f_gate(request: pytest.FixtureRequest) -> SourceLoadGateStub:
 
 
 @pytest.fixture
-def book() -> ControlBook:
-    return ControlBook()
+def book_clock() -> MonotonicClockStub:
+    return MonotonicClockStub(now=MONOTONIC)
+
+
+@pytest.fixture
+def book(book_clock: MonotonicClockStub) -> ControlBook:
+    return ControlBook(clock=book_clock)
 
 
 @pytest.fixture
@@ -303,6 +309,16 @@ def f_use_case(
         dry_run=False,
         dispatcher=dispatcher,
     )
+
+
+@pytest.fixture
+def f_use_case_that_lost_the_office_sensor_over_an_hour_ago(
+    f_use_case: RunSourceCycleUseCase,
+    book_clock: MonotonicClockStub,
+) -> RunSourceCycleUseCase:
+    f_use_case.execute(_cycle(COMFORT_AT))
+    book_clock.advance(3601)
+    return f_use_case
 
 
 @pytest.fixture
@@ -453,6 +469,42 @@ def test_live_source_switched_on_takes_a_start_permit_and_its_setpoint_after_its
                 occurred_at=COMFORT_AT,
             ),
         ],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'rooms'),
+    [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, [OFFICE_WITH_A_SENSOR, BEDROOM])],
+    indirect=True,
+)
+def test_live_source_stays_off_while_its_room_sensor_was_lost_within_the_hour(
+    f_use_case: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+    f_gate: SourceLoadGateStub,
+) -> None:
+    output = f_use_case.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands, f_gate.asked) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.UNCHANGED}),
+        [],
+        [()],
+    )
+
+
+@pytest.mark.parametrize(
+    ('f_sources', 'units', 'rooms'),
+    [(([LIVE_CONVECTOR], {}), OFF_AT_NINETEEN, [OFFICE_WITH_A_SENSOR, BEDROOM])],
+    indirect=True,
+)
+def test_live_source_switches_on_once_its_room_sensor_was_lost_over_an_hour_ago(
+    f_use_case_that_lost_the_office_sensor_over_an_hour_ago: RunSourceCycleUseCase,
+    f_unit: ControllableClimateUnitStub,
+) -> None:
+    output = f_use_case_that_lost_the_office_sensor_over_an_hour_ago.execute(_cycle(COMFORT_AT))
+
+    assert (output, f_unit.commands) == (
+        RunSourceCycleOutputDTO(outcomes={'convector-office': ZoneCycleOutcome.APPLIED}),
+        [('power', True), ('setpoint', Decimal(22))],
     )
 
 

@@ -18,6 +18,7 @@ from apps.climate.domain.fast_source import (
     SourceDrive,
     SourceStart,
     SourceTarget,
+    air_loss_holds,
     plan_source_drive,
     room_held_by_hand,
     room_targets,
@@ -184,6 +185,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
 
         states = {source.slug: self._state(source.device_slug) for source in sources}
         air = self._temperature(climate.air_sensor_slug)
+        air_lost_recently = self._air_lost_recently(climate.air_sensor_slug, air)
         targets = room_targets(
             sources,
             states,
@@ -192,6 +194,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             air=air,
             target=intent.target,
             now=now,
+            air_lost_recently=air_lost_recently,
         )
         self._watch_occupancy(
             climate,
@@ -202,6 +205,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             held=held,
             locked_out=locked_out,
             air=air,
+            air_lost_recently=air_lost_recently,
             now=now,
         )
         hands_off = room_held_by_hand(sources, now)
@@ -230,6 +234,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
         held: frozenset[str],
         locked_out: frozenset[str],
         air: Decimal | None,
+        air_lost_recently: bool,
         now: datetime,
     ) -> None:
         would_be = intents.would_be_of(climate.slug)
@@ -245,6 +250,7 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             air=air,
             target=would_be.target,
             now=now,
+            air_lost_recently=air_lost_recently,
         )
         for source in sources:
             target = would[source.slug]
@@ -452,6 +458,12 @@ class RunSourceCycleUseCase(BaseUseCase[RunSourceCycleInputDTO, RunSourceCycleOu
             return None
 
         return snapshot.state.temperature
+
+    def _air_lost_recently(self, sensor: str | None, air: Decimal | None) -> bool:
+        if sensor is None:
+            return False
+
+        return air_loss_holds(self._book.air_lost_for(sensor, lost=air is None))
 
     def _outdoor(self, slug: str | None) -> Decimal | None:
         if slug is None:

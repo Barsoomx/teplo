@@ -6,6 +6,7 @@ from django.conf import settings
 from apps.climate.domain.fast_source import (
     OUTDOOR_READING_FOR,
     SourceTarget,
+    air_loss_holds,
     pending_source_write,
     room_targets,
     source_lockouts,
@@ -89,14 +90,16 @@ class SourceStatusReader:
         climate = next((climate for climate in intents.rooms if climate.slug == room), None)
         targets: dict[str, SourceTarget | None] = {source.slug: None for source in sources}
         if intent is not None and climate is not None:
+            air = self._temperature(climate.air_sensor_slug)
             targets = room_targets(
                 sources,
                 {slug: snapshot.state if snapshot.available else None for slug, snapshot in snapshots.items()},
                 shed=held,
                 locked_out=locked_out,
-                air=self._temperature(climate.air_sensor_slug),
+                air=air,
                 target=intent.target,
                 now=intents.now,
+                air_lost_recently=self._air_lost_recently(climate.air_sensor_slug, air),
             )
         return tuple(
             self._status(
@@ -169,6 +172,12 @@ class SourceStatusReader:
             return None
 
         return snapshot.state.temperature
+
+    def _air_lost_recently(self, sensor: str | None, air: Decimal | None) -> bool:
+        if sensor is None:
+            return False
+
+        return air_loss_holds(self._book.air_lost_for(sensor, lost=air is None))
 
     def _outdoor(self, slug: str | None) -> Decimal | None:
         if slug is None:

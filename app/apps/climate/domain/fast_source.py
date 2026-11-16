@@ -18,6 +18,7 @@ SETPOINT_STEPS = {HeatSourceKind.HEATER: HEATER_STEP, HeatSourceKind.AIR_CONDITI
 OWNER_MODES = frozenset({ClimateMode.COOL})
 OUTDOOR_RELEASE = Decimal('1.0')
 OUTDOOR_READING_FOR = timedelta(hours=1)
+AIR_LOSS_HOLD = timedelta(hours=1)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -82,8 +83,15 @@ def source_lockouts(
     }
 
 
-def decide_source_power(on: bool, air: Decimal | None, target: Decimal) -> bool:
-    if air is None or air < target - SOURCE_START_BELOW:
+def air_loss_holds(lost_for: timedelta | None) -> bool:
+    return lost_for is not None and lost_for <= AIR_LOSS_HOLD
+
+
+def decide_source_power(on: bool, air: Decimal | None, target: Decimal, *, air_lost_recently: bool = False) -> bool:
+    if air is None:
+        return on if air_lost_recently else True
+
+    if air < target - SOURCE_START_BELOW:
         return True
 
     if air >= target + SOURCE_STOP_ABOVE:
@@ -105,6 +113,7 @@ def room_targets(
     air: Decimal | None,
     target: Decimal,
     now: datetime,
+    air_lost_recently: bool = False,
 ) -> dict[str, SourceTarget | None]:
     if room_held_by_hand(sources, now):
         return {source.slug: None for source in sources}
@@ -112,7 +121,15 @@ def room_targets(
     ordered = sorted(sources, key=lambda source: source.priority)
     pick = next((source for source in ordered if _pickable(source, states.get(source.slug), shed, locked_out)), None)
     return {
-        source.slug: _target(source, states.get(source.slug), pick=pick, shed=shed, air=air, target=target)
+        source.slug: _target(
+            source,
+            states.get(source.slug),
+            pick=pick,
+            shed=shed,
+            air=air,
+            target=target,
+            air_lost_recently=air_lost_recently,
+        )
         for source in ordered
     }
 
@@ -214,12 +231,13 @@ def _target(
     shed: frozenset[str],
     air: Decimal | None,
     target: Decimal,
+    air_lost_recently: bool,
 ) -> SourceTarget | None:
     if state is None:
         return None
 
     if pick is not None and source.slug == pick.slug:
-        power = decide_source_power(state.on, air, target)
+        power = decide_source_power(state.on, air, target, air_lost_recently=air_lost_recently)
         return SourceTarget(power=power, setpoint=source_setpoint(target, source) if power else None)
 
     if state.on and source.slug not in shed and source.commanded_power is True:
