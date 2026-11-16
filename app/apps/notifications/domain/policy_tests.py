@@ -376,6 +376,17 @@ def test_zone_held_by_hand_is_neither_off_nor_on(should_heat: bool, power: bool 
     assert zone_condition(zone).failing is None
 
 
+@pytest.mark.parametrize(
+    ('should_heat', 'power'),
+    [(True, False), (True, True), (True, None)],
+    ids=['off_while_it_should_heat', 'on', 'power_unknown'],
+)
+def test_zone_load_management_holds_off_is_neither_off_nor_on(should_heat: bool, power: bool | None) -> None:
+    zone = ZoneHeating(slug='kitchen', name='Кухня', should_heat=should_heat, power=power, shed=True)
+
+    assert zone_condition(zone).failing is None
+
+
 def test_hold_by_hand_stops_the_zone_off_timer(
     f_zone_held_by_hand: ZoneHeating,
     f_noticed_cold_zone: Tracks,

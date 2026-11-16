@@ -9,12 +9,13 @@ from django.utils import timezone
 from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import ClimateMode, ClimateUnitState
-from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, tuya_client
+from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, tuya_client, whole_status
 
 POWER_DP = 1
 SETPOINT_DP = 3
 TEMPERATURE_DP = 4
 LEVEL_DP = 7
+READ_DPS = (POWER_DP, SETPOINT_DP, TEMPERATURE_DP)
 CONFIRM_READS = 3
 CONFIRM_PAUSE = 0.5
 
@@ -31,16 +32,7 @@ class TuyaHeaterDriver:
         return cls(client=tuya_client(secret), clock=timezone.now, pause=time.sleep)
 
     def read_state(self) -> ClimateUnitState:
-        try:
-            with self._lock:
-                payload = self._client.status()
-        except OSError as error:
-            raise DeviceUnavailableError(str(error)) from error
-
-        if not payload or 'Error' in payload:
-            raise DeviceUnavailableError(str((payload or {}).get('Error', 'empty response')))
-
-        return self._state(payload)
+        return self._state(whole_status(self._status, READ_DPS))
 
     def set_power(self, power: bool) -> None:
         self._write(POWER_DP, power)
@@ -59,6 +51,18 @@ class TuyaHeaterDriver:
                 return
 
         raise DeviceProtocolError(f'the heater did not take the setpoint {degrees}')
+
+    def _status(self) -> TuyaPayload:
+        try:
+            with self._lock:
+                payload = self._client.status()
+        except OSError as error:
+            raise DeviceUnavailableError(str(error)) from error
+
+        if not payload or 'Error' in payload:
+            raise DeviceUnavailableError(str((payload or {}).get('Error', 'empty response')))
+
+        return payload
 
     def _state(self, payload: TuyaPayload) -> ClimateUnitState:
         dps = payload.get('dps')

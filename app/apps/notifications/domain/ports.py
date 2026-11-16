@@ -16,6 +16,10 @@ class ZoneSource(Protocol):
     def zones(self, now: datetime, *, clock_trusted: bool) -> list[ZoneHeating]: ...
 
 
+class HeldZones(Protocol):
+    def held_zones(self) -> frozenset[str]: ...
+
+
 class PhaseSource(Protocol):
     def phases(self) -> list[PhaseAlarm]: ...
 

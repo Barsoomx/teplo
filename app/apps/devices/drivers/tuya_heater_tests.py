@@ -331,3 +331,15 @@ def test_client_calls_are_serialized_across_threads(
         thread.join()
 
     assert f_serial_client.max_active == 1
+
+
+@pytest.fixture
+def f_pushing_driver() -> TuyaHeaterDriver:
+    client = SettlingClientStub(status_payloads=[{'dps': {'4': 22}}, {'dps': OFFICE_DPS}])
+    return TuyaHeaterDriver(client=client, clock=_now, pause=_no_pause)
+
+
+def test_read_state_reads_again_a_status_that_carries_only_the_room_temperature(
+    f_pushing_driver: TuyaHeaterDriver,
+) -> None:
+    assert f_pushing_driver.read_state().target == Decimal(22)

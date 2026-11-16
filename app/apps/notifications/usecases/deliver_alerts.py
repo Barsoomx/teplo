@@ -8,6 +8,7 @@ from django.utils import translation
 from apps.core.domain.usecases.base import BaseUseCase
 from apps.notifications.domain.errors import AlertDeliveryError, AlertRejectedError
 from apps.notifications.domain.ports import AlertSender
+from apps.notifications.services.delivery_book import DeliveryBook, delivery_book
 from apps.notifications.services.outbox import AlertOutbox, OutgoingMessage, alert_outbox
 from apps.notifications.services.telegram import alert_sender
 
@@ -27,15 +28,21 @@ class DeliverAlertsOutputDTO:
 
 
 class DeliverAlertsUseCase(BaseUseCase[DeliverAlertsInputDTO, DeliverAlertsOutputDTO]):
-    def __init__(self, outbox: AlertOutbox, sender: AlertSender, language: str) -> None:
+    def __init__(self, outbox: AlertOutbox, sender: AlertSender, language: str, book: DeliveryBook) -> None:
         super().__init__()
         self._outbox = outbox
         self._sender = sender
         self._language = language
+        self._book = book
 
     @classmethod
     def init(cls) -> 'DeliverAlertsUseCase':
-        return cls(outbox=alert_outbox, sender=alert_sender, language=settings.TEPLO_ALERT_LANGUAGE)
+        return cls(
+            outbox=alert_outbox,
+            sender=alert_sender,
+            language=settings.TEPLO_ALERT_LANGUAGE,
+            book=delivery_book,
+        )
 
     def _execute(self, input_dto: DeliverAlertsInputDTO) -> DeliverAlertsOutputDTO:
         expired = self._outbox.drop_expired()
@@ -61,16 +68,19 @@ class DeliverAlertsUseCase(BaseUseCase[DeliverAlertsInputDTO, DeliverAlertsOutpu
             except AlertRejectedError as error:
                 rejected.update(dropped.number for dropped in self._drop(message, text, error))
             except AlertDeliveryError as error:
-                logger.warning(
-                    'alert_delivery_failed',
-                    error_code=error.error_code,
-                    detail=error.detail,
-                    pending=len(self._outbox.pending()),
-                )
+                if self._book.fail():
+                    logger.warning(
+                        'alert_delivery_failed',
+                        error_code=error.error_code,
+                        detail=error.detail,
+                        pending=len(self._outbox.pending()),
+                    )
                 break
             else:
                 self._outbox.remove(message)
                 sent += 1
+                if self._book.recover():
+                    logger.info('alert_delivery_recovered', pending=len(self._outbox.pending()))
         return sent, len(rejected)
 
     def _text(self, message: OutgoingMessage, at: datetime) -> str:

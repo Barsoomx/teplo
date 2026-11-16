@@ -8,6 +8,7 @@ from apps.devices.domain.kinds import DeviceKind
 from apps.notifications.domain.alerts import AlertKey, AlertKind, AlertTransition
 from apps.notifications.domain.errors import AlertDeliveryError, AlertRejectedError
 from apps.notifications.domain.outage import Outage
+from apps.notifications.services.delivery_book import DeliveryBook
 from apps.notifications.services.messages import AlertContent, OutageContent
 from apps.notifications.services.outbox import AlertOutbox
 from apps.notifications.stubs import AlertSenderStub
@@ -103,27 +104,27 @@ def f_refusing_sender() -> AlertSenderStub:
 
 @pytest.fixture
 def f_use_case(f_outbox: AlertOutbox, f_sender: AlertSenderStub) -> DeliverAlertsUseCase:
-    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_sender, language='ru')
+    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_sender, language='ru', book=DeliveryBook())
 
 
 @pytest.fixture
 def f_english_use_case(f_outbox: AlertOutbox, f_sender: AlertSenderStub) -> DeliverAlertsUseCase:
-    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_sender, language='en')
+    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_sender, language='en', book=DeliveryBook())
 
 
 @pytest.fixture
 def f_offline_use_case(f_outbox: AlertOutbox, f_offline_sender: AlertSenderStub) -> DeliverAlertsUseCase:
-    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_offline_sender, language='ru')
+    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_offline_sender, language='ru', book=DeliveryBook())
 
 
 @pytest.fixture
 def f_refusing_use_case(f_outbox: AlertOutbox, f_refusing_sender: AlertSenderStub) -> DeliverAlertsUseCase:
-    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_refusing_sender, language='ru')
+    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_refusing_sender, language='ru', book=DeliveryBook())
 
 
 @pytest.fixture
 def f_stale_use_case(f_stale_outbox: AlertOutbox, f_sender: AlertSenderStub) -> DeliverAlertsUseCase:
-    return DeliverAlertsUseCase(outbox=f_stale_outbox, sender=f_sender, language='ru')
+    return DeliverAlertsUseCase(outbox=f_stale_outbox, sender=f_sender, language='ru', book=DeliveryBook())
 
 
 @pytest.fixture
@@ -136,16 +137,31 @@ def f_reconnected_use_case(
         outbox=lasting_alert_outbox,
         sender=AlertSenderStub(errors={LOST: AlertDeliveryError(TIMED_OUT)}),
         language='ru',
+        book=DeliveryBook(),
     )
     for minute in range(120):
         offline.execute(DeliverAlertsInputDTO(now=NOW + timedelta(minutes=minute)))
         f_clock.advance(60)
-    return DeliverAlertsUseCase(outbox=lasting_alert_outbox, sender=f_sender, language='ru')
+    return DeliverAlertsUseCase(outbox=lasting_alert_outbox, sender=f_sender, language='ru', book=DeliveryBook())
+
+
+@pytest.fixture
+def f_use_case_back_online(f_outbox: AlertOutbox, f_sender: AlertSenderStub) -> DeliverAlertsUseCase:
+    book = DeliveryBook()
+    offline = DeliverAlertsUseCase(
+        outbox=f_outbox,
+        sender=AlertSenderStub(errors={RESUMED: AlertDeliveryError(TIMED_OUT)}),
+        language='ru',
+        book=book,
+    )
+    for minute in range(3):
+        offline.execute(DeliverAlertsInputDTO(now=NOW + timedelta(minutes=minute)))
+    return DeliverAlertsUseCase(outbox=f_outbox, sender=f_sender, language='ru', book=book)
 
 
 @pytest.fixture
 def f_boiler_use_case(boiler_outbox: AlertOutbox, f_sender: AlertSenderStub) -> DeliverAlertsUseCase:
-    return DeliverAlertsUseCase(outbox=boiler_outbox, sender=f_sender, language='ru')
+    return DeliverAlertsUseCase(outbox=boiler_outbox, sender=f_sender, language='ru', book=DeliveryBook())
 
 
 def test_queued_messages_go_out_in_order(f_use_case: DeliverAlertsUseCase, f_sender: AlertSenderStub) -> None:
@@ -233,3 +249,22 @@ def test_alert_outlasting_a_two_hour_telegram_outage_is_delivered(
     output = f_reconnected_use_case.execute(DeliverAlertsInputDTO(now=NOW + timedelta(hours=2)))
 
     assert (output, f_sender.sent) == (DeliverAlertsOutputDTO(sent=1, dropped=0, pending=0), [LOST])
+
+
+def test_delivery_that_keeps_failing_is_logged_once(f_offline_use_case: DeliverAlertsUseCase) -> None:
+    with capture_logs() as logs:
+        for minute in range(3):
+            f_offline_use_case.execute(DeliverAlertsInputDTO(now=NOW + timedelta(minutes=minute)))
+
+    assert [log['event'] for log in logs] == ['alert_delivery_failed']
+
+
+def test_delivery_back_after_failing_is_logged_once_with_what_still_waits(
+    f_use_case_back_online: DeliverAlertsUseCase,
+    f_sender: AlertSenderStub,
+) -> None:
+    with capture_logs() as logs:
+        f_use_case_back_online.execute(DeliverAlertsInputDTO(now=NOW + timedelta(minutes=3)))
+        f_use_case_back_online.execute(DeliverAlertsInputDTO(now=NOW + timedelta(minutes=4)))
+
+    assert (len(f_sender.sent), logs) == (3, [{'event': 'alert_delivery_recovered', 'log_level': 'info', 'pending': 2}])

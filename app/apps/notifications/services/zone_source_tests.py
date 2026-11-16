@@ -16,6 +16,7 @@ from apps.devices.services.state_store import ThermostatStateStore
 from apps.house.factories import RoomFactory
 from apps.notifications.domain.alerts import ZoneHeating
 from apps.notifications.services.zone_source import ZoneHeatingSource
+from apps.notifications.stubs import HeldZonesStub
 
 pytestmark = pytest.mark.django_db
 
@@ -39,7 +40,7 @@ def _state(read_at: datetime) -> ThermostatState:
     )
 
 
-def _source() -> ZoneHeatingSource:
+def _source(held: frozenset[str] = frozenset(), *, dry_run: bool = False) -> ZoneHeatingSource:
     store = ThermostatStateStore(unavailable_after=timedelta(hours=12))
     for slug in ('thermostat-kitchen', 'thermostat-hallway'):
         store.record_state(slug, _state(EVENING - timedelta(minutes=1)))
@@ -54,6 +55,8 @@ def _source() -> ZoneHeatingSource:
             occupancy=OccupancyStoreStub(occupancy={}),
         ),
         store=store,
+        held=HeldZonesStub(zones=held),
+        dry_run=dry_run,
     )
 
 
@@ -154,3 +157,25 @@ def test_zone_changed_on_its_thermostat_is_left_alone_only_while_the_gate_is_on(
     zones = f_held_by_hand_source.zones(EVENING, clock_trusted=True)
 
     assert zones == [ZoneHeating(slug='kitchen', name='Кухня', should_heat=True, power=False, hands_off=hands_off)]
+
+
+@pytest.fixture
+def f_shed_source(request: pytest.FixtureRequest) -> ZoneHeatingSource:
+    kitchen = ZoneFactory.create(slug='kitchen', name='Кухня', thermostat__slug='thermostat-kitchen')
+    ComfortPeriodFactory.create_batch(7, zone=kitchen)
+    return _source(frozenset({'kitchen'}), dry_run=request.param)
+
+
+@pytest.mark.parametrize(
+    ('f_shed_source', 'shed'),
+    [(False, True), (True, False)],
+    ids=['live', 'dry_run'],
+    indirect=['f_shed_source'],
+)
+def test_zone_load_management_holds_off_counts_as_shed_only_while_teplo_runs_live(
+    f_shed_source: ZoneHeatingSource,
+    shed: bool,
+) -> None:
+    zones = f_shed_source.zones(EVENING, clock_trusted=True)
+
+    assert zones == [ZoneHeating(slug='kitchen', name='Кухня', should_heat=True, power=False, shed=shed)]

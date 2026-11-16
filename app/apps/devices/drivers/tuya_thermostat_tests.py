@@ -38,6 +38,21 @@ class TuyaClientStub:
         return None
 
 
+class RereadClientStub(TuyaClientStub):
+    def __init__(self, status_payloads: list[TuyaPayload]) -> None:
+        super().__init__(status_payload=status_payloads[-1])
+        self._status_payloads = status_payloads
+        self._reads = 0
+
+    @property
+    def reads(self) -> int:
+        return self._reads
+
+    def status(self) -> TuyaPayload | None:
+        self._reads += 1
+        return self._status_payloads[min(self._reads, len(self._status_payloads)) - 1]
+
+
 class SerialClientStub:
     def __init__(self) -> None:
         self._active = 0
@@ -99,6 +114,16 @@ def f_error_payload_driver() -> TuyaThermostatDriver:
 def f_offline_driver() -> TuyaThermostatDriver:
     client = TuyaClientStub(status_payload=None, error=ConnectionRefusedError('connection refused'))
     return TuyaThermostatDriver(client=client, clock=_now)
+
+
+@pytest.fixture
+def f_pushing_client(request: pytest.FixtureRequest) -> RereadClientStub:
+    return RereadClientStub(status_payloads=request.param)
+
+
+@pytest.fixture
+def f_pushing_driver(f_pushing_client: RereadClientStub) -> TuyaThermostatDriver:
+    return TuyaThermostatDriver(client=f_pushing_client, clock=_now)
 
 
 @pytest.fixture
@@ -185,3 +210,26 @@ def test_client_calls_are_serialized_across_threads(
         thread.join()
 
     assert f_serial_client.max_active == 1
+
+
+@pytest.mark.parametrize(
+    'f_pushing_client',
+    [[{'dps': {'24': 281}}, {'dps': KITCHEN_DPS}], [{'dps': {'24': 281}}, {'dps': {'1': True}}, {'dps': KITCHEN_DPS}]],
+    ids=['once', 'twice'],
+    indirect=True,
+)
+def test_read_state_reads_again_a_status_that_carries_only_some_data_points(
+    f_pushing_driver: TuyaThermostatDriver,
+) -> None:
+    assert f_pushing_driver.read_state().floor_temperature == Decimal('22.4')
+
+
+@pytest.mark.parametrize('f_pushing_client', [[{'dps': {'24': 281}}]], indirect=True)
+def test_read_state_fails_on_a_status_still_partial_after_two_more_reads(
+    f_pushing_driver: TuyaThermostatDriver,
+    f_pushing_client: RereadClientStub,
+) -> None:
+    with pytest.raises(DeviceProtocolError):
+        f_pushing_driver.read_state()
+
+    assert f_pushing_client.reads == 3

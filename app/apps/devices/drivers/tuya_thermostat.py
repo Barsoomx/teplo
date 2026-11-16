@@ -8,13 +8,14 @@ from django.utils import timezone
 from apps.core.services.secrets import DeviceSecret
 from apps.devices.domain.errors import DeviceProtocolError, DeviceUnavailableError
 from apps.devices.domain.readings import ThermostatMode, ThermostatState
-from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, tuya_client
+from apps.devices.drivers.tuya_client import TuyaClient, TuyaPayload, tuya_client, whole_status
 
 POWER_DP = 1
 MODE_DP = 2
 RELAY_DP = 3
 SETPOINT_DP = 16
 FLOOR_TEMPERATURE_DP = 24
+READ_DPS = (POWER_DP, MODE_DP, SETPOINT_DP, FLOOR_TEMPERATURE_DP)
 TENTHS = Decimal(10)
 RELAY_HEATING = {'heating': True, 'warming': False}
 
@@ -30,16 +31,7 @@ class TuyaThermostatDriver:
         return cls(client=tuya_client(secret), clock=timezone.now)
 
     def read_state(self) -> ThermostatState:
-        try:
-            with self._lock:
-                payload = self._client.status()
-        except OSError as error:
-            raise DeviceUnavailableError(str(error)) from error
-
-        if not payload or 'Error' in payload:
-            raise DeviceUnavailableError(str((payload or {}).get('Error', 'empty response')))
-
-        return self._state(payload)
+        return self._state(whole_status(self._status, READ_DPS))
 
     def set_power(self, power: bool) -> None:
         self._write(POWER_DP, power)
@@ -49,6 +41,18 @@ class TuyaThermostatDriver:
 
     def set_setpoint(self, setpoint: Decimal) -> None:
         self._write(SETPOINT_DP, int(setpoint * TENTHS))
+
+    def _status(self) -> TuyaPayload:
+        try:
+            with self._lock:
+                payload = self._client.status()
+        except OSError as error:
+            raise DeviceUnavailableError(str(error)) from error
+
+        if not payload or 'Error' in payload:
+            raise DeviceUnavailableError(str((payload or {}).get('Error', 'empty response')))
+
+        return payload
 
     def _state(self, payload: TuyaPayload) -> ThermostatState:
         dps = payload.get('dps')

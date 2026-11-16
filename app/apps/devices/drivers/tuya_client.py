@@ -1,3 +1,4 @@
+from collections.abc import Callable, Collection
 from typing import Protocol
 
 import tinytuya
@@ -7,6 +8,7 @@ from apps.devices.domain.errors import DeviceConfigError
 
 TuyaPayload = dict[str, object]
 TUYA_PROTOCOLS = ('3.1', '3.2', '3.3', '3.4', '3.5')
+PARTIAL_REREADS = 2
 
 
 class TuyaStatusClient(Protocol):
@@ -34,6 +36,21 @@ def tuya_client(secret: DeviceSecret) -> TuyaClient:
 
     client.disabledetect = True
     return client
+
+
+def whole_status(read: Callable[[], TuyaPayload], required: Collection[int]) -> TuyaPayload:
+    payload = read()
+    for _ in range(PARTIAL_REREADS):
+        if not _partial(payload, required):
+            return payload
+
+        payload = read()
+    return payload
+
+
+def _partial(payload: TuyaPayload, required: Collection[int]) -> bool:
+    dps = payload.get('dps')
+    return isinstance(dps, dict) and any(str(dp) not in dps for dp in required)
 
 
 def _check(secret: DeviceSecret) -> None:

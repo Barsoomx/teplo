@@ -33,6 +33,14 @@ class ZoneSourceStub:
         return self._zones
 
 
+class HeldZonesStub:
+    def __init__(self, zones: frozenset[str]) -> None:
+        self._zones = zones
+
+    def held_zones(self) -> frozenset[str]:
+        return self._zones
+
+
 class PhaseSourceStub:
     def __init__(self, alarms: list[PhaseAlarm]) -> None:
         self._alarms = alarms

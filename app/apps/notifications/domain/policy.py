@@ -174,7 +174,7 @@ def _loss_delay(device: MonitoredDevice) -> timedelta:
 
 
 def _zone_off(zone: ZoneHeating) -> bool | None:
-    if zone.hands_off:
+    if zone.hands_off or zone.shed:
         return None
 
     if not zone.should_heat:
